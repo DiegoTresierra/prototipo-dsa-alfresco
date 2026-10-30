@@ -5,20 +5,13 @@ import './components/TopBar.css'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { roleDefinitions } from './config/roles'
-import { loadStoredDocuments, saveSimulatedDocument } from './utils/documentStore'
 import { rolePages } from './pages'
 
 function App() {
   const [selectedRole, setSelectedRole] = useState('emisor')
   const [activePanel, setActivePanel] = useState('inicio')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const [documents, setDocuments] = useState(() => {
-    try {
-      return loadStoredDocuments()
-    } catch {
-      return []
-    }
-  })
+  const [documents, setDocuments] = useState([])
   const currentRole = roleDefinitions[selectedRole]
   const ActivePage = rolePages[selectedRole]
   const activeItem = currentRole.menu.find((item) => item.id === activePanel) || currentRole.menu[0]
@@ -35,14 +28,15 @@ function App() {
   }
 
   const handleDocumentSubmit = (documentData) => {
-    try {
-      const result = saveSimulatedDocument(documentData)
-      setDocuments(result.documents)
-      setActivePanel('mis-envios')
-      return { ok: true, duplicate: result.duplicate }
-    } catch {
-      return { ok: false, error: 'No se pudo guardar el registro simulado en este navegador. No se incrementó el correlativo.' }
+    const documentRecord = {
+      ...documentData,
+      id: `TMP-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
+      status: 'Enviado (simulación)',
+      createdAt: new Date().toISOString(),
     }
+
+    setDocuments((currentDocuments) => [documentRecord, ...currentDocuments])
+    setActivePanel('mis-envios')
   }
 
   return (

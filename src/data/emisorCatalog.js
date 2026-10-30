@@ -1,59 +1,25 @@
-// Catálogo de demostración basado únicamente en la estructura y los nombres proporcionados.
-// No representa un directorio institucional validado ni incorpora funciones oficiales del MOF.
-export const recipientDependencies = [
-  { id: 'dsa', name: 'Dirección de Servicios Académicos (DSA)', available: true },
-  { id: 'dependencia-demo-bienestar', name: 'Dirección de Bienestar Universitario (demostrativa)', available: false },
-  { id: 'dependencia-demo-investigacion', name: 'Dirección de Investigación (demostrativa)', available: false },
-  { id: 'dependencia-demo-administracion', name: 'Dirección de Administración (demostrativa)', available: false },
-]
-
-const provisionalFunctions = 'Funciones del MOF pendientes de incorporación. Esta descripción es provisional y no constituye una función oficial.'
-
-const position = (id, title, recipientName, options = {}) => ({
-  id,
-  title,
-  recipientName,
-  available: options.available ?? true,
-  reportsToPositionId: options.reportsToPositionId || null,
-  functionsDescription: provisionalFunctions,
-})
-
 export const organizationalUnits = [
   {
-    id: 'dsa-direccion',
-    name: 'Dirección',
-    dependencyId: 'dsa',
-    parentId: null,
-    positions: [
-      position('dsa-puesto-direccion', 'Dirección', 'Responsable no especificado'),
-      position('dsa-secretaria-direccion', 'Secretaría', 'Bethzabet'),
+    id: 'unidad-simulada-1',
+    name: 'Unidad organizacional de prueba 1',
+    specialists: [
+      { id: 'especialista-prueba-01', name: 'Especialista de prueba 01', position: 'Especialista responsable (dato simulado)', description: 'Descripción provisional del puesto. Las funciones oficiales serán incorporadas cuando se proporcionen los datos aprobados del MOF.' },
+      { id: 'especialista-prueba-02', name: 'Especialista de prueba 02', position: 'Especialista responsable (dato simulado)', description: 'Descripción provisional del puesto. Las funciones oficiales serán incorporadas cuando se proporcionen los datos aprobados del MOF.' },
     ],
   },
   {
-    id: 'dsa-procesos-tecnicos',
-    name: 'Unidad de Procesos Técnicos',
-    dependencyId: 'dsa',
-    parentId: 'dsa-direccion',
-    positions: [
-      position('dsa-pt-jefatura', 'Jefatura', 'Erika'),
-      position('dsa-pt-soporte-academico', 'Técnico en Soporte Académico', 'Paul'),
-      position('dsa-pt-matriculas-especiales', 'Especialista en Soporte de Matrículas Especiales', 'Nicaise'),
-      position('dsa-pt-homologacion-convalidacion', 'Especialista en Homologación y Convalidación', 'Humberto'),
-      position('dsa-pt-emision-soporte-documentos', 'Especialista en Emisión y Soporte de Documentos Académicos', 'Alex'),
-      position('dsa-pt-tecnico-emision-documentos', 'Técnico en emisión de documentos académicos', 'Roy', { reportsToPositionId: 'dsa-pt-emision-soporte-documentos' }),
+    id: 'unidad-simulada-2',
+    name: 'Unidad organizacional de prueba 2',
+    specialists: [
+      { id: 'especialista-prueba-03', name: 'Especialista de prueba 03', position: 'Especialista responsable (dato simulado)', description: 'Descripción provisional del puesto. Las funciones oficiales serán incorporadas cuando se proporcionen los datos aprobados del MOF.' },
+      { id: 'especialista-prueba-04', name: 'Especialista de prueba 04', position: 'Especialista responsable (dato simulado)', description: 'Descripción provisional del puesto. Las funciones oficiales serán incorporadas cuando se proporcionen los datos aprobados del MOF.' },
     ],
   },
   {
-    id: 'dsa-registro-central-estadistica',
-    name: 'Unidad de Registro Central y Estadística Académica',
-    dependencyId: 'dsa',
-    parentId: 'dsa-direccion',
-    positions: [
-      position('dsa-rcea-registro-estadistica', 'Especialista en Registro y Estadística Académica', 'Giancarlo'),
-      position('dsa-rcea-tecnico-registro-central', 'Técnico de registro central', 'Plaza disponible', { available: false }),
+    id: 'unidad-simulada-3',
+    name: 'Unidad organizacional de prueba 3',
+    specialists: [
+      { id: 'especialista-prueba-05', name: 'Especialista de prueba 05', position: 'Especialista responsable (dato simulado)', description: 'Descripción provisional del puesto. Las funciones oficiales serán incorporadas cuando se proporcionen los datos aprobados del MOF.' },
     ],
   },
 ]
-
-export const documentTypes = ['Oficio', 'Memorando', 'Informe', 'Solicitud', 'Carta']
-export const documentPriorities = ['Normal', 'Alta', 'Urgente']
