@@ -48,7 +48,7 @@ function nodeToDocument(node) {
 
 export async function listNodeChildren(nodeId, options = {}) {
   const params = new URLSearchParams({
-    include: 'properties,association',
+    include: 'properties,association,content,path',
     maxItems: String(options.maxItems || 100),
   })
 
