@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import './App.css'
 import './components/Sidebar.css'
 import './components/TopBar.css'
@@ -6,8 +6,9 @@ import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { roleDefinitions } from './config/roles'
 import { rolePages } from './pages'
-import { loadStoredDocuments, saveSimulatedDocument } from './utils/documentStore'
+import { loadAlfrescoConfirmedDocuments, loadStoredDocuments, recordAlfrescoConfirmedDocument } from './utils/documentStore'
 import { directorProfiles } from './data/simulatedSession'
+import { uploadPdfToFolder } from './api/alfresco'
 
 function getInitialDocuments() {
   try {
@@ -17,11 +18,21 @@ function getInitialDocuments() {
   }
 }
 
+function getInitialAlfrescoDocuments() {
+  try {
+    return loadAlfrescoConfirmedDocuments()
+  } catch {
+    return []
+  }
+}
+
 function App() {
   const [selectedRole, setSelectedRole] = useState('director-dti')
   const [activePanel, setActivePanel] = useState('inicio')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const [documents, setDocuments] = useState(getInitialDocuments)
+  const [documents] = useState(getInitialDocuments)
+  const [alfrescoDocuments, setAlfrescoDocuments] = useState(getInitialAlfrescoDocuments)
+  const uploadInFlight = useRef(false)
   const currentRole = roleDefinitions[selectedRole]
   const currentOffice = selectedRole === 'director-dti' ? directorProfiles.DTI : directorProfiles.DSA
   const ActivePage = rolePages[selectedRole]
@@ -38,14 +49,46 @@ function App() {
     setIsSidebarOpen(false)
   }
 
-  const handleDocumentSubmit = (documentData) => {
+  const handleDocumentSubmit = async (documentData) => {
+    if (uploadInFlight.current) return { ok: false, error: 'Ya hay un envío en curso.' }
+    uploadInFlight.current = true
     try {
-      const result = saveSimulatedDocument(documentData)
-      setDocuments(result.documents)
-      setActivePanel(selectedRole.startsWith('director-') ? 'documentos-enviados' : 'mis-envios')
-      return { ok: true, document: result.document }
-    } catch {
-      return { ok: false, error: 'No se pudo registrar el documento en el almacenamiento local.' }
+      const emissionDate = new Date().toISOString()
+      const entry = await uploadPdfToFolder(
+        import.meta.env.VITE_ALFRESCO_INBOX_NODE_ID,
+        documentData.mainDocumentFile,
+        { title: documentData.subject, description: documentData.description },
+      )
+      if (!entry?.id) return { ok: false, error: 'Alfresco no confirmó la creación del documento.', uncertain: true }
+
+      const metadata = { ...documentData }
+      delete metadata.mainDocumentFile
+      const confirmedData = { ...metadata, emissionDate }
+      let confirmedDocuments
+      let savedDocument
+      let localWarning = ''
+      try {
+        const result = recordAlfrescoConfirmedDocument(confirmedData, entry)
+        confirmedDocuments = result.documents
+        savedDocument = result.document
+      } catch {
+        savedDocument = {
+          ...confirmedData,
+          id: entry.id,
+          source: 'alfresco',
+          status: 'Confirmado por Alfresco',
+          createdAt: entry.createdAt || emissionDate,
+        }
+        confirmedDocuments = [savedDocument, ...alfrescoDocuments.filter((document) => document.id !== entry.id)]
+        localWarning = 'Alfresco confirmó el envío, pero no se pudo actualizar el registro local del correlativo.'
+      }
+
+      setAlfrescoDocuments(confirmedDocuments)
+      return { ok: true, document: savedDocument, warning: localWarning }
+    } catch (error) {
+      return { ok: false, error: error?.message || 'No se pudo completar el envío a Alfresco.', uncertain: Boolean(error?.uncertain) }
+    } finally {
+      uploadInFlight.current = false
     }
   }
 
@@ -63,7 +106,7 @@ function App() {
           roleLabel={currentRole.label}
           roles={roleDefinitions}
         />
-        <main className="main-content"><ActivePage activePanel={activePanel} description={activeItem.description} documents={documents} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} /></main>
+        <main className="main-content"><ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} description={activeItem.description} documents={documents} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} /></main>
       </div>
     </div>
   )

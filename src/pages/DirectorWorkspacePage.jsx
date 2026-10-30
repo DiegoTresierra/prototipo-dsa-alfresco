@@ -68,8 +68,9 @@ function DirectorHome({ office, summary }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, documents, onDocumentSubmit, office }) {
+export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], onDocumentSubmit, office }) {
   const summary = getLocalSummary(documents, office)
+  const confirmedSent = alfrescoDocuments.filter((document) => document.issuingAcronym === office.acronym)
 
   if (activePanel === 'nuevo-documento') {
     return <DocumentForm onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
@@ -85,7 +86,26 @@ export function DirectorWorkspacePage({ title, description, activePanel, documen
   }
 
   if (activePanel === 'documentos-enviados') {
-    return <DocumentList description="Registros locales emitidos por esta dependencia." documents={summary.sent} title={title} />
+    return (
+      <PanelPage description="Documentos confirmados por Alfresco y conservados en este navegador." title={title}>
+        {confirmedSent.length === 0 ? (
+          <div className="empty-state">No hay documentos confirmados por Alfresco para esta dependencia.</div>
+        ) : (
+          <div className="table-scroll">
+            <table className="document-table">
+              <thead><tr><th>Id Alfresco</th><th>Número documental</th><th>Asunto</th><th>Archivo principal</th><th>Fecha de emisión</th><th>Estado</th></tr></thead>
+              <tbody>{confirmedSent.map((document) => (
+                <tr key={document.id}>
+                  <td>{document.id}</td><td>{document.documentNumber}</td><td>{document.subject}</td>
+                  <td>{document.attachmentName}</td><td>{formatDocumentDate(document.emissionDate)}</td>
+                  <td><span className="status-label">Confirmado por Alfresco</span></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </PanelPage>
+    )
   }
 
   if (activePanel === 'para-conocimiento' || activePanel === 'para-atencion') {
