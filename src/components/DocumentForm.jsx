@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { documentPriorities, documentTypes, organizationalUnits, recipientDependencies } from '../data/emisorCatalog'
 import { simulatedUser } from '../data/simulatedSession'
 import { getCorrelativeStatus } from '../utils/documentStore'
+import { PdfPreview } from './PdfPreview'
 import { SearchableSelect } from './SearchableSelect'
 
 const maxFileSize = 20 * 1024 * 1024
@@ -29,7 +30,6 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
   const [emissionDate, setEmissionDate] = useState('')
   const [successWarning, setSuccessWarning] = useState('')
   const [mainDocument, setMainDocument] = useState(null)
-  const [preview, setPreview] = useState({ url: '', message: 'Selecciona un PDF para ver la vista previa.' })
   const lock = useRef(false)
   const token = useRef(createToken())
   const inputRef = useRef(null)
@@ -37,32 +37,6 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
   const recipientUnit = organizationalUnits.find((unit) => unit.id === 'dsa-direccion')
   const directionPosition = recipientUnit.positions.find((position) => position.id === 'dsa-puesto-direccion')
   const selectedDependency = recipientDependencies.find((dependency) => dependency.id === dependencyId)
-
-  useEffect(() => {
-    let cancelled = false
-    let objectUrl = ''
-    if (!mainDocument) {
-      setPreview({ url: '', message: 'Selecciona un PDF para ver la vista previa.' })
-      return undefined
-    }
-    const createPreview = async () => {
-      const error = await validatePdf(mainDocument)
-      if (cancelled) return
-      if (error) {
-        setPreview({ url: '', message: error })
-        return
-      }
-      objectUrl = URL.createObjectURL(new Blob([mainDocument], { type: 'application/pdf' }))
-      setPreview({ url: objectUrl, message: '' })
-    }
-    createPreview().catch(() => {
-      if (!cancelled) setPreview({ url: '', message: 'No se pudo preparar la vista previa del PDF.' })
-    })
-    return () => {
-      cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [mainDocument])
 
   let counter = { last: '', next: '' }
   let counterError = ''
@@ -78,7 +52,6 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
       setSubmitted(false)
       setResultDocumentId('')
       setEmissionDate('')
-      setSuccessWarning('')
       setSuccessWarning('')
     }
   }
@@ -194,8 +167,9 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
           <button className="button-secondary" onClick={() => inputRef.current?.click()} type="button">{mainDocument ? 'Sustituir documento' : 'Subir documento'}</button>
           <p className="file-section__note">El PDF se enviará a la carpeta de pruebas de Alfresco.</p>
           {mainDocument && <div className="selected-file"><strong>{mainDocument.name}</strong><span>PDF · {sizeLabel(mainDocument.size)}</span></div>}
-          <div aria-live="polite" className="main-document-preview">{preview.url ? <iframe aria-label={'Vista previa de ' + mainDocument.name} referrerPolicy="no-referrer" sandbox="" src={preview.url} title={'Vista previa de ' + mainDocument.name} /> : <p>{preview.message}</p>}</div>
-          {preview.url && <a href={preview.url} rel="noopener noreferrer" target="_blank">Abrir PDF en otra pestaña</a>}
+          <div className="main-document-preview">
+            <PdfPreview blob={mainDocument} declaredMimeType={mainDocument?.type} emptyMessage="Selecciona un PDF para ver la vista previa." fileName={mainDocument?.name || 'documento.pdf'} />
+          </div>
         </div></fieldset>
         <fieldset className="form-section"><legend>Documentos adjuntos</legend><div className="file-section"><p className="file-section__note">La carga de anexos no está habilitada para esta prueba.</p></div></fieldset>
         {formError && <p className="form-message form-message--error" role="alert">{formError}</p>}

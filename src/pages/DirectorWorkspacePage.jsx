@@ -1,7 +1,9 @@
 /* eslint-disable react/prop-types */
+import { useState } from 'react'
 import { DocumentForm } from '../components/DocumentForm'
 import { DocumentList } from '../components/DocumentList'
 import { PanelPage } from '../components/PanelPage'
+import { PdfPreview } from '../components/PdfPreview'
 import { DirectorPage } from './DirectorPage'
 import { formatDocumentDate } from '../utils/documentFormat'
 
@@ -69,8 +71,10 @@ function DirectorHome({ office, summary }) {
 }
 
 export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], onDocumentSubmit, office }) {
+  const [selectedSentDocumentId, setSelectedSentDocumentId] = useState('')
   const summary = getLocalSummary(documents, office)
   const confirmedSent = alfrescoDocuments.filter((document) => document.issuingAcronym === office.acronym)
+  const selectedSentDocument = confirmedSent.find((document) => document.id === selectedSentDocumentId)
 
   if (activePanel === 'nuevo-documento') {
     return <DocumentForm onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
@@ -97,12 +101,22 @@ export function DirectorWorkspacePage({ title, description, activePanel, documen
               <tbody>{confirmedSent.map((document) => (
                 <tr key={document.id}>
                   <td>{document.id}</td><td>{document.documentNumber}</td><td>{document.subject}</td>
-                  <td>{document.attachmentName}</td><td>{formatDocumentDate(document.emissionDate)}</td>
+                  <td><button className="document-link" onClick={() => setSelectedSentDocumentId(document.id)} type="button">Ver documento</button><small className="table-secondary">{document.attachmentName}</small></td>
+                  <td>{formatDocumentDate(document.emissionDate)}</td>
                   <td><span className="status-label">Confirmado por Alfresco</span></td>
                 </tr>
               ))}</tbody>
             </table>
           </div>
+        )}
+        {selectedSentDocument && (
+          <section aria-labelledby="sent-document-preview-title" className="document-preview">
+            <div className="document-preview__header">
+              <div><p className="breadcrumb">Vista previa</p><h2 id="sent-document-preview-title">{selectedSentDocument.attachmentName}</h2></div>
+              <button className="button-secondary" onClick={() => setSelectedSentDocumentId('')} type="button">Cerrar vista previa</button>
+            </div>
+            <PdfPreview declaredMimeType={selectedSentDocument.attachmentType} fileName={selectedSentDocument.attachmentName} nodeId={selectedSentDocument.id} />
+          </section>
         )}
       </PanelPage>
     )
