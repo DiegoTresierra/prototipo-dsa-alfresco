@@ -7,7 +7,8 @@ import { SearchableSelect } from './SearchableSelect'
 const createSubmissionToken = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 /* eslint-disable react/prop-types */
-export function DocumentForm({ onSubmit }) {
+export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Panel de Dirección DTI' }) {
+  const issuer = user
   const [dependencyId, setDependencyId] = useState('dsa')
   const [documentType, setDocumentType] = useState('')
   const [formError, setFormError] = useState('')
@@ -23,7 +24,7 @@ export function DocumentForm({ onSubmit }) {
 
   if (documentType) {
     try {
-      correlativeStatus = getCorrelativeStatus(simulatedUser.acronym, documentType, documentYear)
+      correlativeStatus = getCorrelativeStatus(issuer.acronym, documentType, documentYear)
     } catch {
       counterError = 'No se pudieron leer los contadores locales. No registres el documento hasta revisar el almacenamiento de este navegador.'
     }
@@ -64,10 +65,10 @@ export function DocumentForm({ onSubmit }) {
       recipientFunctionsDescription: directionPosition.functionsDescription,
       documentType,
       documentYear,
-      issuingAcronym: simulatedUser.acronym,
-      sender: simulatedUser.name,
-      senderPosition: simulatedUser.position,
-      originatingDependency: simulatedUser.office,
+      issuingAcronym: issuer.acronym,
+      sender: issuer.name,
+      senderPosition: issuer.position,
+      originatingDependency: issuer.office,
       documentDate: formData.get('documentDate'),
       subject: formData.get('subject').trim(),
       reference: formData.get('reference').trim(),
@@ -95,12 +96,12 @@ export function DocumentForm({ onSubmit }) {
     disabled: !dependency.available,
   }))
   const documentNumberPreview = documentType && correlativeStatus.next
-    ? `${documentType.toLocaleUpperCase('es')} N.° ${correlativeStatus.next}-${documentYear}-${simulatedUser.acronym}`
+    ? `${documentType.toLocaleUpperCase('es')} N.° ${correlativeStatus.next}-${documentYear}-${issuer.acronym}`
     : 'Selecciona el tipo documental para obtener la vista previa'
 
   return (
     <section aria-labelledby="document-form-title" className="document-form-page">
-      <p className="breadcrumb">Panel del Emisor</p>
+      <p className="breadcrumb">{panelLabel}</p>
       <h1 id="document-form-title">Nuevo documento</h1>
       <form className="document-form" noValidate onChange={unlockAfterEdit} onSubmit={handleSubmit}>
         <fieldset className="form-section">
@@ -148,7 +149,7 @@ export function DocumentForm({ onSubmit }) {
             </label>
             <label className="form-field">
               <span>Sigla de oficina emisora</span>
-              <input name="issuingAcronym" readOnly value={simulatedUser.acronym} />
+              <input name="issuingAcronym" readOnly value={issuer.acronym} />
             </label>
             <label className="form-field form-field--full">
               <span>Vista previa del número documental</span>
@@ -163,15 +164,15 @@ export function DocumentForm({ onSubmit }) {
           <div className="form-grid">
             <label className="form-field">
               <span>Remitente</span>
-              <input name="sender" readOnly value={simulatedUser.name} />
+              <input name="sender" readOnly value={issuer.name} />
             </label>
             <label className="form-field">
               <span>Cargo</span>
-              <input name="senderPosition" readOnly value={simulatedUser.position} />
+              <input name="senderPosition" readOnly value={issuer.position} />
             </label>
             <label className="form-field form-field--full">
               <span>Oficina de origen</span>
-              <input name="originatingDependency" readOnly value={simulatedUser.office} />
+              <input name="originatingDependency" readOnly value={issuer.office} />
             </label>
           </div>
         </fieldset>

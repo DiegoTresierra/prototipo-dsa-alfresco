@@ -3,8 +3,10 @@
 .topbar__eyebrow { margin: 0; color: #555555; font-size: 14px; letter-spacing: .03em; }
 .topbar__menu { display: none; width: 38px; height: 38px; padding: 0; border: 1px solid #e2e2e2; border-radius: 4px; background: #ffffff; color: #444444; cursor: pointer; }
 .topbar__title { min-width: 0; flex: 1; }
+.topbar__controls { display: flex; align-items: flex-start; gap: 12px; }
 .role-selector { display: grid; min-width: 220px; gap: 3px; color: #555555; font-size: 14px; }
 .role-selector select { width: 100%; padding: 6px 8px; border: 1px solid #e2e2e2; border-radius: 4px; background: #ffffff; color: #222222; font: inherit; font-size: 16px; }
 .role-selector small { color: #555555; font-size: 14px; }
 @media (max-width: 760px) { .topbar__menu { display: grid; place-items: center; } }
-@media (max-width: 560px) { .topbar { align-items: flex-start; flex-wrap: wrap; } .role-selector { width: 100%; } }
+@media (max-width: 760px) { .topbar__controls { flex: 1; flex-wrap: wrap; justify-content: flex-end; } .role-selector { min-width: 190px; } }
+@media (max-width: 560px) { .topbar { align-items: flex-start; flex-wrap: wrap; } .topbar__title { flex: 1 1 calc(100% - 60px); } .topbar__controls { width: 100%; justify-content: stretch; } .role-selector { min-width: 0; flex: 1; } }
