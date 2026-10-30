@@ -25,6 +25,16 @@ async function request(url, options = {}) {
   return response.status === 204 ? null : response.json()
 }
 
+async function requestBlob(url) {
+  const response = await fetch(url)
+
+  if (!response.ok) {
+    throw new Error(`No se pudo obtener el archivo. La API respondió con estado ${response.status}.`)
+  }
+
+  return response.blob()
+}
+
 function nodeToDocument(node) {
   const properties = node.properties || {}
   const content = node.content || {}
@@ -39,7 +49,7 @@ function nodeToDocument(node) {
     specialistName: '',
     attachmentName: node.name,
     createdAt: node.createdAt,
-    status: 'Por atender',
+    status: null,
     nodeType: node.nodeType,
     mimeType: content.mimeType || '',
     sizeInBytes: content.sizeInBytes || 0,
@@ -70,6 +80,10 @@ export async function searchDocuments(query, options = {}) {
   })
 
   return (response.list?.entries || []).map(({ entry }) => nodeToDocument(entry))
+}
+
+export async function getNodeContent(nodeId) {
+  return requestBlob(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/content?attachment=false`)
 }
 
 export async function listGroupMembers(groupId) {

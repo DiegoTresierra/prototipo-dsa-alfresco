@@ -9,7 +9,7 @@ function formatFileSize(sizeInBytes) {
 }
 
 /* eslint-disable react/prop-types */
-export function DocumentList({ title, description, documents, showAlfrescoDetails = false }) {
+export function DocumentList({ title, description, documents, onSelectDocument, selectedDocumentId, showAlfrescoDetails = false }) {
   return (
     <section aria-labelledby="document-list-title" className="document-list-page">
       <p className="breadcrumb">Bandeja de trabajo</p>
@@ -19,11 +19,11 @@ export function DocumentList({ title, description, documents, showAlfrescoDetail
         <div className="empty-state">Todavía no hay documentos registrados en esta sesión.</div>
       ) : (
         <div className="table-scroll">
-          <table className="document-table">
+          <table className={`document-table${showAlfrescoDetails ? ' document-table--alfresco' : ''}`}>
             {showAlfrescoDetails ? (
               <>
-                <thead><tr><th>Id Alfresco</th><th>Nombre del archivo</th><th>Título</th><th>Fecha</th><th>Creador</th><th>Tipo</th><th>Tamaño</th></tr></thead>
-                <tbody>{documents.map((document) => <tr key={document.id}><td>{document.id}</td><td>{document.attachmentName}</td><td>{document.subject}</td><td>{formatDocumentDate(document.createdAt)}</td><td>{document.sender || '-'}</td><td>{document.mimeType || '-'}</td><td>{formatFileSize(document.sizeInBytes)}</td></tr>)}</tbody>
+                <thead><tr><th>Id Alfresco</th><th>Nombre del archivo</th><th>Título</th><th>Fecha</th><th>Creador</th><th>Tipo</th><th>Tamaño</th><th>Estado</th></tr></thead>
+                <tbody>{documents.map((document) => <tr className={document.id === selectedDocumentId ? 'document-table__row--selected' : ''} key={document.id}><td>{document.id}</td><td><button className="document-link" onClick={() => onSelectDocument?.(document)} type="button">{document.attachmentName}</button></td><td>{document.subject || '-'}</td><td>{formatDocumentDate(document.createdAt)}</td><td>{document.sender || '-'}</td><td>{document.mimeType || '-'}</td><td>{formatFileSize(document.sizeInBytes)}</td><td>{document.status || 'No disponible'}</td></tr>)}</tbody>
               </>
             ) : (
               <>
