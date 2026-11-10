@@ -11,6 +11,10 @@ export default defineConfig(({ mode }) => {
     base: '/prototipo-dsa-alfresco/',
     server: {
       proxy: {
+        '/api/auth': {
+          target: env.AUTH_TARGET || 'http://127.0.0.1:8787',
+          changeOrigin: false,
+        },
         '/api/alfresco': {
           target: alfrescoTarget,
           changeOrigin: true,

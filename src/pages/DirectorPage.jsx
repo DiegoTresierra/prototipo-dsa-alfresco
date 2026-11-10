@@ -1,72 +1,61 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { PanelPage } from '../components/PanelPage'
 import { DocumentList } from '../components/DocumentList'
-import { listNodeChildren } from '../api/alfresco'
 import { PdfPreview } from '../components/PdfPreview'
 
 /* eslint-disable react/prop-types */
-export function DirectorPage({ title, description, activePanel }) {
-  const [apiDocuments, setApiDocuments] = useState([])
+export function DirectorPage({ title, description, allowAlfresco = false, allowAlfrescoTestInbox = false, inboxMode = 'dependency', inbox }) {
   const [selectedDocument, setSelectedDocument] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const isTestInbox = inboxMode === 'test'
 
-  useEffect(() => {
-    if (activePanel !== 'para-conocimiento') return
-
-    let cancelled = false
-    let refreshTimer
-    const loadDocuments = async (isRefresh = false) => {
-      if (!isRefresh) setLoading(true)
-      setError('')
-      try {
-        const folderId = import.meta.env.VITE_ALFRESCO_INBOX_NODE_ID
-        if (!folderId) throw new Error('Falta configurar VITE_ALFRESCO_INBOX_NODE_ID.')
-        const result = await listNodeChildren(folderId, { where: '(isFile=true)' })
-        if (!cancelled) setApiDocuments(result)
-      } catch (loadError) {
-        if (!cancelled) setError(loadError.message)
-      } finally {
-        if (!cancelled && !isRefresh) setLoading(false)
-      }
-    }
-
-    const scheduleRefresh = () => {
-      const delay = 5000 + Math.random() * 15000
-      refreshTimer = window.setTimeout(async () => {
-        await loadDocuments(true)
-        if (!cancelled) scheduleRefresh()
-      }, delay)
-    }
-
-    loadDocuments()
-    scheduleRefresh()
-    return () => {
-      cancelled = true
-      window.clearTimeout(refreshTimer)
-    }
-  }, [activePanel])
-
-  if (activePanel === 'para-conocimiento') {
-    return (
-      <>
-        {loading && <p className="form-message" role="status">Consultando documentos en Alfresco...</p>}
-        {error && <p className="form-message form-message--error" role="alert">{error}</p>}
-        <DocumentList description="Archivos reales disponibles en la carpeta de Alfresco configurada." documents={apiDocuments} onSelectDocument={setSelectedDocument} selectedDocumentId={selectedDocument?.id} showAlfrescoDetails title={title} />
-        {selectedDocument && (
-          <section aria-labelledby="document-preview-title" className="document-preview">
-            <div className="document-preview__header">
-              <div>
-                <p className="breadcrumb">Vista previa</p>
-                <h2 id="document-preview-title">{selectedDocument.attachmentName}</h2>
-              </div>
-            </div>
-            <PdfPreview declaredMimeType={selectedDocument.mimeType} fileName={selectedDocument.attachmentName} nodeId={selectedDocument.id} />
-          </section>
-        )}
-      </>
-    )
+  if (!allowAlfresco && !allowAlfrescoTestInbox) {
+    return <PanelPage description={description} title={title}><p className="form-message" role="status">La consulta requiere una sesión con permisos de lectura autorizados para Alfresco.</p></PanelPage>
   }
 
-  return <PanelPage description={description} title={title} />
+  const emptyMessage = inbox.error
+    ? 'La lista no está disponible hasta resolver el error de conexión.'
+    : inbox.loading
+      ? 'Consultando documentos en Alfresco…'
+      : isTestInbox
+        ? 'No se encontraron archivos PDF en la carpeta compartida de pruebas DEV.'
+        : inbox.unclassifiedCount > 0
+        ? 'Hay archivos en la carpeta de pruebas, pero Alfresco no proporciona el destinatario para clasificarlos por dependencia. No se muestran como recibidos.'
+        : 'No hay documentos identificados para esta dependencia.'
+
+  return (
+    <>
+      <div className="inbox-toolbar">
+        <div>
+          {inbox.lastUpdated && <p className="table-secondary">Actualizado: {new Date(inbox.lastUpdated).toLocaleString('es-PE')}</p>}
+        </div>
+        <button className="button-secondary" disabled={inbox.loading || inbox.refreshing} onClick={inbox.refresh} type="button">
+          {inbox.refreshing ? 'Actualizando…' : 'Actualizar bandeja'}
+        </button>
+      </div>
+      {inbox.error && <p className="form-message form-message--error" role="alert">{inbox.error}</p>}
+      <DocumentList
+        description={isTestInbox
+          ? 'Listado técnico de PDF recuperados de la carpeta compartida DEV. Los archivos no se atribuyen a DTI, DSA ni a otra dependencia.'
+          : 'Documentos de Alfresco cuyo destinatario coincide con esta dependencia.'}
+        documents={inbox.documents}
+        emptyMessage={emptyMessage}
+        onSelectDocument={setSelectedDocument}
+        selectedDocumentId={selectedDocument?.id}
+        showAlfrescoDetails
+        title={title}
+      />
+      {selectedDocument && (
+        <section aria-labelledby="document-preview-title" className="document-preview">
+          <div className="document-preview__header">
+            <div>
+              <p className="breadcrumb">Vista previa</p>
+              <h2 id="document-preview-title">{selectedDocument.attachmentName}</h2>
+            </div>
+            <button className="button-secondary" onClick={() => setSelectedDocument(null)} type="button">Cerrar vista previa</button>
+          </div>
+          <PdfPreview declaredMimeType={selectedDocument.mimeType} fileName={selectedDocument.attachmentName} nodeId={selectedDocument.id} />
+        </section>
+      )}
+    </>
+  )
 }

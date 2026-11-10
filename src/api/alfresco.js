@@ -11,10 +11,10 @@ async function request(url, options = {}) {
   })
 
   if (!response.ok) {
-    let detail = ''
+    let detail = `ALFRESCO_HTTP_${response.status}`
     try {
       const body = await response.json()
-      detail = body?.error?.briefSummary || body?.error?.description || ''
+      detail = `${detail}: ${body?.error?.briefSummary || body?.error?.description || ''}`
     } catch {
       detail = ''
     }
@@ -57,6 +57,9 @@ function nodeToDocument(node) {
 }
 
 export async function listNodeChildren(nodeId, options = {}) {
+  if (!coreApiPrefix) throw new Error('ALFRESCO_API_PREFIX_NOT_CONFIGURED')
+  if (!nodeId) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
+
   const params = new URLSearchParams({
     include: 'properties,association,content,path',
     maxItems: String(options.maxItems || 100),
@@ -65,7 +68,10 @@ export async function listNodeChildren(nodeId, options = {}) {
   if (options.where) params.set('where', options.where)
 
   const response = await request(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?${params}`)
-  return (response.list?.entries || []).map(({ entry }) => nodeToDocument(entry))
+  if (!Array.isArray(response?.list?.entries) || response.list.entries.some((record) => !record?.entry)) {
+    throw new Error('ALFRESCO_INVALID_LIST_RESPONSE')
+  }
+  return response.list.entries.map(({ entry }) => nodeToDocument(entry))
 }
 
 export async function searchDocuments(query, options = {}) {

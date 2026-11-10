@@ -5,6 +5,7 @@ import { DocumentList } from '../components/DocumentList'
 import { PanelPage } from '../components/PanelPage'
 import { PdfPreview } from '../components/PdfPreview'
 import { DirectorPage } from './DirectorPage'
+import { HierarchyManagementPage } from './HierarchyManagementPage'
 import { formatDocumentDate } from '../utils/documentFormat'
 
 const normalizeStatus = (status) => String(status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
@@ -70,23 +71,30 @@ function DirectorHome({ office, summary }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], onDocumentSubmit, office }) {
+export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], onDocumentSubmit, office, allowAlfresco = false, allowAlfrescoTestInbox = false, allowAlfrescoUpload = false, inbox }) {
   const [selectedSentDocumentId, setSelectedSentDocumentId] = useState('')
   const summary = getLocalSummary(documents, office)
   const confirmedSent = alfrescoDocuments.filter((document) => document.issuingAcronym === office.acronym)
   const selectedSentDocument = confirmedSent.find((document) => document.id === selectedSentDocumentId)
 
   if (activePanel === 'nuevo-documento') {
-    return <DocumentForm onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
+    return <DocumentForm allowAlfrescoUpload={allowAlfrescoUpload} onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
   }
 
   if (activePanel === 'inicio') {
     return <DirectorHome office={office} summary={summary} />
   }
 
-  if (activePanel === 'para-conocimiento' && office.acronym === 'DSA') {
-    const receivedForDsa = documents.filter((document) => document.destinationId === 'dsa')
-    return <DirectorPage activePanel={activePanel} description={description} documents={receivedForDsa} title={title} />
+  if (activePanel === 'gestion-jerarquia') {
+    return <HierarchyManagementPage office={office} />
+  }
+
+  if (activePanel === 'bandeja-pruebas-alfresco') {
+    return <DirectorPage allowAlfrescoTestInbox={allowAlfrescoTestInbox} description={description} inbox={inbox} inboxMode="test" title={title} />
+  }
+
+  if (activePanel === 'para-conocimiento') {
+    return <DirectorPage allowAlfresco={allowAlfresco} description={description} inbox={inbox} inboxMode="dependency" title={title} />
   }
 
   if (activePanel === 'documentos-enviados') {

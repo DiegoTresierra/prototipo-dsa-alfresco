@@ -8,15 +8,14 @@ function formatFileSize(sizeInBytes) {
   return `${(sizeInBytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/* eslint-disable react/prop-types */
-export function DocumentList({ title, description, documents, onSelectDocument, selectedDocumentId, showAlfrescoDetails = false }) {
+export function DocumentList({ title, description, documents, onSelectDocument, selectedDocumentId, showAlfrescoDetails = false, emptyMessage = 'Todavía no hay documentos registrados en esta sesión.' }) {
   return (
     <section aria-labelledby="document-list-title" className="document-list-page">
       <p className="breadcrumb">Bandeja de trabajo</p>
       <h1 id="document-list-title">{title}</h1>
       <p className="panel-page__intro">{description}</p>
       {documents.length === 0 ? (
-        <div className="empty-state">Todavía no hay documentos registrados en esta sesión.</div>
+        <div className="empty-state">{emptyMessage}</div>
       ) : (
         <div className="table-scroll">
           <table className={`document-table${showAlfrescoDetails ? ' document-table--alfresco' : ''}`}>

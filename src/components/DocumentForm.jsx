@@ -18,7 +18,7 @@ async function validatePdf(file) {
 }
 
 /* eslint-disable react/prop-types */
-export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Panel de Dirección DTI' }) {
+export function DocumentForm({ onSubmit, user = simulatedUser, allowAlfrescoUpload = false, panelLabel = 'Panel de Dirección DTI' }) {
   const issuer = user
   const [dependencyId, setDependencyId] = useState('dsa')
   const [documentType, setDocumentType] = useState('')
@@ -73,6 +73,10 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
 
   const handleSubmit = async (event) => {
     event.preventDefault()
+    if (!allowAlfrescoUpload) {
+      setFormError('El modo de demostraci\u00f3n no permite enviar documentos a Alfresco.')
+      return
+    }
     if (lock.current || !event.currentTarget.reportValidity()) return
     const values = new FormData(event.currentTarget)
     const required = ['documentType', 'priority', 'subject', 'description']
@@ -165,7 +169,7 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
         <fieldset className="form-section"><legend>Documento principal</legend><div className="file-section">
           <input accept="application/pdf,.pdf" hidden onChange={choosePdf} ref={inputRef} type="file" />
           <button className="button-secondary" onClick={() => inputRef.current?.click()} type="button">{mainDocument ? 'Sustituir documento' : 'Subir documento'}</button>
-          <p className="file-section__note">El PDF se enviará a la carpeta de pruebas de Alfresco.</p>
+          <p className="file-section__note">{allowAlfrescoUpload ? 'El PDF se enviar\u00e1 a la carpeta de pruebas de Alfresco.' : 'La vista previa est\u00e1 disponible en demostraci\u00f3n; el env\u00edo a Alfresco requiere sesi\u00f3n institucional.'}</p>
           {mainDocument && <div className="selected-file"><strong>{mainDocument.name}</strong><span>PDF · {sizeLabel(mainDocument.size)}</span></div>}
           <div className="main-document-preview">
             <PdfPreview blob={mainDocument} declaredMimeType={mainDocument?.type} emptyMessage="Selecciona un PDF para ver la vista previa." fileName={mainDocument?.name || 'documento.pdf'} />
@@ -176,7 +180,7 @@ export function DocumentForm({ onSubmit, user = simulatedUser, panelLabel = 'Pan
         {submitted && <p className="form-message" role="status">Documento enviado correctamente. ID Alfresco: {resultDocumentId}</p>}
         {successWarning && <p className="form-message form-message--error" role="status">{successWarning}</p>}
         {uncertainSubmission && <p className="form-message" role="status">Verifica el resultado en Alfresco antes de volver a intentar.</p>}
-        <div className="form-actions"><button className="button-primary" disabled={submitting || submitted || uncertainSubmission || Boolean(counterError)} type="submit">{submitting ? 'Enviando a Alfresco...' : submitted ? 'Envío confirmado' : 'Enviar documento'}</button></div>
+        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || submitting || submitted || uncertainSubmission || Boolean(counterError)} type="submit">{submitting ? 'Enviando a Alfresco...' : submitted ? 'Envío confirmado' : 'Enviar documento'}</button></div>
       </form>
     </section>
   )
