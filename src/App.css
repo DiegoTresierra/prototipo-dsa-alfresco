@@ -35,6 +35,12 @@
 .button-primary:disabled { cursor: default; opacity: .7; }
 .form-message { margin: 16px 0 0; padding: 10px 12px; border: 1px solid #b7c8b7; border-radius: 3px; background: #f4f8f4; color: #344834; font-size: 16px; }
 .form-message--error { border-color: #c9a8a8; background: #fbf5f5; color: #6b3333; }
+.login-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: #f5f5f5; color: #222222; }
+.login-card { width: min(100%, 440px); padding: 32px; border: 1px solid #e2e2e2; border-radius: 4px; background: #ffffff; box-shadow: 0 8px 24px rgba(0, 0, 0, .06); }
+.login-card h1 { margin: 0 0 24px; font-size: 28px; }
+.login-card__submit, .login-card__sso { display: flex; width: 100%; align-items: center; justify-content: center; text-align: center; text-decoration: none; }
+.login-divider { display: flex; align-items: center; gap: 12px; margin: 24px 0; color: #666666; }
+.login-divider::before, .login-divider::after { height: 1px; flex: 1; background: #e2e2e2; content: ''; }
 .empty-state { margin-top: 24px; padding: 24px; border: 1px solid #e2e2e2; border-radius: 4px; background: #ffffff; color: #555555; font-size: 16px; }
 .table-scroll { margin-top: 24px; overflow-x: auto; border: 1px solid #e2e2e2; background: #ffffff; }
 .document-table { width: 100%; border-collapse: collapse; font-size: 15px; table-layout: fixed; text-align: left; }
