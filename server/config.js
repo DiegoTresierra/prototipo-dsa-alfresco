@@ -23,6 +23,7 @@ export const config = {
   sessionSecret: required('SESSION_SECRET'),
   cookieSecure: process.env.COOKIE_SECURE === 'true',
   alfrescoTarget: required('ALFRESCO_TARGET').replace(/\/+$/, ''),
+  alfrescoDiagnostics: process.env.ALFRESCO_DIAGNOSTICS === 'true',
   basicAuthEnabled: process.env.ALFRESCO_BASIC_AUTH_ENABLED !== 'false',
   ssoAuthMode: process.env.ALFRESCO_SSO_AUTH_MODE || 'bearer',
   roleMappings: parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {}),

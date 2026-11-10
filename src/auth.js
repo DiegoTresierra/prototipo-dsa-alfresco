@@ -21,6 +21,8 @@ export async function loginBasic(username, password) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     if (body.error === 'ALFRESCO_UNAVAILABLE') throw new Error('El servicio Alfresco DEV no está disponible.')
+    if (body.error === 'ALFRESCO_FORBIDDEN') throw new Error('Alfresco rechazó el acceso de esta cuenta.')
+    if (body.error === 'ALFRESCO_AUTHENTICATION_ERROR') throw new Error('Alfresco rechazó la solicitud de autenticación.')
     throw new Error('Las credenciales de Alfresco DEV no son correctas.')
   }
   return response.json()

@@ -26,11 +26,17 @@ function cookieOptions(maxAge) {
 }
 
 function setCookie(response, name, value, options) {
-  response.append('Set-Cookie', cookie.serialize(name, value, options))
+  response.append('Set-Cookie', cookie.stringifySetCookie({ name, value, ...options }))
 }
 
 function clearCookie(response, name, options) {
   setCookie(response, name, '', { ...options, maxAge: 0 })
+}
+
+function logAuthDiagnostic(phase, category) {
+  if (config.alfrescoDiagnostics) {
+    console.info(`[auth] phase=${phase} category=${category}`)
+  }
 }
 
 function signedSessionId(id) {
@@ -189,17 +195,30 @@ app.post(['/api/auth/basic', '/api/auth/login'], async (request, response) => {
   const password = String(request.body?.password || '')
   if (!username || !password) return response.status(400).json({ error: 'CREDENTIALS_REQUIRED' })
   try {
+    logAuthDiagnostic('basic-authentication', 'started')
     const authentication = await authenticateBasic(config.alfrescoTarget, username, password)
+    logAuthDiagnostic('basic-authentication', 'alfresco-identity-verified')
     const session = await createAlfrescoSession('alfresco-basic', authentication, {
       id: authentication.identity.id,
       name: authentication.identity.displayName || authentication.identity.id,
       username: authentication.identity.id,
     })
+    logAuthDiagnostic('basic-authentication', 'session-created')
     setCookie(response, SESSION_COOKIE, signedSessionId(session.id), cookieOptions())
+    logAuthDiagnostic('basic-authentication', 'cookie-created')
     return response.json(publicSession(session))
   } catch (error) {
-    const unavailable = !error.status || error.status >= 500
-    return response.status(unavailable ? 503 : 401).json({ error: unavailable ? 'ALFRESCO_UNAVAILABLE' : 'INVALID_CREDENTIALS' })
+    logAuthDiagnostic('basic-authentication', `failed-${error.category || 'internal'}`)
+    if (error.category === 'authorization' && error.status === 401) {
+      return response.status(401).json({ error: 'INVALID_CREDENTIALS' })
+    }
+    if (error.category === 'authorization' && error.status === 403) {
+      return response.status(403).json({ error: 'ALFRESCO_FORBIDDEN' })
+    }
+    if (error.category === 'network' || error.category === 'upstream') {
+      return response.status(503).json({ error: 'ALFRESCO_UNAVAILABLE' })
+    }
+    return response.status(502).json({ error: 'ALFRESCO_AUTHENTICATION_ERROR' })
   }
 })
 

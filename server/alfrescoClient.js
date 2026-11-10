@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { config } from './config.js'
 
 const corePath = '/alfresco/api/-default-/public/alfresco/versions/1'
 const authenticationPath = '/alfresco/api/-default-/public/authentication/versions/1'
@@ -7,7 +8,17 @@ function basicHeader(username, password) {
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
 }
 
-async function parseResponse(response) {
+function ticketHeader(ticket) {
+  return `Basic ${Buffer.from(ticket, 'utf8').toString('base64')}`
+}
+
+function logDiagnostic(method, endpoint, status, category) {
+  if (config.alfrescoDiagnostics) {
+    console.info(`[alfresco] method=${method} endpoint=${endpoint} status=${status ?? 'network-error'} category=${category}`)
+  }
+}
+
+async function parseResponse(response, method, endpoint) {
   const text = await response.text()
   let body = null
   try {
@@ -16,30 +27,63 @@ async function parseResponse(response) {
     body = null
   }
   if (!response.ok) {
-    const error = new Error(body?.error?.briefSummary || `Alfresco responded with ${response.status}.`)
+    const category = response.status === 401 || response.status === 403
+      ? 'authorization'
+      : response.status >= 500
+        ? 'upstream'
+        : response.status === 404
+          ? 'endpoint'
+          : 'request'
+    logDiagnostic(method, endpoint, response.status, category)
+    const error = new Error(`Alfresco responded with ${response.status}.`)
     error.status = response.status
+    error.category = category
     throw error
   }
+  logDiagnostic(method, endpoint, response.status, 'success')
   return body
 }
 
 async function getJson(target, path, authorization) {
-  return parseResponse(await fetch(`${target}${path}`, {
-    headers: { Accept: 'application/json', Authorization: authorization },
-  }))
+  const endpoint = `${target}${path}`
+  try {
+    return await parseResponse(await fetch(endpoint, {
+      headers: { Accept: 'application/json', Authorization: authorization },
+    }), 'GET', endpoint)
+  } catch (error) {
+    if (!error.status) {
+      logDiagnostic('GET', endpoint, null, 'network')
+      error.category = 'network'
+    }
+    throw error
+  }
 }
 
 export async function createTicket(target, username, password) {
-  const response = await fetch(`${target}${authenticationPath}/tickets`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: basicHeader(username, password),
-    },
-    body: JSON.stringify({ userId: username, password }),
-  })
-  return parseResponse(response)
+  if (!username || !password) {
+    const error = new Error('Basic credentials are required.')
+    error.status = 400
+    error.category = 'request'
+    throw error
+  }
+  const endpoint = `${target}${authenticationPath}/tickets`
+  try {
+    return await parseResponse(await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: basicHeader(username, password),
+      },
+      body: JSON.stringify({ userId: username, password }),
+    }), 'POST', endpoint)
+  } catch (error) {
+    if (!error.status) {
+      logDiagnostic('POST', endpoint, null, 'network')
+      error.category = 'network'
+    }
+    throw error
+  }
 }
 
 export async function getAlfrescoIdentity(target, authorization) {
@@ -58,7 +102,7 @@ export async function authenticateBasic(target, username, password) {
   const ticketResponse = await createTicket(target, username, password)
   const ticket = ticketResponse?.entry?.id
   if (!ticket) throw new Error('Alfresco did not return a valid ticket.')
-  const authorization = basicHeader(username, ticket)
+  const authorization = ticketHeader(ticket)
   const identity = await getAlfrescoIdentity(target, authorization)
   const groups = await getAlfrescoGroups(target, identity.id, authorization)
   return { identity, groups, authorization, ticket }
