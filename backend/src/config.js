@@ -1,6 +1,16 @@
 import dotenv from 'dotenv'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-dotenv.config({ path: ['.env.local', '.env'] })
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+dotenv.config({
+  path: [
+    path.resolve(process.cwd(), '.env.local'),
+    path.join(projectRoot, '.env.local'),
+    path.resolve(process.cwd(), '.env'),
+    path.join(projectRoot, '.env'),
+  ],
+})
 
 function required(name) {
   const value = process.env[name]

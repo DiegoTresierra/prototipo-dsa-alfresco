@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { loginBasic } from '../auth'
+import { apiUrl } from '../api/client'
 import './LoginPage.css'
 
 /* eslint-disable react/prop-types */
@@ -65,7 +66,7 @@ export function LoginPage({ basicAuthEnabled, onAuthenticated }) {
         )}
 
         {basicAuthEnabled && <div className="login-divider"><span>O continúa con</span></div>}
-        <a className="button-primary login-card__sso" href="/api/auth/login">Iniciar sesión institucional (SSO)</a>
+        <a className="button-primary login-card__sso" href={apiUrl('/api/auth/login')}>Iniciar sesión institucional (SSO)</a>
         {!basicAuthEnabled && <p className="form-message">El acceso con cuentas Alfresco DEV está deshabilitado.</p>}
       </section>
     </main>

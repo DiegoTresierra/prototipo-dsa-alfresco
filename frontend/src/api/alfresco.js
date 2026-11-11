@@ -1,9 +1,11 @@
+import { apiFetch } from './client'
+
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
 
 async function request(url, options = {}) {
   const { csrfToken, ...fetchOptions } = options
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     ...fetchOptions,
     credentials: 'include',
     headers: { Accept: 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...fetchOptions.headers },
@@ -24,7 +26,7 @@ async function request(url, options = {}) {
 }
 
 async function requestBlob(url) {
-  const response = await fetch(url, { credentials: 'include' })
+  const response = await apiFetch(url, { credentials: 'include' })
   if (!response.ok) {
     const error = new Error(`No se pudo obtener el archivo. La API respondió con estado ${response.status}.`)
     error.status = response.status
@@ -89,7 +91,7 @@ export async function uploadPdfToFolder(nodeId, file, { title, description }, cs
   formData.append('cm:description', description)
   let response
   try {
-    response = await fetch(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?autoRename=false`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-CSRF-Token': csrfToken }, body: formData })
+    response = await apiFetch(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?autoRename=false`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-CSRF-Token': csrfToken }, body: formData })
   } catch {
     const error = new Error('No se pudo confirmar la respuesta de Alfresco. Revisa la carpeta antes de volver a intentar.')
     error.uncertain = true

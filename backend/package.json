@@ -1,0 +1,17 @@
+{
+  "name": "prototipo-dsa-alfresco-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test:resolver": "node --test src/roleResolver.test.js"
+  },
+  "dependencies": {
+    "cookie": "^2.0.2",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "openid-client": "^5.6.5"
+  }
+}
