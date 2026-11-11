@@ -120,6 +120,7 @@ export function buildAlfrescoUrl(target, requestPath, query) {
     '/api/-default-/public/alfresco/versions/1/nodes/',
     '/api/-default-/public/alfresco/versions/1/people/',
     '/api/-default-/public/alfresco/versions/1/groups/',
+    '/api/-default-/public/search/versions/1/search',
   ]
   if (!allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) {
     const error = new Error('The requested Alfresco operation is not allowed.')

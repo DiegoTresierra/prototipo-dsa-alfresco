@@ -243,17 +243,62 @@ app.post('/api/auth/logout', requireSession, requireCsrf, (request, response) =>
   return response.status(204).end()
 })
 
+async function requestBody(request) {
+  if (request.method === 'GET' || request.method === 'HEAD') return undefined
+  const contentType = request.get('content-type') || ''
+  if (contentType.includes('application/json')) return JSON.stringify(request.body || {})
+  const chunks = []
+  for await (const chunk of request) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks)
+}
+
+function isAllowedAlfrescoRequest(request) {
+  const path = request.path
+  const isNodeRequest = /^\/api\/-default-\/public\/alfresco\/versions\/1\/nodes\/[^/]+(?:\/children|\/content)?$/.test(path)
+  const isGroupMembersRequest = /^\/api\/-default-\/public\/alfresco\/versions\/1\/groups\/[^/]+\/members$/.test(path)
+  const isSearchRequest = path === '/api/-default-/public/search/versions/1/search'
+  if (request.method === 'GET' && (isNodeRequest || isGroupMembersRequest)) return true
+  if (request.method === 'POST' && isSearchRequest) return true
+  if (request.method === 'POST' && /\/nodes\/[^/]+\/children$/.test(path)) {
+    return request.session.capabilities?.includes('documents:write') === true
+  }
+  return false
+}
+
+function isPdfMultipart(request, body) {
+  const contentType = request.get('content-type') || ''
+  return contentType.toLowerCase().startsWith('multipart/form-data;') &&
+    Buffer.isBuffer(body) &&
+    body.length <= 25 * 1024 * 1024 &&
+    body.includes(Buffer.from('%PDF-'))
+}
+
 app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) => {
   try {
     if (request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
+    if (!isAllowedAlfrescoRequest(request)) return response.status(403).json({ error: 'ALFRESCO_OPERATION_NOT_ALLOWED' })
     const requestPath = request.path
     const url = buildAlfrescoUrl(config.alfrescoTarget, requestPath, request.url.split('?')[1] ? `?${request.url.split('?')[1]}` : '')
-    const upstream = await fetch(url, { method: request.method, headers: { Accept: request.get('accept') || 'application/json', Authorization: request.session.authorization } })
-    const body = await upstream.arrayBuffer()
+    const body = await requestBody(request)
+    const contentType = request.get('content-type')
+    if (request.method === 'POST' && /\/nodes\/[^/]+\/children$/.test(request.path) && !isPdfMultipart(request, body)) {
+      return response.status(415).json({ error: 'PDF_UPLOAD_REQUIRED' })
+    }
+    const headers = { Accept: request.get('accept') || 'application/json', Authorization: request.session.authorization }
+    if (contentType) headers['Content-Type'] = contentType
+    const upstream = await fetch(url, { method: request.method, headers, body })
+    const responseBody = await upstream.arrayBuffer()
     response.status(upstream.status)
-    const contentType = upstream.headers.get('content-type')
-    if (contentType) response.set('content-type', contentType)
-    return response.send(Buffer.from(body))
+    const upstreamContentType = upstream.headers.get('content-type')
+    const isContentResponse = request.path.endsWith('/content')
+    if (isContentResponse) {
+      response.set('content-type', upstreamContentType === 'application/pdf' ? 'application/pdf' : 'application/octet-stream')
+      response.set('content-disposition', 'attachment')
+    } else if (upstreamContentType) {
+      response.set('content-type', upstreamContentType)
+    }
+    response.set('x-content-type-options', 'nosniff')
+    return response.send(Buffer.from(responseBody))
   } catch (error) {
     return response.status(error.status || 502).json({ error: 'ALFRESCO_PROXY_ERROR' })
   }

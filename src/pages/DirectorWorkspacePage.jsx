@@ -1,8 +1,11 @@
 /* eslint-disable react/prop-types */
+import { useState } from 'react'
 import { DocumentForm } from '../components/DocumentForm'
 import { DocumentList } from '../components/DocumentList'
 import { PanelPage } from '../components/PanelPage'
+import { PdfPreview } from '../components/PdfPreview'
 import { DirectorPage } from './DirectorPage'
+import { HierarchyManagementPage } from './HierarchyManagementPage'
 import { formatDocumentDate } from '../utils/documentFormat'
 
 const normalizeStatus = (status) => String(status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
@@ -68,24 +71,63 @@ function DirectorHome({ office, summary }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, documents, onDocumentSubmit, office }) {
+export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], onDocumentSubmit, office, allowAlfresco = false, allowAlfrescoTestInbox = false, allowAlfrescoUpload = false, inbox }) {
+  const [selectedSentDocumentId, setSelectedSentDocumentId] = useState('')
   const summary = getLocalSummary(documents, office)
+  const confirmedSent = alfrescoDocuments.filter((document) => document.issuingAcronym === office.acronym)
+  const selectedSentDocument = confirmedSent.find((document) => document.id === selectedSentDocumentId)
 
   if (activePanel === 'nuevo-documento') {
-    return <DocumentForm onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
+    return <DocumentForm allowAlfrescoUpload={allowAlfrescoUpload} onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
   }
 
   if (activePanel === 'inicio') {
     return <DirectorHome office={office} summary={summary} />
   }
 
-  if (activePanel === 'para-conocimiento' && office.acronym === 'DSA') {
-    const receivedForDsa = documents.filter((document) => document.destinationId === 'dsa')
-    return <DirectorPage activePanel={activePanel} description={description} documents={receivedForDsa} title={title} />
+  if (activePanel === 'gestion-jerarquia') {
+    return <HierarchyManagementPage office={office} />
+  }
+
+  if (activePanel === 'bandeja-pruebas-alfresco') {
+    return <DirectorPage allowAlfrescoTestInbox={allowAlfrescoTestInbox} description={description} inbox={inbox} inboxMode="test" title={title} />
+  }
+
+  if (activePanel === 'para-conocimiento') {
+    return <DirectorPage allowAlfresco={allowAlfresco} description={description} inbox={inbox} inboxMode="dependency" title={title} />
   }
 
   if (activePanel === 'documentos-enviados') {
-    return <DocumentList description="Registros locales emitidos por esta dependencia." documents={summary.sent} title={title} />
+    return (
+      <PanelPage description="Documentos confirmados por Alfresco y conservados en este navegador." title={title}>
+        {confirmedSent.length === 0 ? (
+          <div className="empty-state">No hay documentos confirmados por Alfresco para esta dependencia.</div>
+        ) : (
+          <div className="table-scroll">
+            <table className="document-table">
+              <thead><tr><th>Id Alfresco</th><th>Número documental</th><th>Asunto</th><th>Archivo principal</th><th>Fecha de emisión</th><th>Estado</th></tr></thead>
+              <tbody>{confirmedSent.map((document) => (
+                <tr key={document.id}>
+                  <td>{document.id}</td><td>{document.documentNumber}</td><td>{document.subject}</td>
+                  <td><button className="document-link" onClick={() => setSelectedSentDocumentId(document.id)} type="button">Ver documento</button><small className="table-secondary">{document.attachmentName}</small></td>
+                  <td>{formatDocumentDate(document.emissionDate)}</td>
+                  <td><span className="status-label">Confirmado por Alfresco</span></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        {selectedSentDocument && (
+          <section aria-labelledby="sent-document-preview-title" className="document-preview">
+            <div className="document-preview__header">
+              <div><p className="breadcrumb">Vista previa</p><h2 id="sent-document-preview-title">{selectedSentDocument.attachmentName}</h2></div>
+              <button className="button-secondary" onClick={() => setSelectedSentDocumentId('')} type="button">Cerrar vista previa</button>
+            </div>
+            <PdfPreview declaredMimeType={selectedSentDocument.attachmentType} fileName={selectedSentDocument.attachmentName} nodeId={selectedSentDocument.id} />
+          </section>
+        )}
+      </PanelPage>
+    )
   }
 
   if (activePanel === 'para-conocimiento' || activePanel === 'para-atencion') {

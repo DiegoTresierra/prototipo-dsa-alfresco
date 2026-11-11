@@ -5,11 +5,13 @@ const directorMenu = [
   item('nuevo-documento', 'Nuevo documento', 'Registra un documento emitido por la dependencia.'),
   item('documentos-enviados', 'Documentos enviados', 'Consulta los documentos emitidos por esta dependencia.', 'inbox'),
   item('para-conocimiento', 'Para conocimiento', 'Consulta documentos recibidos para conocimiento.', 'inbox'),
+  { ...item('bandeja-pruebas-alfresco', 'Bandeja de pruebas de Alfresco', 'Consulta archivos reales de la carpeta compartida de pruebas DEV.', 'archive'), devOnly: true },
   item('para-atencion', 'Para atención', 'Consulta documentos recibidos para atención.', 'review'),
   item('mis-documentos', 'Mis documentos', 'Consulta documentos relacionados con la dependencia.', 'archive'),
   item('aprobar-colaboradores', 'Aprobar colaboradores', 'Espacio de demostración para solicitudes de colaboradores.'),
   item('aprobar-cierres', 'Aprobar cierres', 'Espacio de demostración para solicitudes de cierre.'),
   item('seguimiento', 'Seguimiento', 'Consulta el seguimiento documental de demostración.', 'chart'),
+  item('gestion-jerarquia', 'Gestión de jerarquía', 'Administra personas y asignaciones locales de demostración.', 'users'),
 ]
 
 export const roleDefinitions = {
