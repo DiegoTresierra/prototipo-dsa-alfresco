@@ -22,11 +22,17 @@ El frontend redirige `/api` a `http://localhost:3000`. El backend mantiene las s
 - `ALFRESCO_TARGET`: URL base de Alfresco DEV.
 - `ALFRESCO_BASIC_AUTH_ENABLED`: permite desactivar el acceso Basic Auth; debe ser `false` en producción.
 - `ALFRESCO_SSO_AUTH_MODE`: modo de vinculación SSO con Alfresco; actualmente `bearer`.
-- `ALFRESCO_ROLE_MAPPINGS_JSON`: mapa controlado de función a grupos Alfresco, por ejemplo `{"director-dsa":["GROUP_DSA_DOCUMENTAL"]}`.
+- `ALFRESCO_GROUP_MAPPINGS_JSON`: mapa exacto de dependencia y función a grupos Alfresco. La configuración DEV esperada es `{"dependencies":{"DTI":"GROUP_GD_DTI","DSA":"GROUP_GD_DSA"},"functions":{"direccion":"GROUP_GD_DIRECCION","jefe-unidad":"GROUP_GD_JEFE_UNIDAD","especialista":"GROUP_GD_ESPECIALISTA"}}`.
 - `SESSION_SECRET`: secreto aleatorio del backend.
 - `COOKIE_SECURE`: debe ser `true` cuando el backend use HTTPS.
 
-Alfresco es la fuente de verdad: después de cada autenticación se consulta `people/-me-` y los grupos de esa identidad. Un usuario sin un único mapeo de función permanece sin acceso documental.
+Alfresco es la fuente de verdad: después de cada autenticación se consulta `people/-me-` y los grupos de esa identidad. El backend exige exactamente una dependencia y una función reconocidas; si falta alguna o hay más de una, la sesión queda con autorización incompleta o ambigua y sin acceso documental restringido. La pantalla se resuelve con el `roleId` derivado, nunca por correo o nombre de usuario.
+
+Para validar únicamente el resolver con combinaciones sintéticas:
+
+```powershell
+npm run test:resolver
+```
 
 ## Endpoints del BFF
 

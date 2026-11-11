@@ -12,6 +12,7 @@ import { LoginPage } from './components/LoginPage'
 import { loadNotifications, saveNotifications } from './utils/notificationStore'
 import { uploadPdfToFolder } from './api/alfresco'
 import { useAlfrescoInbox } from './hooks/useAlfrescoInbox'
+import { getDashboardRoleId } from './auth/authorization'
 
 /* eslint-disable react/prop-types */
 function getInitialDocuments() {
@@ -30,15 +31,15 @@ function ApplicationShell({ session, onLogout }) {
   const [documents] = useState(getInitialDocuments)
   const [alfrescoDocuments, setAlfrescoDocuments] = useState(getInitialAlfrescoDocuments)
   const uploadInFlight = useRef(false)
-  const role = roleDefinitions[session.roleId]
+  const role = roleDefinitions[getDashboardRoleId(session)]
   const canReadAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:read')
   const canWriteAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:write')
   const currentOffice = {
-    acronym: session.roleId === 'director-dti' ? 'DTI' : session.roleId === 'director-dsa' ? 'DSA' : 'UAC',
+    acronym: session.dependency || 'UAC',
     office: role.label,
     name: session.user?.name || session.alfresco?.displayName || session.alfresco?.id,
     position: role.label,
-    dependencyId: session.alfresco?.id,
+    dependencyId: session.dependency,
   }
   const visibleMenu = role.menu.filter((item) => !item.devOnly || import.meta.env.DEV)
   const activeItem = visibleMenu.find((item) => item.id === activePanel) || visibleMenu[0]
@@ -84,7 +85,7 @@ function ApplicationShell({ session, onLogout }) {
     }
   }
 
-  const ActivePage = rolePages[session.roleId]
+  const ActivePage = rolePages[getDashboardRoleId(session)]
   return (
     <div className="app-shell">
       <Sidebar activePanel={activePanel} collapsed={isSidebarCollapsed} isOpen={isSidebarOpen} items={visibleMenu} office={currentOffice} roleLabel={role.label} onNavigate={handleNavigate} onClose={() => setIsSidebarOpen(false)} onToggleCollapse={() => setIsSidebarCollapsed((collapsed) => !collapsed)} onLogout={onLogout} />
@@ -110,7 +111,8 @@ function App() {
   if (sessionError) return <main className="login-page"><p className="form-message form-message--error">{sessionError}</p></main>
   if (session === undefined || authStatus === undefined) return <main className="login-page"><p>Comprobando sesión...</p></main>
   if (session === null) return <LoginPage basicAuthEnabled={authStatus.basicAuthEnabled} onAuthenticated={setSession} />
-  if (!session.roleId || !roleDefinitions[session.roleId]) {
+  const dashboardRoleId = getDashboardRoleId(session)
+  if (!dashboardRoleId || !roleDefinitions[dashboardRoleId] || !rolePages[dashboardRoleId]) {
     return <main className="login-page"><section className="login-card"><p className="breadcrumb">Gestión Documental UAC</p><h1>Acceso pendiente de configuración</h1><p className="form-message">La identidad fue reconocida por Alfresco, pero no tiene una función documental configurada.</p><button className="button-primary" onClick={() => logout(session).then(() => setSession(null))} type="button">Cerrar sesión</button></section></main>
   }
   return <ApplicationShell key={session.alfresco?.id} onLogout={() => logout(session).then(() => setSession(null))} session={session} />

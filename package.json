@@ -8,6 +8,7 @@
     "dev:server": "node server/index.js",
     "build": "vite build",
     "lint": "eslint .",
+    "test:resolver": "node --test server/roleResolver.test.js",
     "start": "node server/index.js",
     "preview": "vite preview"
   },

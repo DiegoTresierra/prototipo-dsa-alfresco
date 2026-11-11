@@ -26,7 +26,14 @@ export const config = {
   alfrescoDiagnostics: process.env.ALFRESCO_DIAGNOSTICS === 'true',
   basicAuthEnabled: process.env.ALFRESCO_BASIC_AUTH_ENABLED !== 'false',
   ssoAuthMode: process.env.ALFRESCO_SSO_AUTH_MODE || 'bearer',
-  roleMappings: parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {}),
+  groupMappings: parseJson('ALFRESCO_GROUP_MAPPINGS_JSON', {
+    dependencies: { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' },
+    functions: {
+      direccion: 'GROUP_GD_DIRECCION',
+      'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
+      especialista: 'GROUP_GD_ESPECIALISTA',
+    },
+  }),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),
     clientId: required('KEYCLOAK_CLIENT_ID'),

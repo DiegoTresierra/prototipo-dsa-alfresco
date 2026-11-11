@@ -61,6 +61,9 @@ function publicSession(session) {
     user: session.user,
     alfresco: session.alfresco,
     groups: session.groups,
+    dependency: session.dependency,
+    functionalRole: session.functionalRole,
+    functionalIdentity: session.functionalIdentity,
     roleId: session.roleId,
     authorizationStatus: session.authorizationStatus,
     capabilities: session.capabilities,
@@ -82,14 +85,17 @@ async function getKeycloakClient() {
 }
 
 async function createAlfrescoSession(provider, authentication, user) {
-  const role = resolveRole(authentication.groups, config.roleMappings)
+  const role = resolveRole(authentication.groups, config.groupMappings, authentication.identity.id)
   return createSession({
     provider,
     user,
     alfresco: authentication.identity,
     groups: authentication.groups,
     roleId: role.roleId,
-    authorizationStatus: role.status,
+    dependency: role.dependency,
+    functionalRole: role.functionalRole,
+    functionalIdentity: role,
+    authorizationStatus: role.authorizationStatus,
     capabilities: role.roleId ? ['documents:read'] : [],
     authorization: authentication.authorization,
     ticket: authentication.ticket,
