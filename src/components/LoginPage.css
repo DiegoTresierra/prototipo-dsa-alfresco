@@ -1,0 +1,170 @@
+.login-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 18px;
+  background: var(--color-background-secondary);
+}
+
+.login-card {
+  width: min(100%, 460px);
+  padding: clamp(26px, 5vw, 42px);
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-background);
+  box-shadow: var(--shadow-card);
+}
+
+.login-card__brand {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.login-card__logo {
+  display: block;
+  width: min(100%, 190px);
+  height: 88px;
+  margin: 0 auto 17px;
+  object-fit: contain;
+}
+
+.login-card__logo-fallback {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  margin: 0 0 17px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: var(--color-accent);
+  font-size: 21px;
+  font-weight: 650;
+}
+
+.login-card__institution {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.login-card__product {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.login-card__heading {
+  margin: 28px 0 22px;
+  text-align: center;
+}
+
+.login-card__heading h1 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  line-height: 1.25;
+}
+
+.login-card__heading p {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.login-form {
+  display: grid;
+  gap: 15px;
+}
+
+.login-form .form-field {
+  gap: 8px;
+  font-size: 14px;
+}
+
+.login-form .form-field > span {
+  font-weight: 600;
+}
+
+.login-form .form-field input {
+  min-height: 48px;
+  border-radius: 10px;
+}
+
+.login-card__submit,
+.login-card__sso {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.login-card__submit {
+  margin-top: 3px;
+}
+
+.login-card__sso {
+  border-color: var(--color-border);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+.button-primary.login-card__sso:hover {
+  border-color: var(--color-accent);
+  background: var(--color-background-secondary);
+  color: var(--color-accent);
+}
+
+.login-card__sso:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.login-divider::before,
+.login-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--color-border);
+  content: '';
+}
+
+.login-card .form-message {
+  font-size: 14px;
+}
+
+.login-card__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgb(255 255 255 / 45%);
+  border-top-color: var(--color-background);
+  border-radius: 50%;
+  animation: login-spin 700ms linear infinite;
+}
+
+@keyframes login-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 480px) {
+  .login-page { padding: 18px 14px; }
+  .login-card { padding: 27px 21px; border-radius: 15px; }
+  .login-card__logo { height: 76px; margin-bottom: 14px; }
+  .login-card__institution { font-size: 18px; }
+  .login-card__heading { margin-top: 23px; }
+}
