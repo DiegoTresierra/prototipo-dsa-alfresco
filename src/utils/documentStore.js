@@ -6,13 +6,14 @@ function createInitialStore() {
 }
 
 function getCounterKeyForDocument(document) {
-  return `${document.issuingAcronym}|${document.documentType}|${document.documentYear}`
+  const issuerCode = document.issuerCode || document.issuingAcronym
+  return `${issuerCode}|${document.documentType}|${document.documentYear}`
 }
 
 function deriveCounters(documents) {
   return documents.reduce((counters, document) => {
     const consecutive = Number.parseInt(document.originalConsecutive, 10)
-    if (!document.issuingAcronym || !document.documentType || !document.documentYear || !Number.isFinite(consecutive)) {
+    if (!(document.issuerCode || document.issuingAcronym) || !document.documentType || !document.documentYear || !Number.isFinite(consecutive)) {
       return counters
     }
 
@@ -54,18 +55,18 @@ function readStore() {
   return normalizedStore
 }
 
-function counterKey(acronym, documentType, year) {
-  return `${acronym}|${documentType}|${year}`
+function counterKey(issuerCode, documentType, year) {
+  return `${issuerCode}|${documentType}|${year}`
 }
 
 function formatConsecutive(number) {
   return String(number).padStart(4, '0')
 }
 
-export function getCorrelativeStatus(acronym, documentType, year) {
-  if (!acronym || !documentType || !year) return { last: '', next: '' }
+export function getCorrelativeStatus(issuerCode, documentType, year) {
+  if (!issuerCode || !documentType || !year) return { last: '', next: '' }
   const store = readConfirmedStore()
-  const lastNumber = Number(store.counters[counterKey(acronym, documentType, year)] || 0)
+  const lastNumber = Number(store.counters[counterKey(issuerCode, documentType, year)] || 0)
   return { last: formatConsecutive(lastNumber), next: formatConsecutive(lastNumber + 1) }
 }
 
@@ -91,12 +92,13 @@ export function recordAlfrescoConfirmedDocument(documentData, entry) {
   const existingDocument = store.documents.find((document) => document.id === entry.id)
   if (existingDocument) return { document: existingDocument, documents: store.documents, duplicate: true }
 
-  const key = counterKey(documentData.issuingAcronym, documentData.documentType, documentData.documentYear)
+  const issuerCode = documentData.issuerCode || documentData.issuingAcronym
+  const key = counterKey(issuerCode, documentData.documentType, documentData.documentYear)
   const lastNumber = Number(store.counters[key] || 0)
   const submittedNumber = Number.parseInt(documentData.originalConsecutive, 10)
   const confirmedNumber = Number.isFinite(submittedNumber) && submittedNumber > 0 ? submittedNumber : lastNumber + 1
   const originalConsecutive = formatConsecutive(confirmedNumber)
-  const documentNumber = `${documentData.documentType.toLocaleUpperCase('es')} N.° ${originalConsecutive}-${documentData.documentYear}-${documentData.issuingAcronym}`
+  const documentNumber = `${documentData.documentType.toLocaleUpperCase('es')} N.° ${originalConsecutive}-${documentData.documentYear}-${issuerCode}`
   const properties = entry.properties || {}
   const document = {
     ...documentData,
@@ -133,10 +135,11 @@ export function saveSimulatedDocument(documentData) {
     return { document: existingDocument, documents: store.documents, duplicate: true }
   }
 
-  const key = counterKey(documentData.issuingAcronym, documentData.documentType, documentData.documentYear)
+  const issuerCode = documentData.issuerCode || documentData.issuingAcronym
+  const key = counterKey(issuerCode, documentData.documentType, documentData.documentYear)
   const lastNumber = Number(store.counters[key] || 0)
   const originalConsecutive = formatConsecutive(lastNumber + 1)
-  const documentNumber = `${documentData.documentType.toLocaleUpperCase('es')} N.° ${originalConsecutive}-${documentData.documentYear}-${documentData.issuingAcronym}`
+  const documentNumber = `${documentData.documentType.toLocaleUpperCase('es')} N.° ${originalConsecutive}-${documentData.documentYear}-${issuerCode}`
   const emissionDate = new Date().toISOString()
   const document = {
     ...documentData,

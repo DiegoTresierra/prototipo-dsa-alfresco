@@ -49,7 +49,7 @@ export function LoginPage({ basicAuthEnabled, onAuthenticated }) {
         {basicAuthEnabled && (
           <form aria-busy={loading} className="login-form" onSubmit={handleSubmit}>
             <label className="form-field">
-              <span>Usuario Alfresco DEV</span>
+              <span>Usuario </span>
               <input autoComplete="username" onChange={(event) => setUsername(event.target.value)} required value={username} />
             </label>
             <label className="form-field">

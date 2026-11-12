@@ -1,12 +1,12 @@
 import { organizationalOffices } from '../data/organizationalAssignments'
 
-function storageKey(dependencyId) {
-  return `uac-demo-organization-${dependencyId}`
+function storageKey(scopeId) {
+  return `uac-demo-organization-${scopeId}`
 }
 
-export function loadOrganizationalData(dependencyId) {
+export function loadOrganizationalData(dependencyId, scopeId = dependencyId) {
   try {
-    const saved = localStorage.getItem(storageKey(dependencyId))
+    const saved = scopeId ? localStorage.getItem(storageKey(scopeId)) : null
     if (saved !== null) {
       const parsed = JSON.parse(saved)
       if (Array.isArray(parsed.offices) && Array.isArray(parsed.people)) return parsed
@@ -21,9 +21,10 @@ export function loadOrganizationalData(dependencyId) {
   }
 }
 
-export function saveOrganizationalData(dependencyId, data) {
+export function saveOrganizationalData(scopeId, data) {
+  if (!scopeId) return
   try {
-    localStorage.setItem(storageKey(dependencyId), JSON.stringify(data))
+    localStorage.setItem(storageKey(scopeId), JSON.stringify(data))
   } catch {
     // Los cambios se conservan en el estado React hasta finalizar la sesión.
   }

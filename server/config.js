@@ -8,6 +8,20 @@ function required(name) {
   return value
 }
 
+function requiredHttpUrl(name) {
+  const value = required(name).replace(/\/+$/, '')
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error(`Invalid URL configuration: ${name}`)
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Invalid URL configuration: ${name}`)
+  }
+  return value
+}
+
 function parseJson(name, fallback) {
   const value = process.env[name]
   if (!value) return fallback
@@ -22,11 +36,12 @@ export const config = {
   port: Number(process.env.PORT || 3000),
   sessionSecret: required('SESSION_SECRET'),
   cookieSecure: process.env.COOKIE_SECURE === 'true',
-  alfrescoTarget: required('ALFRESCO_TARGET').replace(/\/+$/, ''),
+  alfrescoTarget: requiredHttpUrl('ALFRESCO_TARGET'),
   alfrescoDiagnostics: process.env.ALFRESCO_DIAGNOSTICS === 'true',
   basicAuthEnabled: process.env.ALFRESCO_BASIC_AUTH_ENABLED !== 'false',
   ssoAuthMode: process.env.ALFRESCO_SSO_AUTH_MODE || 'bearer',
   roleMappings: parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {}),
+  dependencyMappings: parseJson('ALFRESCO_DEPENDENCY_GROUP_MAPPINGS_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),
     clientId: required('KEYCLOAK_CLIENT_ID'),

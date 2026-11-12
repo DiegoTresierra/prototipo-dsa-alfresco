@@ -1,6 +1,5 @@
 /* eslint-disable react/prop-types */
 import { useState } from 'react'
-import { DocumentForm } from '../components/DocumentForm'
 import { DocumentList } from '../components/DocumentList'
 import { PanelPage } from '../components/PanelPage'
 import { PdfPreview } from '../components/PdfPreview'
@@ -11,8 +10,8 @@ import { formatDocumentDate } from '../utils/documentFormat'
 const normalizeStatus = (status) => String(status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
 
 function getLocalSummary(documents, office) {
-  const sent = documents.filter((document) => document.issuingAcronym === office.acronym)
-  const received = documents.filter((document) => document.destinationId === office.dependencyId)
+  const sent = office.acronym ? documents.filter((document) => document.issuingAcronym === office.acronym) : []
+  const received = office.dependencyId ? documents.filter((document) => document.destinationId === office.dependencyId) : []
   const related = [...new Map([...sent, ...received].map((document) => [document.id, document])).values()]
   const pendingCount = related.filter((document) => {
     const status = normalizeStatus(document.status)
@@ -71,29 +70,25 @@ function DirectorHome({ office, summary }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], onDocumentSubmit, office, allowAlfresco = false, allowAlfrescoTestInbox = false, allowAlfrescoUpload = false, inbox }) {
+export function DirectorWorkspacePage({ title, description, activePanel, documents, alfrescoDocuments = [], office, localScopeId, allowAlfresco = false, allowAlfrescoTestInbox = false, inbox }) {
   const [selectedSentDocumentId, setSelectedSentDocumentId] = useState('')
   const summary = getLocalSummary(documents, office)
-  const confirmedSent = alfrescoDocuments.filter((document) => document.issuingAcronym === office.acronym)
+  const confirmedSent = office.acronym ? alfrescoDocuments.filter((document) => document.issuingAcronym === office.acronym) : []
   const selectedSentDocument = confirmedSent.find((document) => document.id === selectedSentDocumentId)
-
-  if (activePanel === 'nuevo-documento') {
-    return <DocumentForm allowAlfrescoUpload={allowAlfrescoUpload} onSubmit={onDocumentSubmit} panelLabel={`Panel de Dirección ${office.acronym}`} user={office} />
-  }
 
   if (activePanel === 'inicio') {
     return <DirectorHome office={office} summary={summary} />
   }
 
   if (activePanel === 'gestion-jerarquia') {
-    return <HierarchyManagementPage office={office} />
+    return <HierarchyManagementPage localScopeId={localScopeId} office={office} />
   }
 
   if (activePanel === 'bandeja-pruebas-alfresco') {
     return <DirectorPage allowAlfrescoTestInbox={allowAlfrescoTestInbox} description={description} inbox={inbox} inboxMode="test" title={title} />
   }
 
-  if (activePanel === 'para-conocimiento') {
+  if (activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento') {
     return <DirectorPage allowAlfresco={allowAlfresco} description={description} inbox={inbox} inboxMode="dependency" title={title} />
   }
 
@@ -101,7 +96,7 @@ export function DirectorWorkspacePage({ title, description, activePanel, documen
     return (
       <PanelPage description="Documentos confirmados por Alfresco y conservados en este navegador." title={title}>
         {confirmedSent.length === 0 ? (
-          <div className="empty-state">No hay documentos confirmados por Alfresco para esta dependencia.</div>
+          <div className="empty-state">{office.acronym ? 'No hay documentos confirmados por Alfresco para esta dependencia.' : 'No se puede determinar la dependencia autenticada para clasificar documentos enviados.'}</div>
         ) : (
           <div className="table-scroll">
             <table className="document-table">

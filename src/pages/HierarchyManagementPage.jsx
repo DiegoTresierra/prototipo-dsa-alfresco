@@ -11,15 +11,15 @@ const hierarchyRoles = [
 const createLocalId = () => `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 /* eslint-disable react/prop-types */
-export function HierarchyManagementPage({ office }) {
-  const [data, setData] = useState(() => loadOrganizationalData(office.dependencyId))
+export function HierarchyManagementPage({ office, localScopeId }) {
+  const [data, setData] = useState(() => loadOrganizationalData(office.dependencyId, localScopeId))
   const [person, setPerson] = useState({ name: '', position: '', officeId: '', roleId: 'especialista' })
   const [newOfficeName, setNewOfficeName] = useState('')
   const [message, setMessage] = useState('')
 
   const updateData = (nextData) => {
     setData(nextData)
-    saveOrganizationalData(office.dependencyId, nextData)
+    saveOrganizationalData(localScopeId, nextData)
   }
 
   const addOffice = (event) => {

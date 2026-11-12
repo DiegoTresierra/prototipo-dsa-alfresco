@@ -1,6 +1,7 @@
 // Catálogo de demostración basado únicamente en la estructura y los nombres proporcionados.
 // No representa un directorio institucional validado ni incorpora funciones oficiales del MOF.
 export const recipientDependencies = [
+  { id: 'dti', name: 'Dirección de Tecnologías de Información (DTI)', available: true },
   { id: 'dsa', name: 'Dirección de Servicios Académicos (DSA)', available: true },
   { id: 'dependencia-demo-bienestar', name: 'Dirección de Bienestar Universitario (demostrativa)', available: false },
   { id: 'dependencia-demo-investigacion', name: 'Dirección de Investigación (demostrativa)', available: false },
@@ -19,6 +20,13 @@ const position = (id, title, recipientName, options = {}) => ({
 })
 
 export const organizationalUnits = [
+  {
+    id: 'dti-direccion',
+    name: 'Dirección',
+    dependencyId: 'dti',
+    parentId: null,
+    positions: [position('dti-puesto-direccion', 'Dirección', 'Dirección de Tecnologías de Información')],
+  },
   {
     id: 'dsa-direccion',
     name: 'Dirección',

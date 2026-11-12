@@ -12,7 +12,7 @@ function isPdfCandidate(document) {
 function getSafeLoadError(error) {
   const statusFromMessage = String(error?.message || '').match(/(?:HTTP_|estado\s+)(\d{3})/i)
   const status = error?.status || Number(statusFromMessage?.[1])
-  if (error?.message === 'ALFRESCO_FOLDER_NOT_CONFIGURED') return 'No está configurada la carpeta de pruebas de Alfresco.'
+  if (error?.message === 'ALFRESCO_FOLDER_NOT_CONFIGURED') return 'No está configurada la carpeta de recepción de Alfresco para esta dependencia.'
   if (error?.message === 'ALFRESCO_API_PREFIX_NOT_CONFIGURED') return 'No está configurada la ruta de la API Core de Alfresco.'
   if (error?.message === 'ALFRESCO_INVALID_LIST_RESPONSE') return 'Alfresco respondió, pero el formato de la lista de documentos no es válido.'
   if (status === 401) return 'Alfresco rechazó la autenticación configurada para el entorno DEV.'
@@ -36,6 +36,11 @@ export function useAlfrescoInbox({ active, allowed, folderId, dependencyId, mode
       return undefined
     }
 
+    if (active && mode !== 'test' && !dependencyId) {
+      setState({ ...initialState, error: 'La sesión no incluye una dependencia institucional verificada; no se consultó la bandeja por dependencia.' })
+      return undefined
+    }
+
     const load = async () => {
       if (inFlight) return
       inFlight = true
@@ -46,8 +51,8 @@ export function useAlfrescoInbox({ active, allowed, folderId, dependencyId, mode
         if (cancelled) return
         const documents = mode === 'test'
           ? result.filter(isPdfCandidate)
-          : result.filter((document) => document.destinationId === dependencyId)
-        const unclassifiedCount = mode === 'test' ? 0 : result.filter((document) => !document.destinationId).length
+          : result.filter(isPdfCandidate)
+        const unclassifiedCount = 0
         setState({ documents, unclassifiedCount, loading: false, refreshing: false, error: '', lastUpdated: new Date().toISOString() })
       } catch (error) {
         if (!cancelled) {
