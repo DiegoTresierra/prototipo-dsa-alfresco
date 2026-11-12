@@ -19,6 +19,26 @@ export const roleDefinitions = {
   director: directorRole,
   'director-dti': directorRole,
   'director-dsa': directorRole,
+  'jefe-unidad-dti': {
+    id: 'jefe-unidad-dti',
+    label: 'Jefatura de Unidad DTI',
+    menu: [item('inicio', 'Inicio', 'Vista autorizada de la jefatura de unidad.', 'home'), newDocumentItem(), item('documentos-recibidos', 'Documentos recibidos', 'Consulta documentos recibidos para la unidad.', 'inbox')],
+  },
+  'jefe-unidad-dsa': {
+    id: 'jefe-unidad-dsa',
+    label: 'Jefatura de Unidad DSA',
+    menu: [item('inicio', 'Inicio', 'Vista autorizada de la jefatura de unidad.', 'home'), newDocumentItem(), item('documentos-recibidos', 'Documentos recibidos', 'Consulta documentos recibidos para la unidad.', 'inbox')],
+  },
+  'especialista-dti': {
+    id: 'especialista-dti',
+    label: 'Especialista DTI',
+    menu: [item('inicio', 'Inicio', 'Consulta el espacio de trabajo del especialista.', 'home'), newDocumentItem(), item('mis-asignaciones', 'Mis asignaciones', 'Consulta documentos asignados.', 'inbox')],
+  },
+  'especialista-dsa': {
+    id: 'especialista-dsa',
+    label: 'Especialista DSA',
+    menu: [item('inicio', 'Inicio', 'Consulta el espacio de trabajo del especialista.', 'home'), newDocumentItem(), item('mis-asignaciones', 'Mis asignaciones', 'Consulta documentos asignados.', 'inbox')],
+  },
   jefe_unidad: {
     id: 'jefe_unidad',
     label: 'Jefe de unidad',

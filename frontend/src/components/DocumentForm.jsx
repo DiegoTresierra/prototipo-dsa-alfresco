@@ -200,7 +200,7 @@ export function DocumentForm({ onSubmit, user = simulatedUser, allowAlfrescoUplo
         </div></fieldset>
         <fieldset className="form-section"><legend>IV. Información del documento</legend><div className="form-grid">
           <label className="form-field form-field--full"><span>Asunto <b aria-hidden="true">*</b></span><input autoComplete="off" maxLength="180" name="subject" required /></label>
-          <div className="form-field"><span>Fecha de emisión</span><output className="read-only-value">{new Date(emissionDate || Date.now()).toLocaleDateString('es-PE')}</output></div>
+          <div className="form-field"><span>Fecha de emisión</span><output className="read-only-value">{emissionDate ? new Date(emissionDate).toLocaleString('es-PE') : 'Se asignará al confirmar el envío.'}</output></div>
           <label className="form-field"><span>Prioridad <b aria-hidden="true">*</b></span><select name="priority" required><option value="">Selecciona una prioridad</option>{documentPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></label>
           <label className="form-field form-field--full"><span>Descripción <b aria-hidden="true">*</b></span><textarea maxLength="2000" name="description" required rows="4" /></label>
         </div></fieldset>

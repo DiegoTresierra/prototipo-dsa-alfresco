@@ -18,7 +18,7 @@ export function getIssuerCode({ roleId, dependencyAcronym, unitAcronym, personCo
 
   const unitCode = normalizeCodePart(unitAcronym)
   if (!unitCode) return ''
-  if (roleId === 'jefe_unidad') return `${dependencyCode}-${unitCode}`
+  if (roleId === 'jefe_unidad' || roleId?.startsWith('jefe-unidad-')) return `${dependencyCode}-${unitCode}`
 
   const issuerPersonCode = normalizeCodePart(personCode)
   return issuerPersonCode ? `${dependencyCode}-${unitCode}-${issuerPersonCode}` : ''

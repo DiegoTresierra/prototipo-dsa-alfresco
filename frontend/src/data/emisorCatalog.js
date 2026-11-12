@@ -1,8 +1,8 @@
 // Catálogo de demostración basado únicamente en la estructura y los nombres proporcionados.
 // No representa un directorio institucional validado ni incorpora funciones oficiales del MOF.
 export const recipientDependencies = [
-  { id: 'dti', name: 'Dirección de Tecnologías de Información (DTI)', available: true },
-  { id: 'dsa', name: 'Dirección de Servicios Académicos (DSA)', available: true },
+  { id: 'dti', name: 'Dirección de Tecnologías de Información (DTI)', acronym: 'DTI', available: true },
+  { id: 'dsa', name: 'Dirección de Servicios Académicos (DSA)', acronym: 'DSA', available: true },
   { id: 'dependencia-demo-bienestar', name: 'Dirección de Bienestar Universitario (demostrativa)', available: false },
   { id: 'dependencia-demo-investigacion', name: 'Dirección de Investigación (demostrativa)', available: false },
   { id: 'dependencia-demo-administracion', name: 'Dirección de Administración (demostrativa)', available: false },

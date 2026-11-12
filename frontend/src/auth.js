@@ -1,18 +1,20 @@
+import { apiFetch } from './api/client'
+
 export async function getSession() {
-  const response = await fetch('/api/auth/me', { credentials: 'include' })
+  const response = await apiFetch('/api/auth/me', { credentials: 'include' })
   if (response.status === 401) return null
   if (!response.ok) throw new Error('No se pudo recuperar la sesión.')
   return response.json()
 }
 
 export async function getAuthStatus() {
-  const response = await fetch('/api/auth/status', { credentials: 'include' })
+  const response = await apiFetch('/api/auth/status', { credentials: 'include' })
   if (!response.ok) throw new Error('El backend de autenticación no está disponible.')
   return response.json()
 }
 
 export async function loginBasic(username, password) {
-  const response = await fetch('/api/auth/basic', {
+  const response = await apiFetch('/api/auth/basic', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -29,7 +31,7 @@ export async function loginBasic(username, password) {
 }
 
 export async function logout(session) {
-  const response = await fetch('/api/auth/logout', {
+  const response = await apiFetch('/api/auth/logout', {
     method: 'POST',
     credentials: 'include',
     headers: { 'X-CSRF-Token': session.csrfToken },

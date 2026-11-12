@@ -6,7 +6,7 @@ import { Buffer } from 'node:buffer'
 import { config } from './config.js'
 import { authenticateBasic, authenticateBearer, buildAlfrescoUrl } from './alfrescoClient.js'
 import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSession, getSession } from './sessionStore.js'
-import { resolveAccess } from './roleResolver.js'
+import { resolveRole } from './roleResolver.js'
 
 const app = express()
 const SESSION_COOKIE = 'gd_session'
@@ -61,9 +61,11 @@ function publicSession(session) {
     user: session.user,
     alfresco: session.alfresco,
     groups: session.groups,
-    roleId: session.roleId,
     dependency: session.dependency,
     unit: session.unit,
+    functionalRole: session.functionalRole,
+    functionalIdentity: session.functionalIdentity,
+    roleId: session.roleId,
     authorizationStatus: session.authorizationStatus,
     capabilities: session.capabilities,
     csrfToken: session.csrfToken,
@@ -84,7 +86,7 @@ async function getKeycloakClient() {
 }
 
 async function createAlfrescoSession(provider, authentication, user) {
-  const role = resolveAccess(authentication.groups, config.roleMappings, config.dependencyMappings)
+  const role = resolveRole(authentication.groups, config.groupMappings, authentication.identity.id)
   return createSession({
     provider,
     user,
@@ -92,7 +94,9 @@ async function createAlfrescoSession(provider, authentication, user) {
     groups: authentication.groups,
     roleId: role.roleId,
     dependency: role.dependency,
-    authorizationStatus: role.status,
+    functionalRole: role.functionalRole,
+    functionalIdentity: role,
+    authorizationStatus: role.authorizationStatus,
     capabilities: role.roleId ? ['documents:read'] : [],
     authorization: authentication.authorization,
     ticket: authentication.ticket,
