@@ -13,6 +13,9 @@ import { loadNotifications, saveNotifications } from './utils/notificationStore'
 import { uploadPdfToFolder } from './api/alfresco'
 import { useAlfrescoInbox } from './hooks/useAlfrescoInbox'
 import { getDashboardRoleId } from './auth/authorization'
+import { DocumentForm } from './components/DocumentForm'
+import { recipientDependencies, organizationalUnits } from './data/emisorCatalog'
+import { derivePersonCode, getIssuerCode } from './utils/issuerIdentifier'
 
 /* eslint-disable react/prop-types */
 function getInitialDocuments() {
@@ -21,6 +24,22 @@ function getInitialDocuments() {
 
 function getInitialAlfrescoDocuments() {
   try { return loadAlfrescoConfirmedDocuments() } catch { return [] }
+}
+
+function dependencyProfile(dependency) {
+  const dependencyId = String(dependency || '').toLowerCase()
+  return recipientDependencies.find((entry) => entry.id === dependencyId) || {
+    id: dependencyId,
+    name: dependency || '',
+    acronym: String(dependency || '').toUpperCase(),
+    available: false,
+  }
+}
+
+function getInboxFolderId(dependencyId) {
+  if (dependencyId === 'dti') return import.meta.env.VITE_ALFRESCO_DTI_INBOX_NODE_ID || import.meta.env.VITE_ALFRESCO_INBOX_NODE_ID || ''
+  if (dependencyId === 'dsa') return import.meta.env.VITE_ALFRESCO_DSA_INBOX_NODE_ID || import.meta.env.VITE_ALFRESCO_INBOX_NODE_ID || ''
+  return ''
 }
 
 function ApplicationShell({ session, onLogout }) {
@@ -34,19 +53,28 @@ function ApplicationShell({ session, onLogout }) {
   const role = roleDefinitions[getDashboardRoleId(session)]
   const canReadAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:read')
   const canWriteAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:write')
+  const dependency = dependencyProfile(session.dependency)
+  const unit = organizationalUnits.find((entry) => entry.dependencyId === dependency.id && entry.parentId) || null
+  const userName = session.user?.name || session.alfresco?.displayName || session.alfresco?.id
+  const personCode = session.user?.documentCode || derivePersonCode(userName)
   const currentOffice = {
-    acronym: session.dependency || 'UAC',
-    office: role.label,
+    acronym: dependency.acronym,
+    office: dependency.name || role.label,
     name: session.user?.name || session.alfresco?.displayName || session.alfresco?.id,
-    position: role.label,
-    dependencyId: session.dependency,
+    position: session.user?.position || role.label,
+    dependencyId: dependency.id,
+    roleId: session.roleId,
+    unitAcronym: unit?.id?.split('-').pop()?.toUpperCase() || '',
+    unitName: unit?.name || '',
+    personCode,
+    issuerCode: getIssuerCode({ roleId: session.roleId, dependencyAcronym: dependency.acronym, unitAcronym: unit?.id?.split('-').pop(), personCode }),
   }
   const visibleMenu = role.menu.filter((item) => !item.devOnly || import.meta.env.DEV)
   const activeItem = visibleMenu.find((item) => item.id === activePanel) || visibleMenu[0]
   const inbox = useAlfrescoInbox({
-    active: activePanel === 'para-conocimiento' || activePanel === 'bandeja-pruebas-alfresco',
+    active: activePanel === 'para-conocimiento' || activePanel === 'documentos-recibidos' || activePanel === 'bandeja-pruebas-alfresco',
     allowed: canReadAlfresco,
-    folderId: import.meta.env.VITE_ALFRESCO_INBOX_NODE_ID,
+    folderId: getInboxFolderId(currentOffice.dependencyId),
     dependencyId: currentOffice.dependencyId,
     mode: activePanel === 'bandeja-pruebas-alfresco' ? 'test' : 'dependency',
   })
@@ -68,7 +96,9 @@ function ApplicationShell({ session, onLogout }) {
     uploadInFlight.current = true
     try {
       const emissionDate = new Date().toISOString()
-      const entry = await uploadPdfToFolder(import.meta.env.VITE_ALFRESCO_INBOX_NODE_ID, documentData.mainDocumentFile, {
+      const destinationFolderId = getInboxFolderId(documentData.destinationId || currentOffice.dependencyId)
+      if (!destinationFolderId) return { ok: false, error: 'No existe una carpeta Alfresco configurada para la dependencia destinataria.' }
+      const entry = await uploadPdfToFolder(destinationFolderId, documentData.mainDocumentFile, {
         title: documentData.subject,
         description: documentData.description,
       }, session.csrfToken)
@@ -91,7 +121,9 @@ function ApplicationShell({ session, onLogout }) {
       <Sidebar activePanel={activePanel} collapsed={isSidebarCollapsed} isOpen={isSidebarOpen} items={visibleMenu} office={currentOffice} roleLabel={role.label} onNavigate={handleNavigate} onClose={() => setIsSidebarOpen(false)} onToggleCollapse={() => setIsSidebarCollapsed((collapsed) => !collapsed)} onLogout={onLogout} />
       <div className="app-content">
         <TopBar officeName={currentOffice.office} onMenuClick={() => setIsSidebarOpen(true)} notifications={notifications} onNotificationUpdate={handleNotificationUpdate} notificationMessage={canReadAlfresco ? 'Alfresco no expone un estado persistente de atención.' : ''} />
-        <main className="main-content"><ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoTestInbox={canReadAlfresco && import.meta.env.DEV} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={documents} inbox={inbox} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} /></main>
+        <main className="main-content">{activePanel === 'nuevo-documento'
+          ? <DocumentForm allowAlfrescoUpload={canWriteAlfresco && Boolean(currentOffice.issuerCode)} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} />
+          : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoTestInbox={canReadAlfresco && import.meta.env.DEV} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={documents} inbox={inbox} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>
   )
