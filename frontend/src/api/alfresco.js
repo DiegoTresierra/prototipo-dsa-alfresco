@@ -74,13 +74,20 @@ function nodeToDocument(node) {
     id: node.id,
     subject: properties['cm:title'] || node.name,
     description: properties['cm:description'] || '',
-    sender: node.createdByUser?.displayName || node.createdByUser?.id || '',
-    originatingDependency: '',
     unitName: '',
     specialistName: '',
     attachmentName: node.name,
     createdAt: node.createdAt,
-    status: null,
+    documentNumber: properties['gd:numero'] || '',
+    documentDate: properties['gd:fechaDocumento'] || '',
+    originatingDependency: properties['gd:dependenciaOrigen'] || '',
+    recipientDependencyId: properties['gd:dependenciaDestino'] || '',
+    sender: properties['gd:remitente'] || node.createdByUser?.displayName || node.createdByUser?.id || '',
+    recipientName: properties['gd:destinatario'] || '',
+    documentType: properties['gd:tipoDocumental'] || '',
+    status: properties['gd:estado'] || null,
+    currentResponsible: properties['gd:responsableActual'] || '',
+    currentResponsibleDependency: properties['gd:dependenciaResponsableActual'] || '',
     nodeType: node.nodeType,
     mimeType: content.mimeType || '',
     sizeInBytes: content.sizeInBytes || 0,
@@ -154,7 +161,7 @@ export async function uploadPdfToFolder(nodeId, file, { title, description }, cs
   return result.entry
 }
 
-export async function uploadPdfToDirectorInbox(file, { title, description, recipientDependencyId, receiptCategory }, csrfToken) {
+export async function uploadPdfToDirectorInbox(file, { title, description, recipientDependencyId, receiptCategory, metadata }, csrfToken) {
   if (typeof File === 'undefined' || !(file instanceof File) || (file.type && file.type !== 'application/pdf') || !file.name.toLocaleLowerCase('es').endsWith('.pdf')) throw new Error('Selecciona un archivo PDF válido.')
   const signature = new Uint8Array(await file.slice(0, 5).arrayBuffer())
   if (String.fromCharCode(...signature) !== '%PDF-') throw new Error('El archivo seleccionado no tiene una firma PDF válida.')
@@ -176,6 +183,7 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
         'X-CSRF-Token': csrfToken,
         'X-UAC-Recipient-Dependency': recipientDependencyId.toUpperCase(),
         'X-UAC-Receipt-Category': receiptCategory,
+        'X-UAC-Document-Metadata': JSON.stringify(metadata || {}),
       },
       body: formData,
     })
@@ -199,6 +207,8 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
       DIRECTOR_MULTIFILING_PARTIAL: 'El documento quedó creado en Emitidos, pero no se confirmó su asociación a la bandeja destinataria. Verifica ambas carpetas antes de reintentar.',
       DIRECTOR_MULTIFILING_ALREADY_EXISTS: 'El documento ya está asociado a la bandeja destinataria.',
       DIRECTOR_DOCUMENT_WRITE_REQUIRED: 'La sesión no tiene permiso para enviar documentos como Director.',
+      DISTRIBUTION_SERVICE_UNAVAILABLE: 'La identidad técnica de distribución todavía no está configurada.',
+      DIRECTOR_METADATA_UPDATE_FAILED: 'Alfresco creó el documento, pero no confirmó sus metadatos institucionales.',
       DIRECTOR_RECIPIENT_NOT_ALLOWED: 'La dependencia seleccionada no es un destino válido para esta sesión.',
       OFFICE_INBOX_MAPPING_REQUIRED: 'El backend no tiene configurada la carpeta de recepción de la dependencia destinataria.',
       DIRECTOR_DELIVERY_PARTIAL: 'Alfresco creó la copia en Emitidos, pero no confirmó la copia en la bandeja destino. Revisa ambas carpetas antes de reintentar.',

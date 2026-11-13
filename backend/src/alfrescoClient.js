@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { config } from './config.js'
+import { distributionServiceConfigured } from './distribution.js'
 
 const corePath = '/alfresco/api/-default-/public/alfresco/versions/1'
 const authenticationPath = '/alfresco/api/-default-/public/authentication/versions/1'
@@ -119,6 +120,27 @@ export async function authenticateBearer(target, accessToken) {
   const identity = await getAlfrescoIdentity(target, authorization)
   const groups = await getAlfrescoGroups(target, identity.id, authorization)
   return { identity, groups, authorization }
+}
+
+let distributionAuthorizationPromise
+
+export async function getDistributionAuthorization() {
+  if (!distributionServiceConfigured(config.distributionService)) {
+    const error = new Error('DISTRIBUTION_SERVICE_UNAVAILABLE')
+    error.code = 'DISTRIBUTION_SERVICE_UNAVAILABLE'
+    throw error
+  }
+  if (!distributionAuthorizationPromise) {
+    distributionAuthorizationPromise = authenticateBasic(
+      config.alfrescoTarget,
+      config.distributionService.username,
+      config.distributionService.password,
+    ).then(({ authorization }) => authorization).catch((error) => {
+      distributionAuthorizationPromise = undefined
+      throw error
+    })
+  }
+  return distributionAuthorizationPromise
 }
 
 export function buildAlfrescoUrl(target, requestPath, query) {

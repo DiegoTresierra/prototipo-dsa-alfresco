@@ -4,9 +4,12 @@ import * as cookie from 'cookie'
 import { Issuer, generators } from 'openid-client'
 import { Buffer } from 'node:buffer'
 import { config } from './config.js'
-import { authenticateBasic, authenticateBearer, buildAlfrescoUrl, getAlfrescoGroupMembers } from './alfrescoClient.js'
+import { authenticateBasic, authenticateBearer, buildAlfrescoUrl, getAlfrescoGroupMembers, getDistributionAuthorization } from './alfrescoClient.js'
+import { buildInstitutionalMetadata, parseInstitutionalMetadataHeader } from './documentMetadata.js'
 import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSession, getSession } from './sessionStore.js'
 import { resolveRole } from './roleResolver.js'
+import { capabilitiesFor, hasCapability } from './authorizationPolicy.js'
+import { associationConfirmed, associationUsesSameDocument } from './distribution.js'
 
 const app = express()
 const SESSION_COOKIE = 'gd_session'
@@ -101,7 +104,7 @@ async function createAlfrescoSession(provider, authentication, user) {
     authorizationStatus: role.authorizationStatus,
     unit: config.userUnitAssignments?.[userId] || null,
     userInboxNodeId: config.userInboxNodeIds?.[userId] || '',
-    capabilities: role.roleId ? ['documents:read', 'documents:write'] : [],
+    capabilities: capabilitiesFor(role.functionalRole, config.capabilitiesByFunction),
     authorization: authentication.authorization,
     ticket: authentication.ticket,
     accessToken: authentication.accessToken,
@@ -348,8 +351,17 @@ async function requestBody(request, maxBytes = 25 * 1024 * 1024) {
 
 app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (request, response) => {
   const session = request.session
-  if (session.authorizationStatus !== 'active' || session.functionalRole !== 'direccion' || !session.capabilities?.includes('documents:write')) {
+  if (session.functionalRole !== 'direccion' || !hasCapability(session, 'documents:emit')) {
     return response.status(403).json({ error: 'DIRECTOR_DOCUMENT_WRITE_REQUIRED' })
+  }
+  let distributionAuthorization
+  try {
+    distributionAuthorization = await getDistributionAuthorization()
+  } catch (error) {
+    if (error.code === 'DISTRIBUTION_SERVICE_UNAVAILABLE') {
+      return response.status(503).json({ error: 'DISTRIBUTION_SERVICE_UNAVAILABLE' })
+    }
+    return response.status(502).json({ error: 'DISTRIBUTION_SERVICE_UNAVAILABLE' })
   }
 
   const recipientDependency = String(request.get('x-uac-recipient-dependency') || '').toUpperCase()
@@ -367,6 +379,12 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
   const recipientGroupId = config.officeGroupIds?.[recipientDependency]
   if (!emittedNodeId || !receivedNodeId) return response.status(503).json({ error: 'OFFICE_INBOX_MAPPING_REQUIRED' })
   if (!recipientGroupId) return response.status(503).json({ error: 'OFFICE_GROUP_MAPPING_REQUIRED' })
+  let institutionalMetadata
+  try {
+    institutionalMetadata = parseInstitutionalMetadataHeader(request.get('x-uac-document-metadata'))
+  } catch (error) {
+    return response.status(400).json({ error: error.message })
+  }
 
   let body
   try {
@@ -409,10 +427,18 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
       `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(emittedEntry.id)}`,
       '?include=permissions',
     )
+    const metadataResponse = await fetch(nodeUrl, {
+      method: 'PUT',
+      headers: { Accept: 'application/json', Authorization: distributionAuthorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify(institutionalMetadata),
+    })
+    if (!metadataResponse.ok) {
+      return response.status(metadataResponse.status === 403 ? 403 : 502).json({ error: 'DIRECTOR_METADATA_UPDATE_FAILED', emittedNodeId: emittedEntry.id })
+    }
     let permissionResponse
     let currentNode
     try {
-      permissionResponse = await fetch(nodeUrl, { headers: upstreamHeaders })
+      permissionResponse = await fetch(nodeUrl, { headers: { ...upstreamHeaders, Authorization: distributionAuthorization } })
       currentNode = await permissionResponse.json()
     } catch {
       return response.status(502).json({ error: 'DIRECTOR_NODE_PERMISSION_PARTIAL', emittedNodeId: emittedEntry.id })
@@ -441,7 +467,7 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
       try {
         updatePermissionsResponse = await fetch(nodeUrl, {
           method: 'PUT',
-          headers: { ...upstreamHeaders, 'Content-Type': 'application/json' },
+          headers: { ...upstreamHeaders, Authorization: distributionAuthorization, 'Content-Type': 'application/json' },
           body: JSON.stringify({ permissions: nextPermissions }),
         })
       } catch {
@@ -467,6 +493,7 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
         method: 'POST',
         headers: {
           ...upstreamHeaders,
+          Authorization: distributionAuthorization,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ childId: emittedEntry.id, assocType: 'cm:contains' }),
@@ -477,15 +504,27 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
     const associationPayload = await associationResponse.arrayBuffer()
     let associationResult = null
     try { associationResult = JSON.parse(Buffer.from(associationPayload).toString('utf8')) } catch { /* association is not confirmed */ }
-    const associationConfirmed = associationResponse.ok && associationResult?.entry?.childId === emittedEntry.id
-    if (!associationConfirmed) {
+    const associationWasConfirmed = associationResponse.ok && associationConfirmed(associationResult, emittedEntry.id)
+    if (!associationWasConfirmed) {
       const error = associationResponse.status === 403
         ? 'DIRECTOR_MULTIFILING_PERMISSION_REQUIRED'
         : associationResponse.status === 409
           ? 'DIRECTOR_MULTIFILING_ALREADY_EXISTS'
           : 'DIRECTOR_MULTIFILING_PARTIAL'
       if (error === 'DIRECTOR_MULTIFILING_ALREADY_EXISTS') {
-        return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
+        const existingChildrenUrl = buildAlfrescoUrl(
+          config.alfrescoTarget,
+          `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(receivedNodeId)}/children`,
+          `?where=(id='${encodeURIComponent(emittedEntry.id)}')`,
+        )
+        const existingChildrenResponse = await fetch(existingChildrenUrl, { headers: { Accept: 'application/json', Authorization: distributionAuthorization } })
+        const existingChildren = await existingChildrenResponse.json().catch(() => null)
+        const existingEntry = existingChildrenResponse.ok
+          ? existingChildren?.list?.entries?.map(({ entry }) => entry).find((entry) => entry?.id === emittedEntry.id)
+          : null
+        if (associationUsesSameDocument(emittedEntry, existingEntry)) {
+          return response.status(201).json({ emittedEntry, receivedEntry: existingEntry })
+        }
       }
       return response.status(error === 'DIRECTOR_MULTIFILING_PERMISSION_REQUIRED' ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
     }

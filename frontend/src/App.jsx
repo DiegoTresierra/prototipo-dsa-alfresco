@@ -123,6 +123,18 @@ function ApplicationShell({ session, onLogout }) {
           description: documentData.description,
           recipientDependencyId: documentData.recipientDependencyId,
           receiptCategory: documentData.receiptCategory,
+          metadata: {
+            number: documentData.documentNumber,
+            documentDate: documentData.documentDate,
+            originDependency: currentOffice.dependencyId.toUpperCase(),
+            destinationDependency: documentData.recipientDependencyId.toUpperCase(),
+            sender: currentOffice.name,
+            recipient: documentData.recipientName,
+            documentType: documentData.documentType,
+            state: documentData.receiptCategory.replaceAll('-', '_').toUpperCase(),
+            currentResponsible: documentData.recipientName,
+            currentResponsibleDependency: documentData.recipientDependencyId.toUpperCase(),
+          },
         }, session.csrfToken)
         entry = delivery.emittedEntry
         receivedNodeId = delivery.receivedEntry.id

@@ -3,7 +3,6 @@ import { listEligibleDocumentRecipients } from '../api/alfresco'
 import { documentPriorities, documentTypes, organizationalUnits, recipientDependencies } from '../data/emisorCatalog'
 import { PdfPreview } from './PdfPreview'
 import { SearchableSelect } from './SearchableSelect'
-import { getCorrelativeStatus } from '../utils/documentStore'
 
 const maxFileSize = 20 * 1024 * 1024
 const createToken = () => Date.now() + '-' + Math.random().toString(36).slice(2)
@@ -28,6 +27,9 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const [selectedPositionId, setSelectedPositionId] = useState('')
   const [documentType, setDocumentType] = useState('')
   const [documentPeriod, setDocumentPeriod] = useState('')
+  const [documentNumber, setDocumentNumber] = useState('')
+  const [documentDate, setDocumentDate] = useState('')
+  const [receiptCategory, setReceiptCategory] = useState('')
   const [recipients, setRecipients] = useState([])
   const [recipientsLoading, setRecipientsLoading] = useState(!isDirector)
   const [recipientsError, setRecipientsError] = useState('')
@@ -58,13 +60,6 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       const name = normalizeName(directionPosition.recipientName)
       return (recipient.unit?.id === recipientUnit?.id || normalizeName(recipient.unit?.name) === normalizeName(recipientUnit?.name)) && normalizeName(recipient.displayName).includes(name)
     })
-
-  let counter = { last: '', next: '' }
-  let counterError = ''
-  if (documentType) {
-    try { counter = getCorrelativeStatus(issuer.issuerCode, documentType, documentYear) }
-    catch { counterError = 'No se pudo leer el correlativo local. No envíes el documento hasta revisar el almacenamiento del navegador.' }
-  }
 
   useEffect(() => {
     if (isDirector) return undefined
@@ -125,13 +120,13 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     }
     if (lock.current || !event.currentTarget.reportValidity()) return
     const values = new FormData(event.currentTarget)
-    const required = ['documentType', 'documentPeriod', 'priority', 'subject', 'description']
+    const required = ['documentType', 'documentPeriod', 'documentNumber', 'documentDate', 'priority', 'subject', 'description']
     const isOtherDirector = selectedDependency?.id !== issuer.dependencyId
     const destinationIsValid = isDirector
       ? Boolean(isOtherDirector && directionPosition?.id.endsWith('puesto-direccion'))
       : Boolean(selectedRecipient?.inboxNodeId)
-    if (required.some((name) => !String(values.get(name) || '').trim()) || !issuer.issuerCode || !selectedDependency?.available || !recipientUnit || !directionPosition || !destinationIsValid || !counter.next || !mainDocument) {
-      setFormError(counterError || 'Completa los campos obligatorios y selecciona el PDF principal.')
+    if (required.some((name) => !String(values.get(name) || '').trim()) || !issuer.issuerCode || !selectedDependency?.available || !recipientUnit || !directionPosition || !destinationIsValid || (isDirector && !receiptCategory) || !mainDocument) {
+      setFormError('Completa los campos obligatorios y selecciona el PDF principal.')
       return
     }
     if (attachments.length) {
@@ -154,10 +149,11 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         recipientUnit: recipientUnit.name,
         recipientPositionId: directionPosition.id,
         recipientInboxNodeId: selectedRecipient?.inboxNodeId || '',
-        receiptCategory: isDirector ? 'por-atender' : '',
+        receiptCategory: isDirector ? receiptCategory : '',
         documentType,
         documentPeriod,
-        originalConsecutive: counter.next,
+        documentNumber: String(values.get('documentNumber')).trim(),
+        documentDate: values.get('documentDate'),
         documentYear,
         issuingAcronym: issuer.acronym,
         issuerCode: issuer.issuerCode,
@@ -192,12 +188,6 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   }
 
   const options = recipientDependencies.map((dependency) => ({ id: dependency.id, label: dependency.name, disabled: !dependency.available }))
-  const numberPreview = documentType && counter.next && issuer.issuerCode
-    ? `${documentType.toLocaleUpperCase('es')} N.° ${counter.next}-${documentYear}-${issuer.issuerCode}`
-    : documentType && !issuer.issuerCode
-      ? 'Pendiente de asignación del código de unidad del emisor'
-      : 'Selecciona el tipo documental para obtener la vista previa'
-
   return (
     <section aria-labelledby="document-form-title" className="document-form-page">
       <p className="breadcrumb">{panelLabel}</p>
@@ -216,13 +206,13 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         <fieldset className="form-section"><legend>II. Identificación documental</legend><div className="form-grid">
           <label className="form-field"><span>Tipo documental <b aria-hidden="true">*</b></span><select name="documentType" onChange={(event) => { unlockAfterEdit(); setDocumentType(event.target.value) }} required value={documentType}><option value="">Selecciona un tipo</option>{documentTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
           <label className="form-field"><span>Periodo <b aria-hidden="true">*</b></span><select name="documentPeriod" onChange={(event) => { unlockAfterEdit(); setDocumentPeriod(event.target.value) }} required value={documentPeriod}><option value="">Selecciona un periodo</option>{academicPeriods.map((period) => <option key={period} value={period}>{period}</option>)}</select></label>
-          <label className="form-field"><span>Último correlativo del tipo documental</span><input readOnly value={counter.last} /></label>
-          <label className="form-field"><span>Correlativo a emitir <b aria-hidden="true">*</b></span><input readOnly required value={counter.next} /></label>
+          <label className="form-field"><span>Número documental <b aria-hidden="true">*</b></span><input maxLength="120" name="documentNumber" onChange={(event) => { unlockAfterEdit(); setDocumentNumber(event.target.value) }} required value={documentNumber} /></label>
+          <label className="form-field"><span>Fecha del documento <b aria-hidden="true">*</b></span><input name="documentDate" onChange={(event) => { unlockAfterEdit(); setDocumentDate(event.target.value) }} required type="date" value={documentDate} /></label>
           <label className="form-field"><span>Año documental</span><input readOnly value={documentYear} /></label>
           <label className="form-field"><span>Sigla de oficina emisora</span><input readOnly value={issuer.acronym} /></label>
           <label className="form-field"><span>Código del emisor</span><input placeholder="Pendiente de asignación" readOnly value={issuer.issuerCode || ''} /></label>
-          <label className="form-field form-field--full"><span>Vista previa del número documental</span><output className="document-number-preview">{numberPreview}</output></label>
-        </div>{counterError && <p className="form-message form-message--error" role="alert">{counterError}</p>}</fieldset>
+          <label className="form-field"><span>Estado inicial <b aria-hidden="true">*</b></span><select disabled={!isDirector} onChange={(event) => { unlockAfterEdit(); setReceiptCategory(event.target.value) }} required={isDirector} value={receiptCategory}><option value="">Selecciona un estado</option><option value="por-conocimiento">POR_CONOCIMIENTO</option><option value="por-atender">POR_ATENDER</option></select></label>
+        </div></fieldset>
 
         <fieldset className="form-section"><legend>III. Información del remitente</legend><div className="form-grid">
           <label className="form-field"><span>Remitente</span><input readOnly value={issuer.name} /></label>
@@ -254,7 +244,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         {submitted && <p className="form-message" role="status">Documento enviado correctamente. ID Alfresco: {resultDocumentId}</p>}
         {successWarning && <p className="form-message form-message--error" role="status">{successWarning}</p>}
         {uncertainSubmission && <p className="form-message" role="status">Verifica el resultado en Alfresco antes de volver a intentar.</p>}
-        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || submitting || submitted || uncertainSubmission || Boolean(counterError)} type="submit">{submitting ? 'Enviando a Alfresco...' : submitted ? 'Envío confirmado' : 'Enviar documento'}</button></div>
+        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || submitting || submitted || uncertainSubmission} type="submit">{submitting ? 'Enviando a Alfresco...' : submitted ? 'Envío confirmado' : 'Enviar documento'}</button></div>
       </form>
     </section>
   )
