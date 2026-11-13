@@ -16,11 +16,80 @@ export async function listEligibleDocumentRecipients() {
       502: 'No se pudo consultar el directorio de destinatarios en Alfresco.',
       503: 'El directorio de destinatarios todavía no está disponible.',
     }
+
     throw new Error(messages[response.status] || 'No se pudo consultar el directorio de destinatarios.')
   }
   const result = await response.json()
   if (!Array.isArray(result?.recipients)) throw new Error('Alfresco devolvió un directorio de destinatarios no válido.')
   return result.recipients
+}
+
+export async function listUnitHeads() {
+  const response = await apiFetch('/api/directory/unit-heads', { credentials: 'include', headers: { Accept: 'application/json' } })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    const messages = {
+      403: 'La sesión no tiene permiso de Dirección para consultar jefaturas.',
+      502: 'No se pudo consultar el directorio institucional de jefaturas.',
+    }
+    throw new Error(messages[response.status] || body.error || 'No se pudieron cargar las jefaturas autorizadas.')
+  }
+  const result = await response.json()
+  if (!Array.isArray(result?.recipients)) throw new Error('El directorio de jefaturas no tiene un formato válido.')
+  return result.recipients
+}
+
+export async function listDispatches() {
+  const response = await apiFetch('/api/documents/dispatches', { credentials: 'include', headers: { Accept: 'application/json' } })
+  if (!response.ok) throw new Error('No se pudieron consultar los encargos documentales.')
+  const result = await response.json()
+  if (!Array.isArray(result?.dispatches)) throw new Error('La respuesta de encargos documentales no es válida.')
+  return result.dispatches
+}
+
+export async function reserveDocumentNumber(documentType, documentPeriod, csrfToken, issuerCode) {
+  const response = await apiFetch('/api/documents/numbers', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+    body: JSON.stringify({ documentType, documentPeriod, issuerCode }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || !body.number?.originalConsecutive) {
+    const messages = {
+      UNIT_CODE_NOT_CONFIGURED: 'La cuenta no tiene un código institucional de unidad configurado.',
+      NUMBERING_SCOPE_REQUIRED: 'No se pudo determinar el ámbito institucional del correlativo.',
+      NUMBERING_STORE_UNAVAILABLE: 'No se pudo guardar el correlativo institucional.',
+    }
+    throw new Error(messages[body.error] || 'No se pudo reservar el correlativo institucional.')
+  }
+  return body.number
+}
+
+export async function dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, csrfToken) {
+  const response = await apiFetch('/api/documents/dispatch', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+    body: JSON.stringify({ documentId, recipientUserIds, instruction, priority, requestKey }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const messages = {
+      DIRECTOR_DISPATCH_REQUIRED: 'Solo una Dirección autorizada puede realizar despachos.',
+      DISPATCH_RECIPIENT_NOT_ALLOWED: 'Uno o más destinatarios no pertenecen a la dependencia autorizada.',
+      DISPATCH_DOCUMENT_NOT_ALLOWED: 'El documento no pertenece a una bandeja autorizada para esta Dirección.',
+      DISPATCH_REQUEST_CONFLICT: 'La clave de reintento ya corresponde a otro despacho.',
+      DISTRIBUTION_SERVICE_NOT_CONFIGURED: 'La cuenta técnica de distribución no está configurada.',
+      DISTRIBUTION_SERVICE_AUTH_FAILED: 'No se pudo autenticar la cuenta técnica de distribución.',
+    }
+    const error = new Error(messages[body.error] || 'No se pudo completar el despacho documental.')
+    error.status = response.status
+    error.dispatchId = body.dispatchId || ''
+    error.documentId = body.documentId || documentId
+    throw error
+  }
+  return body.dispatch
 }
 
 export async function getDirectorOfficeInboxes() {

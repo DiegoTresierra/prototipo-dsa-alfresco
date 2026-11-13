@@ -52,6 +52,19 @@
 .form-message { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--color-border); border-left: 3px solid var(--color-accent); border-radius: 9px; background: var(--color-background-secondary); color: var(--color-text-primary); font-size: 15px; line-height: 1.5; }
 .form-message--error { border-left-color: var(--color-text-accessible-secondary); }
 .empty-state { margin-top: 22px; padding: 26px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-background); color: var(--color-text-accessible-secondary); font-size: 15px; text-align: center; }
+.dispatch-panel { display: grid; gap: 14px; margin: 20px 0; padding: 18px; border: 1px solid var(--color-border); border-radius: 11px; background: var(--color-background-secondary); }
+.dispatch-panel h3 { margin: 0; color: var(--color-text-primary); font-size: 18px; }
+.dispatch-panel p { margin: 0; color: var(--color-text-accessible-secondary); line-height: 1.5; }
+.dispatch-panel__recipients { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: 9px; }
+.dispatch-panel__recipients legend { padding: 0 5px; color: var(--color-text-primary); font-weight: 600; }
+.dispatch-panel__recipient { display: flex; align-items: flex-start; gap: 9px; padding: 8px; border-radius: 7px; cursor: pointer; }
+.dispatch-panel__recipient:hover { background: var(--color-background); }
+.dispatch-panel__recipient span { display: grid; gap: 3px; }
+.dispatch-panel__recipient small { color: var(--color-text-accessible-secondary); }
+.dispatch-summary { margin: 18px 0; padding: 14px; border-left: 3px solid var(--color-accent); background: var(--color-background-secondary); }
+.dispatch-summary p { margin: 6px 0 0; color: var(--color-text-accessible-secondary); line-height: 1.5; }
+.document-assignment-markers { display: inline-flex; width: 5px; min-height: 42px; flex: 0 0 5px; flex-direction: column; gap: 2px; margin-right: 8px; overflow: hidden; border-radius: 3px; }
+.document-assignment-markers i { display: block; min-height: 8px; flex: 1; background: var(--assignment-color); }
 
 /* Selectores, adjuntos y vista previa */
 .searchable-select { z-index: 1; }

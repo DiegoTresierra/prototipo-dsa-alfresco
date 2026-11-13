@@ -1,16 +1,18 @@
 import dotenv from 'dotenv'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-dotenv.config({
-  path: [
-    path.resolve(process.cwd(), '.env.local'),
-    path.join(projectRoot, '.env.local'),
-    path.resolve(process.cwd(), '.env'),
-    path.join(projectRoot, '.env'),
-  ],
-})
+const backendRoot = path.join(projectRoot, 'backend')
+for (const environmentPath of [
+  path.join(backendRoot, '.env.local'),
+  path.join(projectRoot, '.env.local'),
+  path.join(backendRoot, '.env'),
+  path.join(projectRoot, '.env'),
+]) {
+  if (fs.existsSync(environmentPath)) dotenv.config({ path: environmentPath, override: false })
+}
 
 function required(name) {
   const value = process.env[name]
@@ -77,6 +79,8 @@ export const config = {
   userInboxNodeIds: parseJson('ALFRESCO_USER_INBOX_NODE_IDS_JSON', {}),
   officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
   officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
+  dispatchStorePath: process.env.DISPATCH_STORE_PATH || path.join(backendRoot, 'data', 'dispatches.json'),
+  numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',
     password: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME

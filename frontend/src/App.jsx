@@ -9,9 +9,10 @@ import { rolePages } from './pages'
 import { CONFIRMED_STORAGE_KEY, loadAlfrescoConfirmedDocuments, recordAlfrescoConfirmedDocument } from './utils/documentStore'
 import { getAuthStatus, getSession, logout } from './auth'
 import { LoginPage } from './components/LoginPage'
-import { getDirectorOfficeInboxes, uploadPdfToDirectorInbox, uploadPdfToFolder } from './api/alfresco'
+import { dispatchDocument, getDirectorOfficeInboxes, listDispatches, listUnitHeads, uploadPdfToDirectorInbox, uploadPdfToFolder } from './api/alfresco'
 import { useAlfrescoInbox } from './hooks/useAlfrescoInbox'
 import { DirectorPage } from './pages/DirectorPage'
+import { JefeUnidadPage } from './pages/JefeUnidadPage'
 import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
@@ -55,6 +56,10 @@ function ApplicationShell({ session, onLogout }) {
   const [notifications, setNotifications] = useState([])
   const [officeInboxFolders, setOfficeInboxFolders] = useState(null)
   const [officeInboxError, setOfficeInboxError] = useState('')
+  const [unitHeads, setUnitHeads] = useState([])
+  const [unitHeadsLoading, setUnitHeadsLoading] = useState(false)
+  const [unitHeadsError, setUnitHeadsError] = useState('')
+  const [dispatchRecords, setDispatchRecords] = useState([])
   const [alfrescoDocuments, setAlfrescoDocuments] = useState(getInitialAlfrescoDocuments)
   const attentionStorageKey = personalAttentionKey(session.alfresco?.id || session.user?.id || '', session.dependency || '')
   const [attentionIds, setAttentionIds] = useState(() => {
@@ -98,16 +103,33 @@ function ApplicationShell({ session, onLogout }) {
   }
   const isDirector = String(session.functionalRole || '').toLowerCase() === 'direccion'
   useEffect(() => {
-    if (!isDirector) return undefined
+    if (!canReadAlfresco || !session.dependency) return undefined
     let active = true
     getDirectorOfficeInboxes()
       .then((folders) => { if (active) { setOfficeInboxFolders(folders); setOfficeInboxError('') } })
       .catch((error) => { if (active) setOfficeInboxError(error.message) })
     return () => { active = false }
+  }, [canReadAlfresco, isDirector, session.dependency])
+  useEffect(() => {
+    let active = true
+    listDispatches()
+      .then((records) => { if (active) setDispatchRecords(records) })
+      .catch(() => { if (active) setDispatchRecords([]) })
+    return () => { active = false }
+  }, [session.alfresco?.id, session.functionalRole])
+  useEffect(() => {
+    if (!isDirector) return undefined
+    let active = true
+    setUnitHeadsLoading(true)
+    listUnitHeads()
+      .then((heads) => { if (active) { setUnitHeads(heads); setUnitHeadsError('') } })
+      .catch((error) => { if (active) setUnitHeadsError(error.message) })
+      .finally(() => { if (active) setUnitHeadsLoading(false) })
+    return () => { active = false }
   }, [isDirector, session.dependency])
   const visibleMenu = role.menu.filter((item) => !item.devOnly || import.meta.env.DEV)
   const activeItem = visibleMenu.find((item) => item.id === activePanel) || visibleMenu[0]
-  const inboxFolderIds = isDirector
+  const inboxFolderIds = isDirector || session.functionalRole === 'jefe-unidad'
     ? activePanel === 'para-conocimiento'
       ? [officeInboxFolders?.porConocimiento]
       : [officeInboxFolders?.porAtender, officeInboxFolders?.porConocimiento]
@@ -143,6 +165,13 @@ function ApplicationShell({ session, onLogout }) {
 
   const handleNotificationUpdate = (updatedNotifications) => {
     setNotifications(updatedNotifications)
+  }
+
+  const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey) => {
+    const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken)
+    setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
+    window.dispatchEvent(new Event('uac:alfresco-document-created'))
+    return dispatch
   }
 
   const handleDocumentSubmit = async (documentData) => {
@@ -225,9 +254,11 @@ function ApplicationShell({ session, onLogout }) {
       <div className="app-content">
         <TopBar officeName={currentOffice.office} onMenuClick={() => setIsSidebarOpen(true)} notifications={notifications} onNotificationUpdate={handleNotificationUpdate} notificationMessage={canReadAlfresco ? 'Alfresco no expone un estado persistente de atención.' : ''} />
         <main className="main-content">{activePanel === 'nuevo-documento'
-          ? <DocumentForm allowAlfrescoUpload={canWriteAlfresco} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} />
+          ? <DocumentForm allowAlfrescoUpload={canWriteAlfresco} csrfToken={session.csrfToken} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} />
+          : activePanel === 'documentos-recibidos' && session.functionalRole === 'jefe-unidad'
+            ? <JefeUnidadPage allowAlfresco={canReadAlfresco} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} unit={unit} userId={session.alfresco?.id || session.user?.id || ''} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
-            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onPersonalAttentionChange={selectPersonalAttention} assignmentError={attentionError} />
+            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} unitHeads={unitHeads} unitHeadsError={unitHeadsError} unitHeadsLoading={unitHeadsLoading} assignmentError={attentionError} />
           : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>

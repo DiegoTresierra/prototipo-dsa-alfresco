@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { listEligibleDocumentRecipients } from '../api/alfresco'
+import { listEligibleDocumentRecipients, reserveDocumentNumber } from '../api/alfresco'
 import { documentPriorities, documentTypes, organizationalUnits, recipientDependencies } from '../data/emisorCatalog'
 import { PdfPreview } from './PdfPreview'
 import { SearchableSelect } from './SearchableSelect'
-import { getCorrelativeStatus } from '../utils/documentStore'
 import { getDocumentSubmissionError, isDirectorRole } from '../utils/documentValidation'
 
 const maxFileSize = 20 * 1024 * 1024
@@ -21,7 +20,7 @@ async function validatePdf(file) {
 }
 
 /* eslint-disable react/prop-types */
-export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, panelLabel = 'Panel de Dirección' }) {
+export function DocumentForm({ onSubmit, user, csrfToken = '', allowAlfrescoUpload = false, panelLabel = 'Panel de Dirección' }) {
   const issuer = user
   const pendingStorageKey = `uac.pending-delivery.${issuer.userId}`
   const [restoredDelivery] = useState(() => {
@@ -36,6 +35,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const [selectedPositionId, setSelectedPositionId] = useState('')
   const [documentType, setDocumentType] = useState('')
   const [documentPeriod, setDocumentPeriod] = useState('')
+  const [reservedNumber, setReservedNumber] = useState('')
   const [recipients, setRecipients] = useState([])
   const [recipientsLoading, setRecipientsLoading] = useState(!isDirector)
   const [recipientsError, setRecipientsError] = useState('')
@@ -84,12 +84,8 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       return (recipient.unit?.id === recipientUnit?.id || normalizeName(recipient.unit?.name) === normalizeName(recipientUnit?.name)) && normalizeName(recipient.displayName).includes(name)
     })
 
-  let counter = { last: '', next: '' }
-  let counterError = ''
-  if (documentType) {
-    try { counter = getCorrelativeStatus(issuer.issuerCode, documentType, documentYear) }
-    catch { counterError = 'No se pudo leer el correlativo local. No envíes el documento hasta revisar el almacenamiento del navegador.' }
-  }
+  const counter = { last: '', next: reservedNumber }
+  const counterError = ''
 
   useEffect(() => {
     if (isDirector) return undefined
@@ -109,6 +105,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       setResultDocumentId('')
       setEmissionDate('')
       setSuccessWarning('')
+      setReservedNumber('')
     }
   }
 
@@ -171,7 +168,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     const validationError = getDocumentSubmissionError({
       fields: { documentType, documentPeriod, priority: values.get('priority'), subject: values.get('subject'), description: values.get('description') },
       issuer, dependency: selectedDependency, unit: recipientUnit, position: directionPosition,
-      recipient: selectedRecipient, counter, counterError, mainDocument,
+      recipient: selectedRecipient, counter: { ...counter, next: counter.next || 'pending' }, counterError, counterPending: !reservedNumber, mainDocument,
     })
     if (validationError) {
       setFormError(validationError)
@@ -186,6 +183,12 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     setFormError('')
     let result
     try {
+      let number = reservedNumber
+      if (!number) {
+        const reservation = await reserveDocumentNumber(documentType, documentPeriod, csrfToken, issuer.issuerCode)
+        number = reservation.originalConsecutive
+        setReservedNumber(number)
+      }
       const payload = {
         submissionToken: token.current,
         destinationId: selectedDependency.id,
@@ -200,7 +203,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         receiptCategory: isDirector ? 'por-atender' : '',
         documentType,
         documentPeriod,
-        originalConsecutive: counter.next,
+        originalConsecutive: number,
         documentYear,
         issuingAcronym: issuer.acronym,
         issuerCode: issuer.issuerCode,
@@ -302,8 +305,8 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         <fieldset className="form-section"><legend>II. Identificación documental</legend><div className="form-grid">
           <label className="form-field"><span>Tipo documental <b aria-hidden="true">*</b></span><select name="documentType" onChange={(event) => { unlockAfterEdit(); setDocumentType(event.target.value) }} required value={documentType}><option value="">Selecciona un tipo</option>{documentTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
           <label className="form-field"><span>Periodo <b aria-hidden="true">*</b></span><select name="documentPeriod" onChange={(event) => { unlockAfterEdit(); setDocumentPeriod(event.target.value) }} required value={documentPeriod}><option value="">Selecciona un periodo</option>{academicPeriods.map((period) => <option key={period} value={period}>{period}</option>)}</select></label>
-          <label className="form-field"><span>Último correlativo del tipo documental</span><input readOnly value={counter.last} /></label>
-          <label className="form-field"><span>Correlativo a emitir <b aria-hidden="true">*</b></span><input readOnly required value={counter.next} /></label>
+          <label className="form-field"><span>Último correlativo institucional</span><input readOnly value={counter.last || 'Se consulta al confirmar'} /></label>
+          <label className="form-field"><span>Correlativo a emitir</span><input readOnly value={counter.next} placeholder="Se asignará al confirmar" /></label>
           <label className="form-field"><span>Año documental</span><input readOnly value={documentYear} /></label>
           <label className="form-field"><span>Sigla de oficina emisora</span><input readOnly value={issuer.acronym} /></label>
           <label className="form-field"><span>Código del emisor</span><input placeholder="Pendiente de asignación" readOnly value={issuer.issuerCode || ''} /></label>
