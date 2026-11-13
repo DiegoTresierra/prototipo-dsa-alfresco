@@ -1,8 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_GROUP_MAPPINGS, resolveRole } from './roleResolver.js'
+import { resolveRole } from './roleResolver.js'
 
-const resolve = (groups) => resolveRole(groups, DEFAULT_GROUP_MAPPINGS, 'DTI_T')
+const testGroupMappings = {
+  dependencies: { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' },
+  functions: {
+    direccion: 'GROUP_GD_DIRECCION',
+    'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
+    especialista: 'GROUP_GD_ESPECIALISTA',
+  },
+}
+const resolve = (groups) => resolveRole(groups, testGroupMappings, 'DTI_T')
 
 test('resolves each dependency and function combination', () => {
   assert.equal(resolve(['GROUP_GD_DTI', 'GROUP_GD_DIRECCION']).roleId, 'director-dti')

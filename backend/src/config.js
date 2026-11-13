@@ -1,16 +1,19 @@
 import dotenv from 'dotenv'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-dotenv.config({
-  path: [
-    path.resolve(process.cwd(), '.env.local'),
-    path.join(projectRoot, '.env.local'),
-    path.resolve(process.cwd(), '.env'),
-    path.join(projectRoot, '.env'),
-  ],
-})
+const backendRoot = path.join(projectRoot, 'backend')
+
+for (const environmentPath of [
+  path.join(backendRoot, '.env.local'),
+  path.join(projectRoot, '.env.local'),
+  path.join(backendRoot, '.env'),
+  path.join(projectRoot, '.env'),
+]) {
+  if (fs.existsSync(environmentPath)) dotenv.config({ path: environmentPath, override: false })
+}
 
 function required(name) {
   const value = process.env[name]
@@ -27,21 +30,6 @@ function parseJson(name, fallback) {
     throw new Error(`Invalid JSON configuration: ${name}`)
   }
 }
-
-const defaultOfficeInboxNodeIds = {
-  DTI: {
-    emitidos: '69e39272-905e-426c-a392-72905ef26ca6',
-    porAtender: 'e9b77e3e-9194-4156-b77e-3e9194015606',
-    porConocimiento: '8dbbdbbd-853b-43c2-bbdb-bd853b33c290',
-  },
-  DSA: {
-    emitidos: '0bbf2022-7bbb-40a9-bf20-227bbb00a929',
-    porAtender: '701049e5-a6a9-48c0-9049-e5a6a998c02b',
-    porConocimiento: '2cffb358-2e6f-40f2-bfb3-582e6f40f27f',
-  },
-}
-
-const defaultOfficeGroupIds = { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }
 
 function canonicalizeMappingKeys(mapping, aliases) {
   return Object.fromEntries(Object.entries(mapping).map(([key, configuredGroups]) => {
@@ -67,15 +55,6 @@ function normalizeGroupMappings(dependencies, functions) {
   }
 }
 
-const defaultGroupMappings = {
-  dependencies: { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' },
-  functions: {
-    direccion: 'GROUP_GD_DIRECCION',
-    'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
-    especialista: 'GROUP_GD_ESPECIALISTA',
-  },
-}
-
 function parseGroupMappings() {
   if (process.env.ALFRESCO_GROUP_MAPPINGS_JSON) {
     const mappings = parseJson('ALFRESCO_GROUP_MAPPINGS_JSON', {})
@@ -86,7 +65,7 @@ function parseGroupMappings() {
   const functions = parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {})
   if (Object.keys(dependencies).length || Object.keys(functions).length) return normalizeGroupMappings(dependencies, functions)
 
-  return defaultGroupMappings
+  return { dependencies: {}, functions: {} }
 }
 
 export const config = {
@@ -99,18 +78,14 @@ export const config = {
   ssoAuthMode: process.env.ALFRESCO_SSO_AUTH_MODE || 'bearer',
   groupMappings: parseGroupMappings(),
   userInboxNodeIds: parseJson('ALFRESCO_USER_INBOX_NODE_IDS_JSON', {}),
-  officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', defaultOfficeInboxNodeIds),
-  officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', defaultOfficeGroupIds),
+  officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
+  officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', {}),
   userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || '',
     password: process.env.ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD || '',
   },
-  capabilitiesByFunction: parseJson('ALFRESCO_CAPABILITIES_BY_FUNCTION_JSON', {
-    direccion: ['documents:read', 'documents:write', 'documents:emit'],
-    'jefe-unidad': ['documents:read', 'documents:attend'],
-    especialista: ['documents:read', 'documents:attend'],
-  }),
+  capabilitiesByFunction: parseJson('ALFRESCO_CAPABILITIES_BY_FUNCTION_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),
     clientId: required('KEYCLOAK_CLIENT_ID'),

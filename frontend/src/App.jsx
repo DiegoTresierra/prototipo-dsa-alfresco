@@ -56,6 +56,7 @@ function ApplicationShell({ session, onLogout }) {
   const [officeInboxError, setOfficeInboxError] = useState('')
   const [alfrescoDocuments, setAlfrescoDocuments] = useState(getInitialAlfrescoDocuments)
   const uploadInFlight = useRef(false)
+  const deliveryKey = useRef('')
   const role = roleDefinitions[getDashboardRoleId(session)]
   const canReadAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:read')
   const canWriteAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:write')
@@ -118,11 +119,13 @@ function ApplicationShell({ session, onLogout }) {
       let entry
       let receivedNodeId = ''
       if (isDirector) {
+        if (!deliveryKey.current) deliveryKey.current = `${Date.now()}-${Math.random().toString(36).slice(2)}`
         const delivery = await uploadPdfToDirectorInbox(documentData.mainDocumentFile, {
           title: documentData.subject,
           description: documentData.description,
           recipientDependencyId: documentData.recipientDependencyId,
           receiptCategory: documentData.receiptCategory,
+          deliveryKey: deliveryKey.current,
           metadata: {
             number: documentData.documentNumber,
             documentDate: documentData.documentDate,
@@ -179,6 +182,7 @@ function ApplicationShell({ session, onLogout }) {
       }
       setAlfrescoDocuments(nextDocuments)
       window.dispatchEvent(new Event('uac:alfresco-document-created'))
+      deliveryKey.current = ''
       return { ok: true, document, warning }
     } catch (error) {
       return { ok: false, error: error?.message || 'No se pudo completar el envío a Alfresco.', uncertain: Boolean(error?.uncertain) }

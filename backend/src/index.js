@@ -9,12 +9,13 @@ import { buildInstitutionalMetadata, parseInstitutionalMetadataHeader } from './
 import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSession, getSession } from './sessionStore.js'
 import { resolveRole } from './roleResolver.js'
 import { capabilitiesFor, hasCapability } from './authorizationPolicy.js'
-import { associationConfirmed, associationUsesSameDocument } from './distribution.js'
+import { associationConfirmed, associationUsesSameDocument, mergeConsumerPermission } from './distribution.js'
 
 const app = express()
 const SESSION_COOKIE = 'gd_session'
 const OIDC_COOKIE = 'gd_oidc_transaction'
 let keycloakClientPromise
+const completedDeliveries = new Map()
 
 app.use(express.json({ limit: '1mb' }))
 
@@ -366,6 +367,8 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
 
   const recipientDependency = String(request.get('x-uac-recipient-dependency') || '').toUpperCase()
   const receiptCategory = request.get('x-uac-receipt-category')
+  const deliveryKey = String(request.get('x-uac-delivery-key') || '').trim()
+  if (deliveryKey.length > 200) return response.status(400).json({ error: 'INVALID_DIRECTOR_DELIVERY_KEY' })
   if (!recipientDependency || !['por-atender', 'por-conocimiento'].includes(receiptCategory)) {
     return response.status(400).json({ error: 'INVALID_DIRECTOR_DELIVERY' })
   }
@@ -384,6 +387,11 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
     institutionalMetadata = parseInstitutionalMetadataHeader(request.get('x-uac-document-metadata'))
   } catch (error) {
     return response.status(400).json({ error: error.message })
+  }
+  const deliveryCacheKey = deliveryKey ? `${session.user?.id || session.alfresco?.id || 'unknown'}:${deliveryKey}` : ''
+  if (deliveryCacheKey && completedDeliveries.has(deliveryCacheKey)) {
+    const completed = completedDeliveries.get(deliveryCacheKey)
+    return response.status(completed.status).json(completed.body)
   }
 
   let body
@@ -450,25 +458,21 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
         : 'DIRECTOR_NODE_PERMISSION_PARTIAL'
       return response.status(permissionResponse.status === 403 ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
     }
-    const recipientPermission = currentPermissions.locallySet.find((permission) => permission.authorityId === recipientGroupId)
-    const nextPermissions = {
-      isInheritanceEnabled: currentPermissions.isInheritanceEnabled !== false,
-      locallySet: currentPermissions.locallySet,
+    const permissionUpdate = mergeConsumerPermission(currentPermissions, recipientGroupId)
+    if (!permissionUpdate) {
+      return response.status(502).json({ error: 'DIRECTOR_NODE_PERMISSION_PARTIAL', emittedNodeId: emittedEntry.id })
     }
-    if (!recipientPermission) {
-      nextPermissions.locallySet = [
-        ...currentPermissions.locallySet,
-        { authorityId: recipientGroupId, name: 'Consumer', accessStatus: 'ALLOWED' },
-      ]
+    if (permissionUpdate.conflict) {
+      return response.status(403).json({ error: 'DIRECTOR_NODE_PERMISSION_CONFLICT', emittedNodeId: emittedEntry.id })
     }
 
-    if (!recipientPermission) {
+    if (permissionUpdate.permissions !== currentPermissions) {
       let updatePermissionsResponse
       try {
         updatePermissionsResponse = await fetch(nodeUrl, {
           method: 'PUT',
           headers: { ...upstreamHeaders, Authorization: distributionAuthorization, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ permissions: nextPermissions }),
+          body: JSON.stringify({ permissions: permissionUpdate.permissions }),
         })
       } catch {
         return response.status(502).json({ error: 'DIRECTOR_NODE_PERMISSION_PARTIAL', emittedNodeId: emittedEntry.id })
@@ -479,8 +483,6 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
           : 'DIRECTOR_NODE_PERMISSION_PARTIAL'
         return response.status(updatePermissionsResponse.status === 403 ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
       }
-    } else if (recipientPermission.accessStatus === 'DENIED') {
-      return response.status(403).json({ error: 'DIRECTOR_NODE_PERMISSION_CONFLICT', emittedNodeId: emittedEntry.id })
     }
 
     const associationUrl = buildAlfrescoUrl(
@@ -523,7 +525,9 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
           ? existingChildren?.list?.entries?.map(({ entry }) => entry).find((entry) => entry?.id === emittedEntry.id)
           : null
         if (associationUsesSameDocument(emittedEntry, existingEntry)) {
-          return response.status(201).json({ emittedEntry, receivedEntry: existingEntry })
+          const body = { emittedEntry, receivedEntry: existingEntry }
+          if (deliveryCacheKey) completedDeliveries.set(deliveryCacheKey, { status: 201, body })
+          return response.status(201).json(body)
         }
       }
       return response.status(error === 'DIRECTOR_MULTIFILING_PERMISSION_REQUIRED' ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
@@ -531,7 +535,9 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
 
     // Alfresco returns the same node from both folders; the receiver must be able to read it
     // through an explicit node ACL because secondary parents do not confer permissions.
-    return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
+    const body = { emittedEntry, receivedEntry: emittedEntry }
+    if (deliveryCacheKey) completedDeliveries.set(deliveryCacheKey, { status: 201, body })
+    return response.status(201).json(body)
   } catch {
     return response.status(502).json({ error: 'ALFRESCO_PROXY_ERROR' })
   }

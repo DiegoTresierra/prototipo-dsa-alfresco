@@ -1,15 +1,3 @@
-const DEFAULT_GROUP_MAPPINGS = {
-  dependencies: {
-    DTI: 'GROUP_GD_DTI',
-    DSA: 'GROUP_GD_DSA',
-  },
-  functions: {
-    direccion: 'GROUP_GD_DIRECCION',
-    'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
-    especialista: 'GROUP_GD_ESPECIALISTA',
-  },
-}
-
 function normalizeGroup(group) {
   let normalized = String(group || '')
     .normalize('NFD')
@@ -23,7 +11,6 @@ function normalizeGroup(group) {
     .replace(/^GD_/, '')
   return normalized.replace(/[^A-Z0-9]/g, '')
 }
-
 function matchingKeys(groups, mappings) {
   return Object.entries(mappings || {})
     .filter(([, configuredGroups]) => {
@@ -38,7 +25,7 @@ function roleIdFor(dependency, functionalRole) {
   return `${functionalRole}-${dependency.toLowerCase()}`
 }
 
-export function resolveRole(groups = [], groupMappings = DEFAULT_GROUP_MAPPINGS, userId = null) {
+export function resolveRole(groups = [], groupMappings = { dependencies: {}, functions: {} }, userId = null) {
   const normalizedGroups = new Set(groups.map(normalizeGroup).filter(Boolean))
   const dependencies = matchingKeys(normalizedGroups, groupMappings.dependencies)
   const functions = matchingKeys(normalizedGroups, groupMappings.functions)
@@ -63,5 +50,3 @@ export function resolveRole(groups = [], groupMappings = DEFAULT_GROUP_MAPPINGS,
     groups,
   }
 }
-
-export { DEFAULT_GROUP_MAPPINGS }

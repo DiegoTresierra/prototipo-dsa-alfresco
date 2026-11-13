@@ -161,7 +161,7 @@ export async function uploadPdfToFolder(nodeId, file, { title, description }, cs
   return result.entry
 }
 
-export async function uploadPdfToDirectorInbox(file, { title, description, recipientDependencyId, receiptCategory, metadata }, csrfToken) {
+export async function uploadPdfToDirectorInbox(file, { title, description, recipientDependencyId, receiptCategory, metadata, deliveryKey }, csrfToken) {
   if (typeof File === 'undefined' || !(file instanceof File) || (file.type && file.type !== 'application/pdf') || !file.name.toLocaleLowerCase('es').endsWith('.pdf')) throw new Error('Selecciona un archivo PDF válido.')
   const signature = new Uint8Array(await file.slice(0, 5).arrayBuffer())
   if (String.fromCharCode(...signature) !== '%PDF-') throw new Error('El archivo seleccionado no tiene una firma PDF válida.')
@@ -184,6 +184,7 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
         'X-UAC-Recipient-Dependency': recipientDependencyId.toUpperCase(),
         'X-UAC-Receipt-Category': receiptCategory,
         'X-UAC-Document-Metadata': JSON.stringify(metadata || {}),
+        ...(deliveryKey ? { 'X-UAC-Delivery-Key': deliveryKey } : {}),
       },
       body: formData,
     })
