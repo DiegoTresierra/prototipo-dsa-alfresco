@@ -98,6 +98,12 @@ export async function getAlfrescoGroups(target, personId, authorization) {
   return (response?.list?.entries || []).map(({ entry }) => entry?.id || entry?.displayName).filter(Boolean)
 }
 
+export async function getAlfrescoGroupMembers(target, groupId, authorization) {
+  const query = new URLSearchParams({ where: "(memberType='PERSON')", maxItems: '1000' })
+  const response = await getJson(target, `${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`, authorization)
+  return (response?.list?.entries || []).map(({ entry }) => entry).filter((entry) => entry?.id)
+}
+
 export async function authenticateBasic(target, username, password) {
   const ticketResponse = await createTicket(target, username, password)
   const ticket = ticketResponse?.entry?.id

@@ -15,11 +15,11 @@ export function NotificationBell({ notifications, onUpdate, message = '' }) {
         <Icon name="bell" />{notifications.length > 0 && <span className="topbar__notification-count">{notifications.length}</span>}
       </button>
       {isOpen && <section aria-label="Panel de notificaciones" className="notification-panel">
-        <header className="notification-panel__header"><div><h2>Notificaciones</h2><p>Se mantienen hasta completar o cerrar la acción.</p></div><button aria-label="Cerrar notificaciones" className="notification-panel__close" onClick={() => setIsOpen(false)} type="button"><Icon name="close" size={18} /></button></header>
+        <header className="notification-panel__header"><div><h2>Notificaciones</h2><p>Eventos documentales de Alfresco.</p></div><button aria-label="Cerrar notificaciones" className="notification-panel__close" onClick={() => setIsOpen(false)} type="button"><Icon name="close" size={18} /></button></header>
         {message && <p className="notification-panel__empty" role="status">{message}</p>}
         {!message && notifications.length === 0 ? <p className="notification-panel__empty">No hay notificaciones pendientes.</p> : !message && <ul className="notification-list">{notifications.map((notification) => (
           <li className="notification-item" key={notification.id}>
-            <div className="notification-item__top"><span className="notification-item__category">{notification.category}</span>{notification.demo && <span className="notification-item__demo">Demostración</span>}</div>
+            <div className="notification-item__top"><span className="notification-item__category">{notification.category}</span></div>
             <h3>{notification.title}</h3><p>{notification.description}</p>
             <div className="notification-item__actions"><button onClick={() => completeNotification(notification.id)} type="button">{notification.actionLabel || 'Marcar atendida'}</button><button onClick={() => completeNotification(notification.id)} type="button">Cerrar</button></div>
           </li>

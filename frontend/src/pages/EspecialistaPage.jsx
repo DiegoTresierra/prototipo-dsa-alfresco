@@ -1,10 +1,9 @@
 /* eslint-disable react/prop-types */
 import { PanelPage } from '../components/PanelPage'
-import { DocumentList } from '../components/DocumentList'
 
-export function EspecialistaPage({ title, description, activePanel, documents }) {
+export function EspecialistaPage({ title, description, activePanel }) {
   if (activePanel === 'mis-asignaciones') {
-    return <DocumentList description="Documentos asignados al responsable principal seleccionado al enviarlos." documents={documents} title={title} />
+    return <PanelPage description={description} title={title}><p className="empty-state">Alfresco todavia no proporciona un estado de asignacion para esta bandeja.</p></PanelPage>
   }
 
   return <PanelPage description={description} title={title} />
