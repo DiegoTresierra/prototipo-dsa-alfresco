@@ -1,15 +1,9 @@
-// Catálogo de demostración basado únicamente en la estructura y los nombres proporcionados.
-// No representa un directorio institucional validado ni incorpora funciones oficiales del MOF.
 export const recipientDependencies = [
-  { id: 'dti', name: 'Dirección de Tecnologías de Información (DTI)', acronym: 'DTI', available: true },
-  { id: 'dsa', name: 'Dirección de Servicios Académicos (DSA)', acronym: 'DSA', available: true },
-  { id: 'dependencia-demo-bienestar', name: 'Dirección de Bienestar Universitario (demostrativa)', available: false },
-  { id: 'dependencia-demo-investigacion', name: 'Dirección de Investigación (demostrativa)', available: false },
-  { id: 'dependencia-demo-administracion', name: 'Dirección de Administración (demostrativa)', available: false },
+  { id: 'dti', name: 'Direccion de Tecnologias de Informacion (DTI)', acronym: 'DTI', available: true },
+  { id: 'dsa', name: 'Direccion de Servicios Academicos (DSA)', acronym: 'DSA', available: true },
 ]
 
 const provisionalFunctions = 'Funciones del MOF pendientes de incorporación. Esta descripción es provisional y no constituye una función oficial.'
-
 const position = (id, title, recipientName, options = {}) => ({
   id,
   title,
@@ -33,7 +27,7 @@ export const organizationalUnits = [
     dependencyId: 'dsa',
     parentId: null,
     positions: [
-      position('dsa-puesto-direccion', 'Dirección', 'Responsable no especificado'),
+      position('dsa-puesto-direccion', 'Dirección', 'Dirección de Servicios Académicos (DSA)'),
       position('dsa-secretaria-direccion', 'Secretaría', 'Bethzabet'),
     ],
   },

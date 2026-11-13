@@ -28,6 +28,43 @@ function parseJson(name, fallback) {
   }
 }
 
+function canonicalizeMappingKeys(mapping, aliases) {
+  return Object.fromEntries(Object.entries(mapping).map(([key, configuredGroups]) => {
+    const normalizedKey = String(key).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const groupIds = Array.isArray(configuredGroups) ? configuredGroups : [configuredGroups]
+    const normalizedGroups = groupIds.map((group) => {
+      if (group && typeof group === 'object') return group.id || group.groupId || group.name || ''
+      return group
+    }).filter(Boolean)
+    return [aliases[normalizedKey] || key, normalizedGroups.length === 1 ? normalizedGroups[0] : normalizedGroups]
+  }))
+}
+
+function normalizeGroupMappings(dependencies, functions) {
+  return {
+    dependencies: canonicalizeMappingKeys(dependencies, { dti: 'DTI', gddti: 'DTI', dsa: 'DSA', gddsa: 'DSA' }),
+    functions: canonicalizeMappingKeys(functions, {
+      director: 'direccion',
+      direccion: 'direccion',
+      jefeunidad: 'jefe-unidad',
+      especialista: 'especialista',
+    }),
+  }
+}
+
+function parseGroupMappings() {
+  if (process.env.ALFRESCO_GROUP_MAPPINGS_JSON) {
+    const mappings = parseJson('ALFRESCO_GROUP_MAPPINGS_JSON', {})
+    return normalizeGroupMappings(mappings.dependencies || {}, mappings.functions || {})
+  }
+
+  const dependencies = parseJson('ALFRESCO_DEPENDENCY_GROUP_MAPPINGS_JSON', {})
+  const functions = parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {})
+  if (Object.keys(dependencies).length || Object.keys(functions).length) return normalizeGroupMappings(dependencies, functions)
+
+  return { dependencies: {}, functions: {} }
+}
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   sessionSecret: required('SESSION_SECRET'),
@@ -36,14 +73,11 @@ export const config = {
   alfrescoDiagnostics: process.env.ALFRESCO_DIAGNOSTICS === 'true',
   basicAuthEnabled: process.env.ALFRESCO_BASIC_AUTH_ENABLED !== 'false',
   ssoAuthMode: process.env.ALFRESCO_SSO_AUTH_MODE || 'bearer',
-  groupMappings: parseJson('ALFRESCO_GROUP_MAPPINGS_JSON', {
-    dependencies: { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' },
-    functions: {
-      direccion: 'GROUP_GD_DIRECCION',
-      'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
-      especialista: 'GROUP_GD_ESPECIALISTA',
-    },
-  }),
+  groupMappings: parseGroupMappings(),
+  userInboxNodeIds: parseJson('ALFRESCO_USER_INBOX_NODE_IDS_JSON', {}),
+  officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
+  officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
+  userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),
     clientId: required('KEYCLOAK_CLIENT_ID'),
