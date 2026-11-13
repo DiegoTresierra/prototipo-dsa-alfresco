@@ -22,10 +22,12 @@ function getSafeLoadError(error) {
   return 'No se pudo conectar con Alfresco DEV. Revisa el proxy local y la configuración de la API.'
 }
 
-export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [] }) {
+export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [], folderKinds = [] }) {
   const [state, setState] = useState(initialState)
   const refreshRef = useRef(null)
-  const folderKey = [...new Set(folderIds.filter(Boolean))].join('|')
+  const folderKey = JSON.stringify(folderIds
+    .map((id, index) => ({ id, kind: folderKinds[index] || 'personal' }))
+    .filter((folder) => folder.id))
 
   useEffect(() => {
     let cancelled = false
@@ -42,11 +44,25 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
       inFlight = true
       setState((current) => ({ ...current, loading: !current.lastUpdated, refreshing: Boolean(current.lastUpdated), error: '' }))
       try {
-        const currentFolderIds = folderKey ? folderKey.split('|') : []
-        if (currentFolderIds.length === 0) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
-        const folderResults = await Promise.all(currentFolderIds.map((id) => listNodeChildren(id, { where: '(isFile=true)' })))
+        const currentFolders = JSON.parse(folderKey)
+        if (currentFolders.length === 0) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
+        const folderResults = await Promise.all(currentFolders.map(async (folder) => ({
+          kind: folder.kind,
+          documents: await listNodeChildren(folder.id, { where: '(isFile=true)' }),
+        })))
         if (cancelled) return
-        const documents = folderResults.flat().filter(isPdfCandidate).filter((document, index, all) => all.findIndex((entry) => entry.id === document.id) === index)
+        const documentsById = new Map()
+        for (const result of folderResults) {
+          for (const document of result.documents.filter(isPdfCandidate)) {
+            const existing = documentsById.get(document.id)
+            if (existing) {
+              if (!existing.inboxKinds.includes(result.kind)) existing.inboxKinds.push(result.kind)
+            } else {
+              documentsById.set(document.id, { ...document, inboxKinds: [result.kind] })
+            }
+          }
+        }
+        const documents = [...documentsById.values()]
         setState({ documents, loading: false, refreshing: false, error: '', lastUpdated: new Date().toISOString() })
       } catch (error) {
         if (!cancelled) {
