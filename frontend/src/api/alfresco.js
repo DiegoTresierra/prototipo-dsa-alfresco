@@ -75,6 +75,7 @@ function nodeToDocument(node) {
     subject: properties['cm:title'] || node.name,
     description: properties['cm:description'] || '',
     sender: node.createdByUser?.displayName || node.createdByUser?.id || '',
+    senderUserId: node.createdByUser?.id || '',
     originatingDependency: '',
     unitName: '',
     specialistName: '',

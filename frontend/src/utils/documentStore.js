@@ -1,4 +1,4 @@
-const CONFIRMED_STORAGE_KEY = 'gestion-documental-dsa.alfresco-confirmed-documents.v1'
+export const CONFIRMED_STORAGE_KEY = 'gestion-documental-dsa.alfresco-confirmed-documents.v1'
 
 function keepAlfrescoFields(document) {
   return {

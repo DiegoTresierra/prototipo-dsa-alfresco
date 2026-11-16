@@ -6,7 +6,7 @@ import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { roleDefinitions } from './config/roles'
 import { rolePages } from './pages'
-import { loadAlfrescoConfirmedDocuments, recordAlfrescoConfirmedDocument } from './utils/documentStore'
+import { CONFIRMED_STORAGE_KEY, loadAlfrescoConfirmedDocuments, recordAlfrescoConfirmedDocument } from './utils/documentStore'
 import { getAuthStatus, getSession, logout } from './auth'
 import { LoginPage } from './components/LoginPage'
 import { getDirectorOfficeInboxes, uploadPdfToDirectorInbox, uploadPdfToFolder } from './api/alfresco'
@@ -16,6 +16,7 @@ import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
 import { derivePersonCode, getIssuerCode } from './utils/issuerIdentifier'
+import { loadPersonalAttention, personalAttentionKey, personalAttentionDocuments, withKnownPriorities } from './utils/documentViews'
 
 /* eslint-disable react/prop-types */
 function getInitialAlfrescoDocuments() {
@@ -55,6 +56,27 @@ function ApplicationShell({ session, onLogout }) {
   const [officeInboxFolders, setOfficeInboxFolders] = useState(null)
   const [officeInboxError, setOfficeInboxError] = useState('')
   const [alfrescoDocuments, setAlfrescoDocuments] = useState(getInitialAlfrescoDocuments)
+  const attentionStorageKey = personalAttentionKey(session.alfresco?.id || session.user?.id || '', session.dependency || '')
+  const [attentionIds, setAttentionIds] = useState(() => {
+    try { return loadPersonalAttention(window.localStorage, attentionStorageKey) } catch { return [] }
+  })
+  const [attentionError, setAttentionError] = useState('')
+  useEffect(() => {
+    const syncBrowserSelections = (event) => {
+      if (event.key === CONFIRMED_STORAGE_KEY || event.key === null) setAlfrescoDocuments(getInitialAlfrescoDocuments())
+      if (event.key === attentionStorageKey || event.key === null) {
+        try {
+          setAttentionIds(loadPersonalAttention(window.localStorage, attentionStorageKey))
+          setAttentionError('')
+        } catch {
+          setAttentionIds([])
+          setAttentionError('No se pudo leer la selección personal guardada en este navegador.')
+        }
+      }
+    }
+    window.addEventListener('storage', syncBrowserSelections)
+    return () => window.removeEventListener('storage', syncBrowserSelections)
+  }, [attentionStorageKey])
   const uploadInFlight = useRef(false)
   const role = roleDefinitions[getDashboardRoleId(session)]
   const canReadAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:read')
@@ -88,15 +110,30 @@ function ApplicationShell({ session, onLogout }) {
   const inboxFolderIds = isDirector
     ? activePanel === 'para-conocimiento'
       ? [officeInboxFolders?.porConocimiento]
-      : activePanel === 'para-atencion'
-        ? [officeInboxFolders?.porAtender]
-        : [officeInboxFolders?.porAtender, officeInboxFolders?.porConocimiento]
+      : [officeInboxFolders?.porAtender, officeInboxFolders?.porConocimiento]
     : [session.userInboxNodeId || '']
   const inbox = useAlfrescoInbox({
     active: activePanel === 'inicio' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion' || activePanel === 'documentos-recibidos',
     allowed: canReadAlfresco,
     folderIds: inboxFolderIds,
   })
+  const receivedDocuments = withKnownPriorities(inbox.documents, alfrescoDocuments)
+  const visibleInbox = {
+    ...inbox,
+    documents: activePanel === 'para-atencion' ? personalAttentionDocuments(receivedDocuments, attentionIds) : receivedDocuments,
+    error: inbox.error || officeInboxError,
+  }
+  const selectPersonalAttention = (documentId, selected) => {
+    if (!canReadAlfresco || !receivedDocuments.some((document) => document.id === documentId)) return
+    const next = selected ? [...new Set([...attentionIds, documentId])] : attentionIds.filter((id) => id !== documentId)
+    try {
+      window.localStorage.setItem(attentionStorageKey, JSON.stringify(next))
+      setAttentionIds(next)
+      setAttentionError('')
+    } catch {
+      setAttentionError('No se pudo guardar tu selección en este navegador. El documento conserva su selección anterior.')
+    }
+  }
 
   const handleNavigate = (panelId) => {
     if (!visibleMenu.some((item) => item.id === panelId)) return
@@ -166,6 +203,7 @@ function ApplicationShell({ session, onLogout }) {
           status: 'Creado en Alfresco',
           emissionDate: entry.createdAt || emissionDate,
           createdAt: entry.createdAt || emissionDate,
+          priority: metadata.priority,
         }
         nextDocuments = [document, ...alfrescoDocuments]
         warning = 'Alfresco creó el documento, pero no se pudo guardar su resumen en este navegador.'
@@ -189,8 +227,8 @@ function ApplicationShell({ session, onLogout }) {
         <main className="main-content">{activePanel === 'nuevo-documento'
           ? <DocumentForm allowAlfrescoUpload={canWriteAlfresco} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
-            ? <DirectorPage allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={{ ...inbox, error: inbox.error || officeInboxError }} title={activeItem.label} />
-          : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={inbox} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
+            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onPersonalAttentionChange={selectPersonalAttention} assignmentError={attentionError} />
+          : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>
   )
@@ -220,7 +258,7 @@ function App() {
         : 'La función fue reconocida, pero no hay una interfaz habilitada para ella.'
     return <main className="login-page"><section className="login-card"><p className="breadcrumb">Gestión Documental UAC</p><h1>Acceso pendiente de configuración</h1><p className="form-message">{accessMessage}</p><div className="access-diagnostics"><p>Estado de rol: <strong>{session.authorizationStatus || 'no disponible'}</strong></p><p>Rol asignado: <strong>{session.roleId || 'sin rol'}</strong></p><p>Dependencia: <strong>{session.dependency || 'sin asignar'}</strong></p><p>Funcion: <strong>{session.functionalRole || session.functionalIdentity?.functionalRole || 'sin asignar'}</strong></p></div><button className="button-primary" onClick={() => logout(session).then(() => setSession(null))} type="button">Cerrar sesión</button></section></main>
   }
-  return <ApplicationShell key={session.alfresco?.id} onLogout={() => logout(session).then(() => setSession(null))} session={session} />
+  return <ApplicationShell key={`${session.alfresco?.id}:${session.dependency}`} onLogout={() => logout(session).then(() => setSession(null))} session={session} />
 }
 
 export default App

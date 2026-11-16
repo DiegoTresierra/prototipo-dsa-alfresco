@@ -1,11 +1,10 @@
 /* eslint-disable react/prop-types */
-import { useState } from 'react'
 import { DocumentList } from '../components/DocumentList'
 import { PanelPage } from '../components/PanelPage'
-import { PdfPreview } from '../components/PdfPreview'
 import { DirectorPage } from './DirectorPage'
 import { HierarchyManagementPage } from './HierarchyManagementPage'
 import { formatDocumentDate } from '../utils/documentFormat'
+import { ownSentDocuments } from '../utils/documentViews'
 
 function DirectorHome({ office, sent, received }) {
   const recent = [...sent, ...received]
@@ -47,10 +46,8 @@ function DirectorHome({ office, sent, received }) {
 }
 
 export function DirectorWorkspacePage({ title, description, activePanel, alfrescoDocuments = [], office, localScopeId, allowAlfresco = false, inbox }) {
-  const [selectedSentDocumentId, setSelectedSentDocumentId] = useState('')
-  const sent = office.userId ? alfrescoDocuments.filter((document) => document.senderUserId === office.userId) : []
+  const sent = ownSentDocuments(alfrescoDocuments, office.userId)
   const received = inbox?.documents || []
-  const selectedSentDocument = sent.find((document) => document.id === selectedSentDocumentId)
 
   if (activePanel === 'inicio') return <DirectorHome office={office} received={received} sent={sent} />
   if (activePanel === 'gestion-jerarquia') return <HierarchyManagementPage localScopeId={localScopeId} office={office} />
@@ -58,31 +55,11 @@ export function DirectorWorkspacePage({ title, description, activePanel, alfresc
     return <DirectorPage allowAlfresco={allowAlfresco} description={description} inbox={inbox} title={title} />
   }
 
-  if (activePanel === 'documentos-enviados') {
-    return (
-      <PanelPage description="Documentos cuya creacion fue confirmada por Alfresco." title={title}>
-        {sent.length === 0 ? <div className="empty-state">No hay documentos enviados registrados en esta sesion del navegador.</div> : (
-          <div className="table-scroll"><table className="document-table">
-            <thead><tr><th>Id Alfresco</th><th>Asunto</th><th>Archivo principal</th><th>Fecha de emision</th><th>Estado</th></tr></thead>
-            <tbody>{sent.map((document) => (
-              <tr key={document.id}>
-                <td>{document.id}</td><td>{document.subject}</td>
-                <td><button className="document-link" onClick={() => setSelectedSentDocumentId(document.id)} type="button">Ver documento</button><small className="table-secondary">{document.attachmentName}</small></td>
-                <td>{formatDocumentDate(document.emissionDate)}</td><td><span className="status-label">Confirmado por Alfresco</span></td>
-              </tr>
-            ))}</tbody>
-          </table></div>
-        )}
-        {selectedSentDocument && <section aria-labelledby="sent-document-preview-title" className="document-preview">
-          <div className="document-preview__header"><div><p className="breadcrumb">Vista previa</p><h2 id="sent-document-preview-title">{selectedSentDocument.attachmentName}</h2></div>
-            <button className="button-secondary" onClick={() => setSelectedSentDocumentId('')} type="button">Cerrar vista previa</button></div>
-          <PdfPreview declaredMimeType={selectedSentDocument.attachmentType} fileName={selectedSentDocument.attachmentName} nodeId={selectedSentDocument.id} />
-        </section>}
-      </PanelPage>
-    )
+  if (activePanel === 'documentos-enviados' || activePanel === 'mis-documentos') {
+    return <DirectorPage key={activePanel} title={title} description={description} allowAlfresco={allowAlfresco} mode="sent" inbox={{ documents: sent, loading: false, refreshing: false, error: '' }} />
   }
 
-  if (activePanel === 'mis-documentos' || activePanel === 'seguimiento') {
+  if (activePanel === 'seguimiento') {
     const related = [...new Map([...sent, ...received].map((document) => [document.id, document])).values()]
     return <DocumentList description="Documentos disponibles desde Alfresco para esta sesion." documents={related} title={title} />
   }

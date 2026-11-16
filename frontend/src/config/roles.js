@@ -4,10 +4,10 @@ const newDocumentItem = () => item('nuevo-documento', 'Nuevo documento', 'Regist
 const directorMenu = [
   item('inicio', 'Inicio', 'Resumen de la actividad documental de la dependencia.', 'home'),
   item('nuevo-documento', 'Nuevo documento', 'Registra un documento emitido por la dependencia.'),
-  item('documentos-enviados', 'Documentos enviados', 'Consulta los documentos emitidos por esta dependencia.', 'inbox'),
+  item('documentos-enviados', 'Documentos enviados', 'Consulta los documentos que enviaste.', 'inbox'),
   item('documentos-recibidos', 'Documentos recibidos', 'Consulta documentos enviados a la carpeta de recepción de esta dependencia.', 'inbox'),
-  item('para-atencion', 'Para atención', 'Consulta documentos recibidos para atención.', 'review'),
-  item('mis-documentos', 'Mis documentos', 'Consulta documentos relacionados con la dependencia.', 'archive'),
+  item('para-atencion', 'Para atención', 'Documentos que seleccionaste Para mí desde Recibidos.', 'review'),
+  item('mis-documentos', 'Mis documentos', 'Consulta únicamente los documentos que enviaste tú.', 'archive'),
   item('aprobar-cierres', 'Aprobar cierres', 'Consulta de cierres cuando el flujo correspondiente esté conectado.'),
   item('seguimiento', 'Seguimiento', 'Consulta estados publicados por Alfresco.', 'chart'),
   item('gestion-jerarquia', 'Gestión de jerarquía', 'Administración de usuarios cuando el directorio institucional esté conectado.', 'users'),
