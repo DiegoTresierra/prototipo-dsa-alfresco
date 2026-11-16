@@ -1,4 +1,6 @@
 import express from 'express'
+import { buildRecipientPermissions } from './documentDelivery.js'
+import { getDistributionAuthorization, invalidateDistributionAuthorization } from './distributionService.js'
 import crypto from 'node:crypto'
 import * as cookie from 'cookie'
 import { Issuer, generators } from 'openid-client'
@@ -346,7 +348,23 @@ async function requestBody(request, maxBytes = 25 * 1024 * 1024) {
   return Buffer.concat(chunks)
 }
 
-app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (request, response) => {
+const activeDeliveries = new Set()
+function requireDeliveryLock(request, response, next) {
+  const key = request.body?.nodeId || request.session.id
+  if (activeDeliveries.has(key)) return response.status(409).json({ error: 'DELIVERY_IN_PROGRESS' })
+  activeDeliveries.add(key)
+  let released = false
+  const release = () => {
+    if (!released) { released = true; activeDeliveries.delete(key) }
+  }
+  response.once('finish', release)
+  // Keep the lock until processing finishes, even if the client disconnects.
+  request.deliveryRelease = release
+  next()
+}
+app.post(['/api/documents/send-to-director', '/api/documents/retry-director-delivery'], requireSession, requireCsrf, requireDeliveryLock, async (request, response) => {
+  const retry = request.path.endsWith('/retry-director-delivery')
+  let createdNodeId = ''
   const session = request.session
   if (session.authorizationStatus !== 'active' || session.functionalRole !== 'direccion' || !session.capabilities?.includes('documents:write')) {
     return response.status(403).json({ error: 'DIRECTOR_DOCUMENT_WRITE_REQUIRED' })
@@ -370,40 +388,52 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
 
   let body
   try {
-    body = await requestBody(request)
+    body = retry ? undefined : await requestBody(request)
   } catch (error) {
     return response.status(error.status || 413).json({ error: 'PDF_UPLOAD_TOO_LARGE' })
   }
-  if (!isPdfMultipart(request, body)) return response.status(415).json({ error: 'PDF_UPLOAD_REQUIRED' })
+  if (!retry && !isPdfMultipart(request, body)) return response.status(415).json({ error: 'PDF_UPLOAD_REQUIRED' })
+  if (retry && (typeof request.body?.nodeId !== 'string' || !/^[a-zA-Z0-9-]+$/.test(request.body.nodeId))) return response.status(400).json({ error: 'INVALID_DIRECTOR_DELIVERY' })
 
   try {
+    // Fail before creating a PDF if the configured distribution account cannot authenticate.
+    const distributionHeaders = { Accept: 'application/json', Authorization: await getDistributionAuthorization() }
     const upstreamHeaders = {
       Accept: 'application/json',
       Authorization: session.authorization,
     }
-    const emittedUrl = buildAlfrescoUrl(
-      config.alfrescoTarget,
-      `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(emittedNodeId)}/children`,
-      '?autoRename=false',
-    )
-    const emittedResponse = await fetch(emittedUrl, {
-      method: 'POST',
-      headers: {
-        ...upstreamHeaders,
-        'Content-Type': request.get('content-type'),
-      },
-      body,
-    })
-    const emittedPayload = await emittedResponse.arrayBuffer()
-    let emittedResult = null
-    try { emittedResult = JSON.parse(Buffer.from(emittedPayload).toString('utf8')) } catch { /* return a safe error below */ }
-    const emittedEntry = emittedResult?.entry
-    if (!emittedResponse.ok || !emittedEntry?.id) {
-      if (emittedResponse.status === 403) return response.status(403).json({ error: 'DIRECTOR_EMITIDOS_WRITE_FORBIDDEN' })
-      if (emittedResponse.status === 404) return response.status(404).json({ error: 'DIRECTOR_EMITIDOS_FOLDER_NOT_FOUND' })
-      return response.status(emittedResponse.status || 502).json({ error: 'DIRECTOR_EMITIDOS_UPLOAD_FAILED' })
-    }
+    let emittedEntry
+    if (retry) {
+      const existing = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(request.body.nodeId)}`), { headers: upstreamHeaders })
+      const payload = await existing.json().catch(() => null)
+      emittedEntry = payload?.entry
+      if (!existing.ok || !emittedEntry || emittedEntry.parentId !== emittedNodeId || emittedEntry.createdByUser?.id !== session.alfresco.id || emittedEntry.isFile !== true || emittedEntry.content?.mimeType !== 'application/pdf') return response.status(403).json({ error: 'DIRECTOR_RETRY_NOT_ALLOWED' })
+    } else {
+      const emittedUrl = buildAlfrescoUrl(
+        config.alfrescoTarget,
+        `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(emittedNodeId)}/children`,
+        '?autoRename=false',
+      )
+      const emittedResponse = await fetch(emittedUrl, {
+        method: 'POST',
+        headers: {
+          ...upstreamHeaders,
+          'Content-Type': request.get('content-type'),
+        },
+        body,
+      })
+      const emittedPayload = await emittedResponse.arrayBuffer()
+      let emittedResult = null
+      try { emittedResult = JSON.parse(Buffer.from(emittedPayload).toString('utf8')) } catch { /* return a safe error below */ }
+      emittedEntry = emittedResult?.entry
+      if (!emittedResponse.ok || !emittedEntry?.id) {
+        if (emittedResponse.status === 403) return response.status(403).json({ error: 'DIRECTOR_EMITIDOS_WRITE_FORBIDDEN' })
+        if (emittedResponse.status === 404) return response.status(404).json({ error: 'DIRECTOR_EMITIDOS_FOLDER_NOT_FOUND' })
+        return response.status(emittedResponse.status || 502).json({ error: 'DIRECTOR_EMITIDOS_UPLOAD_FAILED' })
+      }
 
+    }
+    createdNodeId = emittedEntry.id
     const nodeUrl = buildAlfrescoUrl(
       config.alfrescoTarget,
       `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(emittedEntry.id)}`,
@@ -418,25 +448,20 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
       return response.status(502).json({ error: 'DIRECTOR_NODE_PERMISSION_PARTIAL', emittedNodeId: emittedEntry.id })
     }
     const currentPermissions = currentNode?.entry?.permissions
-    if (!permissionResponse.ok || !currentPermissions || !Array.isArray(currentPermissions.locallySet)) {
+    if (!permissionResponse.ok) {
       const error = permissionResponse.status === 403
         ? 'DIRECTOR_NODE_PERMISSION_READ_FORBIDDEN'
         : 'DIRECTOR_NODE_PERMISSION_PARTIAL'
       return response.status(permissionResponse.status === 403 ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
     }
-    const recipientPermission = currentPermissions.locallySet.find((permission) => permission.authorityId === recipientGroupId)
-    const nextPermissions = {
-      isInheritanceEnabled: currentPermissions.isInheritanceEnabled !== false,
-      locallySet: currentPermissions.locallySet,
-    }
-    if (!recipientPermission) {
-      nextPermissions.locallySet = [
-        ...currentPermissions.locallySet,
-        { authorityId: recipientGroupId, name: 'Consumer', accessStatus: 'ALLOWED' },
-      ]
+    let nextPermissions
+    try {
+      nextPermissions = buildRecipientPermissions(currentPermissions, recipientGroupId)
+    } catch (error) {
+      return response.status(error.code === 'DIRECTOR_NODE_PERMISSION_CONFLICT' ? 403 : 502).json({ error: error.code, emittedNodeId: emittedEntry.id })
     }
 
-    if (!recipientPermission) {
+    if (nextPermissions) {
       let updatePermissionsResponse
       try {
         updatePermissionsResponse = await fetch(nodeUrl, {
@@ -448,15 +473,29 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
         return response.status(502).json({ error: 'DIRECTOR_NODE_PERMISSION_PARTIAL', emittedNodeId: emittedEntry.id })
       }
       if (!updatePermissionsResponse.ok) {
+        console.warn('[delivery] permission-update node=%s status=%s', emittedEntry.id, updatePermissionsResponse.status)
         const error = updatePermissionsResponse.status === 403
           ? 'DIRECTOR_NODE_PERMISSION_WRITE_FORBIDDEN'
           : 'DIRECTOR_NODE_PERMISSION_PARTIAL'
         return response.status(updatePermissionsResponse.status === 403 ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
       }
-    } else if (recipientPermission.accessStatus === 'DENIED') {
-      return response.status(403).json({ error: 'DIRECTOR_NODE_PERMISSION_CONFLICT', emittedNodeId: emittedEntry.id })
     }
 
+    // Confirm the stored ACL rather than treating a successful PUT as proof.
+    const verifiedResponse = await fetch(nodeUrl, { headers: upstreamHeaders })
+    const verifiedNode = await verifiedResponse.json().catch(() => null)
+    if (!verifiedResponse.ok || verifiedNode?.entry?.id !== emittedEntry.id || buildRecipientPermissions(verifiedNode?.entry?.permissions, recipientGroupId) !== null) {
+      return response.status(502).json({ error: 'DIRECTOR_NODE_PERMISSION_PARTIAL', emittedNodeId: emittedEntry.id })
+    }
+
+    // The service may only associate this verified original node into a server-mapped inbox.
+    // Reading here also checks that the service can access the original PDF.
+    const serviceRead = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(emittedEntry.id)}`), { headers: distributionHeaders })
+    if (serviceRead.status === 401) invalidateDistributionAuthorization()
+    const serviceNode = await serviceRead.json().catch(() => null)
+    if (!serviceRead.ok || serviceNode?.entry?.id !== emittedEntry.id || serviceNode.entry.parentId !== emittedNodeId || serviceNode.entry.isFile !== true || serviceNode.entry.content?.mimeType !== 'application/pdf') {
+      return response.status(502).json({ error: 'DISTRIBUTION_SERVICE_DOCUMENT_ACCESS_FAILED', emittedNodeId: emittedEntry.id })
+    }
     const associationUrl = buildAlfrescoUrl(
       config.alfrescoTarget,
       `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(receivedNodeId)}/secondary-children`,
@@ -466,7 +505,7 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
       associationResponse = await fetch(associationUrl, {
         method: 'POST',
         headers: {
-          ...upstreamHeaders,
+          ...distributionHeaders,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ childId: emittedEntry.id, assocType: 'cm:contains' }),
@@ -475,6 +514,7 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
       return response.status(502).json({ error: 'DIRECTOR_MULTIFILING_PARTIAL', emittedNodeId: emittedEntry.id })
     }
     const associationPayload = await associationResponse.arrayBuffer()
+    if (associationResponse.status === 401) invalidateDistributionAuthorization()
     let associationResult = null
     try { associationResult = JSON.parse(Buffer.from(associationPayload).toString('utf8')) } catch { /* association is not confirmed */ }
     const associationConfirmed = associationResponse.ok && associationResult?.entry?.childId === emittedEntry.id
@@ -485,16 +525,27 @@ app.post('/api/documents/send-to-director', requireSession, requireCsrf, async (
           ? 'DIRECTOR_MULTIFILING_ALREADY_EXISTS'
           : 'DIRECTOR_MULTIFILING_PARTIAL'
       if (error === 'DIRECTOR_MULTIFILING_ALREADY_EXISTS') {
-        return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
+        let skipCount = 0
+        while (true) {
+          const check = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(emittedEntry.id)}/parents`, `?include=association&maxItems=100&skipCount=${skipCount}`), { headers: distributionHeaders })
+          const parents = await check.json().catch(() => null)
+          if (!check.ok || !Array.isArray(parents?.list?.entries)) break
+          if (parents.list.entries.some(({ entry }) => entry?.id === receivedNodeId && entry.association?.assocType === 'cm:contains' && entry.association?.isPrimary === false)) return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
+          if (!parents.list.pagination?.hasMoreItems || !parents.list.entries.length) break
+          skipCount += parents.list.entries.length
+        }
       }
-      return response.status(error === 'DIRECTOR_MULTIFILING_PERMISSION_REQUIRED' ? 403 : 502).json({ error, emittedNodeId: emittedEntry.id })
+      return response.status(error === 'DIRECTOR_MULTIFILING_PERMISSION_REQUIRED' ? 403 : 502).json({ error: error === 'DIRECTOR_MULTIFILING_ALREADY_EXISTS' ? 'DIRECTOR_MULTIFILING_PARTIAL' : error, emittedNodeId: emittedEntry.id })
     }
 
     // Alfresco returns the same node from both folders; the receiver must be able to read it
     // through an explicit node ACL because secondary parents do not confer permissions.
     return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
-  } catch {
-    return response.status(502).json({ error: 'ALFRESCO_PROXY_ERROR' })
+  } catch (error) {
+    if (['DISTRIBUTION_SERVICE_NOT_CONFIGURED', 'DISTRIBUTION_SERVICE_AUTH_FAILED'].includes(error.code)) return response.status(503).json({ error: error.code })
+    return response.status(502).json({ error: createdNodeId ? 'DIRECTOR_NODE_PERMISSION_PARTIAL' : 'ALFRESCO_PROXY_ERROR', ...(createdNodeId ? { emittedNodeId: createdNodeId } : {}) })
+  } finally {
+    request.deliveryRelease()
   }
 })
 
@@ -580,6 +631,6 @@ app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) 
   }
 })
 
-app.listen(config.port, () => {
+export const server = app.listen(config.port, () => {
   console.log(`Authentication backend listening on port ${config.port}`)
 })

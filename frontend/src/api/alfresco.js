@@ -154,21 +154,25 @@ export async function uploadPdfToFolder(nodeId, file, { title, description }, cs
   return result.entry
 }
 
-export async function uploadPdfToDirectorInbox(file, { title, description, recipientDependencyId, receiptCategory }, csrfToken) {
-  if (typeof File === 'undefined' || !(file instanceof File) || (file.type && file.type !== 'application/pdf') || !file.name.toLocaleLowerCase('es').endsWith('.pdf')) throw new Error('Selecciona un archivo PDF válido.')
-  const signature = new Uint8Array(await file.slice(0, 5).arrayBuffer())
-  if (String.fromCharCode(...signature) !== '%PDF-') throw new Error('El archivo seleccionado no tiene una firma PDF válida.')
+export async function uploadPdfToDirectorInbox(file, { title, description, recipientDependencyId, receiptCategory, existingNodeId = '' }, csrfToken) {
+  if (!existingNodeId) {
+    if (typeof File === 'undefined' || !(file instanceof File) || (file.type && file.type !== 'application/pdf') || !file.name.toLocaleLowerCase('es').endsWith('.pdf')) throw new Error('Selecciona un archivo PDF válido.')
+    const signature = new Uint8Array(await file.slice(0, 5).arrayBuffer())
+    if (String.fromCharCode(...signature) !== '%PDF-') throw new Error('El archivo seleccionado no tiene una firma PDF válida.')
+  }
   if (!recipientDependencyId || !['por-atender', 'por-conocimiento'].includes(receiptCategory)) throw new Error('Selecciona una dependencia destinataria válida.')
 
   const formData = new FormData()
-  formData.append('filedata', file, file.name)
-  formData.append('name', file.name)
-  formData.append('nodeType', 'cm:content')
-  formData.append('cm:title', title)
-  formData.append('cm:description', description)
+  if (!existingNodeId) {
+    formData.append('filedata', file, file.name)
+    formData.append('name', file.name)
+    formData.append('nodeType', 'cm:content')
+    formData.append('cm:title', title)
+    formData.append('cm:description', description)
+  }
   let response
   try {
-    response = await apiFetch('/api/documents/send-to-director', {
+    response = await apiFetch(existingNodeId ? '/api/documents/retry-director-delivery' : '/api/documents/send-to-director', {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -176,8 +180,9 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
         'X-CSRF-Token': csrfToken,
         'X-UAC-Recipient-Dependency': recipientDependencyId.toUpperCase(),
         'X-UAC-Receipt-Category': receiptCategory,
+        ...(existingNodeId ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: formData,
+      body: existingNodeId ? JSON.stringify({ nodeId: existingNodeId }) : formData,
     })
   } catch {
     const error = new Error('No se pudo confirmar la respuesta de Alfresco. Revisa la carpeta destinataria antes de volver a intentar.')
@@ -187,7 +192,11 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     const knownErrors = {
+      DISTRIBUTION_SERVICE_NOT_CONFIGURED: 'Falta configurar la cuenta de distribución en el servidor. El PDF no se ha vuelto a cargar.',
+      DISTRIBUTION_SERVICE_AUTH_FAILED: 'Alfresco no pudo autenticar la cuenta de distribución. Revisa su configuración en el servidor.',
+      DISTRIBUTION_SERVICE_DOCUMENT_ACCESS_FAILED: 'El PDF está en Emitidos, pero la cuenta de distribución no puede consultar el original. Revisa su permiso Lector en Emitidos.',
       OFFICE_GROUP_MAPPING_REQUIRED: 'El backend no tiene configurado el grupo institucional destinatario.',
+      DIRECTOR_RETRY_NOT_ALLOWED: 'No tienes autorización para redistribuir este documento desde Emitidos.',
       DIRECTOR_EMITIDOS_WRITE_FORBIDDEN: 'Alfresco denegó la carga en Emitidos. Verifica que tu grupo tenga permiso para crear documentos en esa carpeta.',
       DIRECTOR_EMITIDOS_FOLDER_NOT_FOUND: 'No se encontró la carpeta Emitidos configurada para esta dependencia.',
       DIRECTOR_EMITIDOS_UPLOAD_FAILED: 'Alfresco no confirmó la creación del documento en Emitidos.',
@@ -195,7 +204,7 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
       DIRECTOR_NODE_PERMISSION_WRITE_FORBIDDEN: 'El PDF quedó en Emitidos, pero Alfresco no permitió dar lectura al grupo de la dependencia destinataria. Revisa permisos del documento antes de reintentar.',
       DIRECTOR_NODE_PERMISSION_CONFLICT: 'El PDF quedó en Emitidos, pero ya existe una denegación explícita para el grupo destinatario. Revisa los permisos del documento.',
       DIRECTOR_NODE_PERMISSION_PARTIAL: 'El PDF quedó en Emitidos, pero no se pudo confirmar la configuración de acceso para la dependencia destinataria. Revisa el documento antes de reintentar.',
-      DIRECTOR_MULTIFILING_PERMISSION_REQUIRED: 'El documento quedó creado en Emitidos, pero Alfresco denegó su asociación a la bandeja destinataria. Revisa los permisos de asociación y lectura del documento.',
+      DIRECTOR_MULTIFILING_PERMISSION_REQUIRED: 'El documento quedó creado en Emitidos, pero Alfresco denegó la asociación a la cuenta de distribución. Revisa su permiso Contribuidor en la carpeta destinataria.',
       DIRECTOR_MULTIFILING_PARTIAL: 'El documento quedó creado en Emitidos, pero no se confirmó su asociación a la bandeja destinataria. Verifica ambas carpetas antes de reintentar.',
       DIRECTOR_MULTIFILING_ALREADY_EXISTS: 'El documento ya está asociado a la bandeja destinataria.',
       DIRECTOR_DOCUMENT_WRITE_REQUIRED: 'La sesión no tiene permiso para enviar documentos como Director.',
@@ -208,7 +217,8 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
     }
     if (knownErrors[body.error]) {
       const error = new Error(knownErrors[body.error])
-      error.uncertain = [
+      error.uncertain = Boolean(existingNodeId || body.emittedNodeId) || [
+        'DIRECTOR_EMITIDOS_UPLOAD_FAILED',
         'DIRECTOR_NODE_PERMISSION_READ_FORBIDDEN',
         'DIRECTOR_NODE_PERMISSION_WRITE_FORBIDDEN',
         'DIRECTOR_NODE_PERMISSION_CONFLICT',
@@ -216,7 +226,7 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
         'DIRECTOR_MULTIFILING_PERMISSION_REQUIRED',
         'DIRECTOR_MULTIFILING_PARTIAL',
       ].includes(body.error)
-      error.emittedNodeId = body.emittedNodeId || ''
+      error.emittedNodeId = body.emittedNodeId || existingNodeId
       throw error
     }
     const messages = { 401: 'La sesión expiró. Inicia sesión otra vez.', 403: 'La sesión no tiene permiso para enviar a este destino.', 404: 'No se encontró la carpeta destinataria.', 409: 'Ya existe un archivo con ese nombre.', 413: 'El archivo supera el tamaño permitido.', 415: 'Alfresco rechazó el formato del archivo.' }

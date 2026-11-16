@@ -77,6 +77,12 @@ export const config = {
   userInboxNodeIds: parseJson('ALFRESCO_USER_INBOX_NODE_IDS_JSON', {}),
   officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
   officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
+  distributionService: {
+    username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',
+    password: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME
+      ? process.env.ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD || ''
+      : process.env.ALFRESCO_DISTRIBUTION_PASSWORD || '',
+  },
   userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),

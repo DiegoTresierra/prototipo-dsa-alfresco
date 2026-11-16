@@ -123,6 +123,7 @@ function ApplicationShell({ session, onLogout }) {
           description: documentData.description,
           recipientDependencyId: documentData.recipientDependencyId,
           receiptCategory: documentData.receiptCategory,
+          existingNodeId: documentData.existingNodeId || '',
         }, session.csrfToken)
         entry = delivery.emittedEntry
         receivedNodeId = delivery.receivedEntry.id
@@ -131,6 +132,10 @@ function ApplicationShell({ session, onLogout }) {
           title: documentData.subject,
           description: documentData.description,
         }, session.csrfToken, documentData.recipientUserId)
+      }
+      if (documentData.existingNodeId && !documentData.documentType) {
+        window.dispatchEvent(new Event('uac:alfresco-document-created'))
+        return { ok: true, document: { id: entry.id, emissionDate: entry.createdAt }, warning: 'Distribución recuperada. El correlativo local no se ha reconstruido.' }
       }
       const metadata = { ...documentData }
       delete metadata.mainDocumentFile
@@ -169,7 +174,7 @@ function ApplicationShell({ session, onLogout }) {
       window.dispatchEvent(new Event('uac:alfresco-document-created'))
       return { ok: true, document, warning }
     } catch (error) {
-      return { ok: false, error: error?.message || 'No se pudo completar el envío a Alfresco.', uncertain: Boolean(error?.uncertain) }
+      return { ok: false, error: error?.message || 'No se pudo completar el envío a Alfresco.', uncertain: Boolean(error?.uncertain), emittedNodeId: error?.emittedNodeId || documentData.existingNodeId || '' }
     } finally {
       uploadInFlight.current = false
     }

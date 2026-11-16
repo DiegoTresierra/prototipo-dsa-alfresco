@@ -4,6 +4,7 @@ import { documentPriorities, documentTypes, organizationalUnits, recipientDepend
 import { PdfPreview } from './PdfPreview'
 import { SearchableSelect } from './SearchableSelect'
 import { getCorrelativeStatus } from '../utils/documentStore'
+import { getDocumentSubmissionError, isDirectorRole } from '../utils/documentValidation'
 
 const maxFileSize = 20 * 1024 * 1024
 const createToken = () => Date.now() + '-' + Math.random().toString(36).slice(2)
@@ -22,7 +23,14 @@ async function validatePdf(file) {
 /* eslint-disable react/prop-types */
 export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, panelLabel = 'Panel de Dirección' }) {
   const issuer = user
-  const isDirector = String(issuer.roleId || '').startsWith('director-')
+  const pendingStorageKey = `uac.pending-delivery.${issuer.userId}`
+  const [restoredDelivery] = useState(() => {
+    try {
+      const stored = JSON.parse(window.sessionStorage.getItem(pendingStorageKey))
+      return stored?.uncertain === true ? stored : null
+    } catch { return null }
+  })
+  const isDirector = isDirectorRole(issuer.roleId)
   const [dependencyId, setDependencyId] = useState('')
   const [selectedUnitId, setSelectedUnitId] = useState('')
   const [selectedPositionId, setSelectedPositionId] = useState('')
@@ -34,13 +42,30 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const [formError, setFormError] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [uncertainSubmission, setUncertainSubmission] = useState(false)
+  const [uncertainSubmission, setUncertainSubmission] = useState(Boolean(restoredDelivery))
   const [resultDocumentId, setResultDocumentId] = useState('')
   const [emissionDate, setEmissionDate] = useState('')
   const [successWarning, setSuccessWarning] = useState('')
   const [mainDocument, setMainDocument] = useState(null)
+  const [validatingPdf, setValidatingPdf] = useState(false)
   const [attachments, setAttachments] = useState([])
   const lock = useRef(false)
+  const pendingDelivery = useRef(restoredDelivery)
+  const [pendingNodeId, setPendingNodeId] = useState(restoredDelivery?.existingNodeId || '')
+  const [recoveryNodeId, setRecoveryNodeId] = useState('')
+  const rememberPending = (payload, nodeId = '') => {
+    try {
+      window.sessionStorage.setItem(pendingStorageKey, JSON.stringify({
+        uncertain: true,
+        existingNodeId: nodeId,
+        recipientDependencyId: payload.recipientDependencyId,
+        receiptCategory: payload.receiptCategory,
+      }))
+    } catch { /* The visible ID still permits manual reconciliation. */ }
+  }
+  const clearPending = () => {
+    try { window.sessionStorage.removeItem(pendingStorageKey) } catch { /* storage may be unavailable */ }
+  }
   const token = useRef(createToken())
   const inputRef = useRef(null)
   const attachmentsInputRef = useRef(null)
@@ -92,14 +117,21 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     event.target.value = ''
     if (!file) return
     unlockAfterEdit()
-    const error = await validatePdf(file)
-    if (error) {
-      setMainDocument(null)
-      setFormError(error)
-      return
+    setValidatingPdf(true)
+    setMainDocument(null)
+    try {
+      const error = await validatePdf(file)
+      if (error) {
+        setFormError(error)
+        return
+      }
+      setMainDocument(file)
+      setFormError('')
+    } catch {
+      setFormError('No se pudo leer el PDF seleccionado. Vuelve a seleccionarlo.')
+    } finally {
+      setValidatingPdf(false)
     }
-    setMainDocument(file)
-    setFormError('')
   }
 
   const chooseAttachments = async (event) => {
@@ -123,15 +155,26 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       setFormError('El envío no está disponible en este momento.')
       return
     }
+    if (submitting || validatingPdf) return
+    // A pending delivery must reuse its node, even when the restored form is empty.
+    if (uncertainSubmission) {
+      const nodeId = pendingNodeId || recoveryNodeId.trim()
+      if (!isDirector || !/^[a-zA-Z0-9-]+$/.test(nodeId)) {
+        setFormError('El envío anterior quedó pendiente. Introduce el ID del PDF que está en Emitidos para reintentar su distribución sin volver a cargarlo.')
+        return
+      }
+      await retryDelivery(nodeId)
+      return
+    }
     if (lock.current || !event.currentTarget.reportValidity()) return
     const values = new FormData(event.currentTarget)
-    const required = ['documentType', 'documentPeriod', 'priority', 'subject', 'description']
-    const isOtherDirector = selectedDependency?.id !== issuer.dependencyId
-    const destinationIsValid = isDirector
-      ? Boolean(isOtherDirector && directionPosition?.id.endsWith('puesto-direccion'))
-      : Boolean(selectedRecipient?.inboxNodeId)
-    if (required.some((name) => !String(values.get(name) || '').trim()) || !issuer.issuerCode || !selectedDependency?.available || !recipientUnit || !directionPosition || !destinationIsValid || !counter.next || !mainDocument) {
-      setFormError(counterError || 'Completa los campos obligatorios y selecciona el PDF principal.')
+    const validationError = getDocumentSubmissionError({
+      fields: { documentType, documentPeriod, priority: values.get('priority'), subject: values.get('subject'), description: values.get('description') },
+      issuer, dependency: selectedDependency, unit: recipientUnit, position: directionPosition,
+      recipient: selectedRecipient, counter, counterError, mainDocument,
+    })
+    if (validationError) {
+      setFormError(validationError)
       return
     }
     if (attachments.length) {
@@ -143,7 +186,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     setFormError('')
     let result
     try {
-      result = await onSubmit({
+      const payload = {
         submissionToken: token.current,
         destinationId: selectedDependency.id,
         destination: selectedDependency.name,
@@ -174,14 +217,25 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         attachmentType: 'application/pdf',
         mainDocument: { name: mainDocument.name, format: 'PDF', mimeType: 'application/pdf', size: mainDocument.size },
         mainDocumentFile: mainDocument,
-      })
+      }
+      pendingDelivery.current = payload
+      // Preserve an uncertain operation before the request, including reloads in flight.
+      rememberPending(payload)
+      result = await onSubmit(payload)
     } catch {
       result = { ok: false, error: 'No se pudo completar el envío a Alfresco.' }
     }
     setSubmitting(false)
     if (!result?.ok) {
-      if (result?.uncertain) setUncertainSubmission(true)
-      else lock.current = false
+      if (result?.emittedNodeId) setPendingNodeId(result.emittedNodeId)
+      if (result?.uncertain) {
+        setUncertainSubmission(true)
+        rememberPending(pendingDelivery.current, result.emittedNodeId)
+      }
+      else {
+        lock.current = false
+        clearPending()
+      }
       setFormError(result?.error || 'Alfresco no confirmó la creación del documento.')
       return
     }
@@ -189,6 +243,38 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     setEmissionDate(result.document.emissionDate || '')
     setSuccessWarning(result.warning || '')
     setSubmitted(true)
+    clearPending()
+  }
+
+  const retryDelivery = async (nodeId = pendingNodeId) => {
+    if (!allowAlfrescoUpload || submitting || !nodeId || !pendingDelivery.current) return
+    const payload = pendingDelivery.current
+    if (!payload.recipientDependencyId || !payload.receiptCategory) {
+      setFormError('No se conservó el destino del envío anterior. Es necesario revisar ese envío antes de distribuirlo.')
+      return
+    }
+    setPendingNodeId(nodeId)
+    rememberPending(payload, nodeId)
+    setSubmitting(true)
+    try {
+      const result = await onSubmit({ ...payload, existingNodeId: nodeId })
+      if (!result?.ok) {
+        setFormError(result?.error || 'No se pudo confirmar la distribución. El PDF conserva su ID.')
+        return
+      }
+      setResultDocumentId(result.document.id)
+      setEmissionDate(result.document.emissionDate || '')
+      setSuccessWarning(result.warning || '')
+      setSubmitted(true)
+      setUncertainSubmission(false)
+      setPendingNodeId('')
+      setFormError('')
+      clearPending()
+    } catch {
+      setFormError('No se pudo confirmar la distribución. Puedes reintentar usando el mismo ID.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const options = recipientDependencies.map((dependency) => ({ id: dependency.id, label: dependency.name, disabled: !dependency.available }))
@@ -253,8 +339,10 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         {formError && <p className="form-message form-message--error" role="alert">{formError}</p>}
         {submitted && <p className="form-message" role="status">Documento enviado correctamente. ID Alfresco: {resultDocumentId}</p>}
         {successWarning && <p className="form-message form-message--error" role="status">{successWarning}</p>}
-        {uncertainSubmission && <p className="form-message" role="status">Verifica el resultado en Alfresco antes de volver a intentar.</p>}
-        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || submitting || submitted || uncertainSubmission || Boolean(counterError)} type="submit">{submitting ? 'Enviando a Alfresco...' : submitted ? 'Envío confirmado' : 'Enviar documento'}</button></div>
+        {uncertainSubmission && <p className="form-message" role="status">Hay un envío anterior pendiente. Puedes reintentar su distribución usando el mismo PDF de Emitidos, sin completar nuevamente el formulario.</p>}
+        {uncertainSubmission && !pendingNodeId && isDirector && <label className="form-field"><span>ID del PDF que ya está en Emitidos</span><input autoComplete="off" onChange={(event) => setRecoveryNodeId(event.target.value)} placeholder="Pega el ID Alfresco del documento existente" value={recoveryNodeId} /></label>}
+        {pendingNodeId && <p className="form-message" role="status">PDF almacenado en Emitidos. Distribución pendiente. ID Alfresco: {pendingNodeId}</p>}
+        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || validatingPdf || submitting || submitted} type="submit">{validatingPdf ? 'Validando PDF...' : submitting ? 'Procesando envío...' : submitted ? 'Envío confirmado' : uncertainSubmission ? 'Reintentar solo la distribución' : 'Enviar documento'}</button></div>
       </form>
     </section>
   )
