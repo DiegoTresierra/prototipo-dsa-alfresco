@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { PanelPage } from '../components/PanelPage'
 import { PdfPreview } from '../components/PdfPreview'
 import { Icon } from '../components/Icon'
@@ -23,11 +23,14 @@ function DocumentDate({ value }) {
     <small>{date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}</small>
   </time>
 }
-export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '' }) {
+export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '', openDocumentId = '', onDocumentPreviewClose }) {
   const [selectedDocumentId, setSelectedDocumentId] = useState('')
   const [query, setQuery] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [sortOrder, setSortOrder] = useState('newest')
+  useEffect(() => {
+    if (openDocumentId) setSelectedDocumentId(openDocumentId)
+  }, [openDocumentId])
   const isSent = mode === 'sent'
   const isAttention = mode === 'attention'
   if (!allowAlfresco) {
@@ -89,7 +92,7 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
         </table>
       </div>
       <p className="received-inbox__data-note">{isSent ? 'Se muestran tus envíos confirmados y su prioridad guardada en este navegador.' : 'Tu selección Para mí se conserva en este navegador. La prioridad se muestra cuando el envío está registrado aquí. La fecha de recepción sigue pendiente de registro.'}</p>
-      {selectedDocument && <section aria-labelledby="document-preview-title" className="document-preview"><div className="document-preview__header"><div><p className="breadcrumb">Vista previa del documento</p><h2 id="document-preview-title">{selectedDocument.subject || selectedDocument.attachmentName}</h2></div><button className="button-secondary" onClick={() => setSelectedDocumentId('')} type="button">Cerrar vista previa</button></div><PdfPreview declaredMimeType={selectedDocument.mimeType || selectedDocument.attachmentType} fileName={selectedDocument.attachmentName} nodeId={selectedDocument.id} /></section>}
+      {selectedDocument && <section aria-labelledby="document-preview-title" className="document-preview"><div className="document-preview__header"><div><p className="breadcrumb">Vista previa del documento</p><h2 id="document-preview-title">{selectedDocument.subject || selectedDocument.attachmentName}</h2></div><button className="button-secondary" onClick={() => { setSelectedDocumentId(''); onDocumentPreviewClose?.() }} type="button">Cerrar vista previa</button></div><PdfPreview declaredMimeType={selectedDocument.mimeType || selectedDocument.attachmentType} fileName={selectedDocument.attachmentName} nodeId={selectedDocument.id} /></section>}
     </section>
   )
 }

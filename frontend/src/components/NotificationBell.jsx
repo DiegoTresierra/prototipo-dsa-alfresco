@@ -1,29 +1,56 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from './Icon'
+import { NotificationList } from './NotificationList'
 
 /* eslint-disable react/prop-types */
-export function NotificationBell({ notifications, onUpdate, message = '' }) {
+export function NotificationBell({ notifications, loading, error, onRefresh, onViewDocument, onViewAll, pendingMessage = '' }) {
   const [isOpen, setIsOpen] = useState(false)
+  const panelRef = useRef(null)
+  const buttonRef = useRef(null)
+  const unreadCount = notifications.filter((notification) => !notification.isRead).length
 
-  const completeNotification = (notificationId) => {
-    onUpdate(notifications.filter((notification) => notification.id !== notificationId))
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false)
+        buttonRef.current?.focus()
+      }
+    }
+    const closeOnOutsidePointer = (event) => {
+      if (!panelRef.current?.contains(event.target)) setIsOpen(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape)
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+    }
+  }, [isOpen])
+
+  const handleViewAll = () => {
+    setIsOpen(false)
+    onViewAll()
   }
 
   return (
-    <div className="topbar__notifications">
-      <button aria-expanded={isOpen} aria-label={`Notificaciones pendientes: ${notifications.length}`} className="topbar__bell" onClick={() => setIsOpen((open) => !open)} type="button">
-        <Icon name="bell" />{notifications.length > 0 && <span className="topbar__notification-count">{notifications.length}</span>}
+    <div className="topbar__notifications" ref={panelRef}>
+      <button aria-controls="notification-panel" aria-expanded={isOpen} aria-label={`Notificaciones nuevas sin revisar: ${unreadCount}`} className="topbar__bell" onClick={() => setIsOpen((open) => !open)} ref={buttonRef} type="button">
+        <Icon name="bell" />{unreadCount > 0 && <span className="topbar__notification-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
       </button>
-      {isOpen && <section aria-label="Panel de notificaciones" className="notification-panel">
-        <header className="notification-panel__header"><div><h2>Notificaciones</h2><p>Eventos documentales de Alfresco.</p></div><button aria-label="Cerrar notificaciones" className="notification-panel__close" onClick={() => setIsOpen(false)} type="button"><Icon name="close" size={18} /></button></header>
-        {message && <p className="notification-panel__empty" role="status">{message}</p>}
-        {!message && notifications.length === 0 ? <p className="notification-panel__empty">No hay notificaciones pendientes.</p> : !message && <ul className="notification-list">{notifications.map((notification) => (
-          <li className="notification-item" key={notification.id}>
-            <div className="notification-item__top"><span className="notification-item__category">{notification.category}</span></div>
-            <h3>{notification.title}</h3><p>{notification.description}</p>
-            <div className="notification-item__actions"><button onClick={() => completeNotification(notification.id)} type="button">{notification.actionLabel || 'Marcar atendida'}</button><button onClick={() => completeNotification(notification.id)} type="button">Cerrar</button></div>
-          </li>
-        ))}</ul>}
+      {isOpen && <section aria-labelledby="notification-panel-title" className="notification-panel" id="notification-panel">
+        <header className="notification-panel__header">
+          <div><p className="breadcrumb">Actividad documental</p><h2 id="notification-panel-title">Notificaciones</h2><p>{unreadCount} documentos nuevos sin revisar</p></div>
+          <button aria-label="Cerrar notificaciones" className="notification-panel__close" onClick={() => setIsOpen(false)} type="button"><Icon name="close" size={18} /></button>
+        </header>
+        <div className="notification-panel__body" aria-live="polite" aria-busy={loading}>
+          {loading && notifications.length === 0 && <p className="notification-panel__state" role="status">Consultando tus bandejas autorizadas…</p>}
+          {error && <div className="notification-panel__error" role="alert"><p>{error}</p><button className="button-secondary" disabled={loading} onClick={onRefresh} type="button">Reintentar</button></div>}
+          {notifications.length > 0 && <NotificationList notifications={[...notifications].sort((left, right) => new Date(right.detectedAt) - new Date(left.detectedAt)).slice(0, 5)} onViewDocument={onViewDocument} />}
+          {!error && !loading && notifications.length === 0 && <NotificationList notifications={[]} onViewDocument={onViewDocument} />}
+          {pendingMessage && <p className="notification-panel__pending" role="status">{pendingMessage}</p>}
+        </div>
+        <footer className="notification-panel__footer"><button className="notification-panel__all" onClick={handleViewAll} type="button">Ver todas las notificaciones</button></footer>
       </section>}
     </div>
   )
