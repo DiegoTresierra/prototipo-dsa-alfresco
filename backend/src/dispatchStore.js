@@ -69,16 +69,56 @@ export function updateDispatch(id, updater) {
   return next
 }
 
-function unitKey(unit) {
-  return String(unit?.code || unit?.id || unit?.acronym || unit?.name || '').trim().toLowerCase()
+export function replaceDocumentAssignment({ documentId, senderUserId, senderDependency, recipient }) {
+  const records = readRecords()
+  const now = new Date().toISOString()
+  let changed = false
+  const updatedRecords = records.map((record) => {
+    if (record.documentId !== documentId || record.senderDependency !== senderDependency || record.status !== 'ASIGNADO') return record
+    changed = true
+    return {
+      ...record,
+      status: 'REASIGNADO',
+      completedAt: now,
+      recipients: record.recipients.map((entry) =>
+        entry.status === 'ASIGNADO' ? { ...entry, status: 'REASIGNADO', reassignedAt: now } : entry),
+    }
+  })
+
+  if (!recipient) {
+    if (changed) writeRecords(updatedRecords)
+    return null
+  }
+
+  const record = {
+    id: randomUUID(),
+    requestKey: `responsable:${documentId}:${now}`,
+    documentId,
+    senderUserId,
+    senderDependency,
+    recipients: [{
+      userId: recipient.id,
+      displayName: recipient.displayName,
+      dependency: recipient.dependency,
+      unit: recipient.unit || null,
+      inboxNodeId: recipient.inboxNodeId,
+      status: 'ASIGNADO',
+      assignedAt: now,
+    }],
+    instruction: 'Asignación interna de responsabilidad',
+    priority: 'Normal',
+    createdAt: now,
+    completedAt: now,
+    status: 'ASIGNADO',
+  }
+  writeRecords([...updatedRecords, record])
+  return record
 }
 
-export function listDispatchesForUser(userId, role, unit) {
+export function listDispatchesForUser(userId, role, _unit) {
   const records = readRecords()
   if (role === 'direccion') return records.filter((record) => record.senderUserId === userId)
-  const requestedUnit = unitKey(unit)
   return records.filter((record) => record.recipients.some((recipient) =>
     recipient.userId === userId &&
-    ['ASIGNADO', 'DESPACHADO'].includes(recipient.status) &&
-    (!requestedUnit || unitKey(recipient.unit) === requestedUnit)))
+    ['ASIGNADO', 'DESPACHADO'].includes(recipient.status)))
 }

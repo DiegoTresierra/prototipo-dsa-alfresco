@@ -28,6 +28,10 @@ function assignmentUnits(dispatch) {
   }).filter(([, unit]) => unit.label))]
     .map(([, unit]) => unit)
 }
+function assignedResponsible(documentId, dispatchRecords) {
+  const current = [...dispatchRecords].reverse().find((dispatch) => dispatch.documentId === documentId && dispatch.status === 'ASIGNADO')
+  return current?.recipients?.find((recipient) => recipient.status === 'ASIGNADO')?.userId || ''
+}
 /* eslint-disable react/prop-types */
 function DocumentDate({ value }) {
   if (!timestamp(value)) return <span className="received-inbox__muted">No registrada</span>
@@ -75,7 +79,7 @@ function DispatchPanel({ document, unitHeads, loading, error, onDispatch }) {
     <button className="button-primary" disabled={submitting || loading || !unitHeads.length} type="submit">{submitting ? 'Despachando...' : 'Confirmar despacho'}</button>
   </form>
 }
-export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '', canDispatch = false, unitHeads = [], unitHeadsLoading = false, unitHeadsError = '', onDispatch, dispatchRecords = [], openDocumentId = '', onDocumentPreviewClose }) {
+export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, onResponsibleChange, assigningDocumentIds = [], canAssignResponsibility = false, assignmentError = '', canDispatch = false, unitHeads = [], unitHeadsLoading = false, unitHeadsError = '', onDispatch, dispatchRecords = [], openDocumentId = '', onDocumentPreviewClose }) {
   const [selectedDocumentId, setSelectedDocumentId] = useState('')
   const [query, setQuery] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('all')
@@ -140,7 +144,7 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
               <td>{isSent ? <><span className="received-inbox__sender">{document.recipientName || 'No registrado'}</span><span className="table-secondary">{document.recipientUnit || document.recipientDependencyId?.toLocaleUpperCase('es')}</span></> : <><span className="received-inbox__sender">{document.sender || 'No registrado'}</span>{document.originatingDependency && <span className="table-secondary">{document.originatingDependency}</span>}</>}</td>
               <td><DocumentDate value={isSent ? document.emissionDate || document.createdAt : document.createdAt} /></td>{!isSent && <td><DocumentDate value={document.receivedAt} /></td>}
               <td><span className={'inbox-priority inbox-priority--' + priority.className} title={document.prioritySource === 'browser' || isSent ? 'Prioridad seleccionada al enviar, guardada en este navegador' : undefined}>{priority.label}</span></td>
-              {!isSent && <td><label className="form-field received-inbox__assignee"><select aria-label={'Asignar responsable a ' + subject} value={attentionIds.includes(document.id) ? 'self' : ''} disabled={!onPersonalAttentionChange} onChange={(event) => onPersonalAttentionChange(document.id, event.target.value === 'self')}><option value="">Sin seleccionar</option><option value="self">Para mí</option></select><small>{onPersonalAttentionChange ? 'Selección personal' : 'No disponible'}</small></label></td>}
+              {!isSent && <td><label className="form-field received-inbox__assignee"><select aria-label={'Asignar responsable a ' + subject} value={canAssignResponsibility ? assignedResponsible(document.id, dispatchRecords) || (attentionIds.includes(document.id) ? 'self' : '') : attentionIds.includes(document.id) ? 'self' : ''} disabled={assigningDocumentIds.includes(document.id) || (canAssignResponsibility ? !onResponsibleChange : !onPersonalAttentionChange)} onChange={(event) => canAssignResponsibility ? onResponsibleChange(document.id, event.target.value || '') : onPersonalAttentionChange(document.id, event.target.value === 'self')}><option value="">Sin seleccionar</option><option value="self">Para mí (solo yo)</option>{canAssignResponsibility && unitHeads.map((head) => <option key={head.id} value={head.id}>{head.displayName} ({head.id})</option>)}</select><small>{assigningDocumentIds.includes(document.id) ? 'Guardando responsable…' : canAssignResponsibility ? 'Asignación institucional' : 'Selección personal'}</small></label></td>}
               <td><button className="button-secondary received-inbox__open" aria-label={'Ver PDF: ' + subject} onClick={() => setSelectedDocumentId(document.id)} type="button">Ver PDF</button></td>
             </tr>
           })}</tbody>

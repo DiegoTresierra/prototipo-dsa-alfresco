@@ -92,6 +92,27 @@ export async function dispatchDocument(documentId, recipientUserIds, instruction
   return body.dispatch
 }
 
+export async function assignDocumentResponsibility(documentId, recipientUserId, csrfToken) {
+  const response = await apiFetch('/api/documents/assignment', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+    body: JSON.stringify({ documentId, recipientUserId }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const messages = {
+      DIRECTOR_DISPATCH_REQUIRED: 'Solo una Dirección autorizada puede asignar responsables.',
+      DISPATCH_RECIPIENT_NOT_ALLOWED: 'La persona seleccionada no es una jefatura DSA autorizada.',
+      DISPATCH_DOCUMENT_NOT_ALLOWED: 'El backend no pudo verificar el documento en las carpetas compartidas de recepción. Revisa la configuración de las bandejas de DSA y el permiso de lectura de la cuenta de Dirección.',
+      DISPATCH_STORE_UNAVAILABLE: 'No se pudo guardar la asignación del documento.',
+      INVALID_ASSIGNMENT_REQUEST: 'La asignación no tiene un documento válido.',
+    }
+    throw new Error(messages[body.error] || 'No se pudo actualizar el responsable del documento.')
+  }
+  return body.dispatch
+}
+
 export async function getDirectorOfficeInboxes() {
   const response = await apiFetch('/api/directory/office-inboxes', { credentials: 'include', headers: { Accept: 'application/json' } })
   if (!response.ok) {

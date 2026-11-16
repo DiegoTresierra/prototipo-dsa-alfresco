@@ -3,25 +3,20 @@ import { PanelPage } from '../components/PanelPage'
 import { PdfPreview } from '../components/PdfPreview'
 
 /* eslint-disable react/prop-types */
-function unitKey(unit) {
-  return String(unit?.code || unit?.id || unit?.acronym || unit?.name || '').trim().toLowerCase()
-}
-
 function dateLabel(value) {
   if (!value) return 'No registrada'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'No registrada' : date.toLocaleString('es-PE')
 }
 
-export function JefeUnidadPage({ title, description, allowAlfresco = false, inbox, dispatchRecords = [], userId, unit }) {
+export function JefeUnidadPage({ title, description, allowAlfresco = false, inbox, dispatchRecords = [], userId }) {
   const [selectedDocumentId, setSelectedDocumentId] = useState('')
   if (!allowAlfresco) {
     return <PanelPage description={description} title={title}><p className="form-message" role="status">La consulta requiere una sesión autenticada con permiso de lectura.</p></PanelPage>
   }
-  const currentUnit = unitKey(unit)
   const assigned = dispatchRecords
     .filter((dispatch) => dispatch.recipients?.some((recipient) =>
-      recipient.userId === userId && (!currentUnit || unitKey(recipient.unit) === currentUnit)))
+      recipient.userId === userId && recipient.status === 'ASIGNADO'))
     .map((dispatch) => {
       const document = inbox.documents?.find((entry) => entry.id === dispatch.documentId)
       return document ? { dispatch, document } : null
