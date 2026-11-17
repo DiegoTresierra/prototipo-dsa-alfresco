@@ -23,16 +23,18 @@ function getSafeLoadError(error) {
   return 'No se pudo conectar con Alfresco DEV. Revisa el proxy local y la configuración de la API.'
 }
 
-export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [], folderKinds = [], loadAssignments }) {
+export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [], folderKinds = [], loadAssignments, refreshKey }) {
   const [state, setState] = useState(initialState)
   const refreshRef = useRef(null)
   const folderKey = JSON.stringify(folderIds
     .map((id, index) => ({ id, kind: folderKinds[index] || 'personal' }))
     .filter((folder) => folder.id))
+  const previousPage = useRef({ refreshKey, folderKey })
 
   useEffect(() => {
     let cancelled = false
     let inFlight = false
+    let pending = false
     let timer
 
     if (!allowed) {
@@ -40,8 +42,8 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
       return undefined
     }
 
-    const load = async () => {
-      if (inFlight) return
+    const load = async (force = false) => {
+      if (inFlight) { if (force) pending = true; return }
       inFlight = true
       setState((current) => ({ ...current, loading: !current.lastUpdated, refreshing: Boolean(current.lastUpdated), error: '' }))
       try {
@@ -71,10 +73,11 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
         }
       } finally {
         inFlight = false
+        if (pending && !cancelled) { pending = false; load() }
       }
     }
 
-    refreshRef.current = load
+    refreshRef.current = (force = true) => load(force)
     if (active) load()
 
     const schedule = () => {
@@ -86,7 +89,7 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
     const refreshOnReturn = () => {
       if (active && document.visibilityState === 'visible') load()
     }
-    const refreshAfterSend = () => load()
+    const refreshAfterSend = () => load(true)
     if (active) schedule()
     window.addEventListener('focus', refreshOnReturn)
     document.addEventListener('visibilitychange', refreshOnReturn)
@@ -101,6 +104,10 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
       refreshRef.current = null
     }
   }, [active, allowed, folderKey, loadAssignments])
+  useEffect(() => {
+    if (previousPage.current.refreshKey !== refreshKey && previousPage.current.folderKey === folderKey) refreshRef.current?.(false)
+    previousPage.current = { refreshKey, folderKey }
+  }, [refreshKey, folderKey])
 
   const refresh = useCallback(() => refreshRef.current?.(), [])
   return { ...state, refresh }

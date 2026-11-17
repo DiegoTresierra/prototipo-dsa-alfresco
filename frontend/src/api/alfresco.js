@@ -1,7 +1,7 @@
 import { apiFetch } from './client'
 import { collectInboxPages } from '../utils/inboxPages'
 import { loadAssignmentInbox } from '../utils/assignmentInbox'
-import { dispatchPersistenceError } from '../utils/dispatchPersistence'
+import { dispatchPersistenceError, requireDispatchPersistence, withDispatchPersistence } from '../utils/dispatchPersistence'
 
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
@@ -60,7 +60,8 @@ export async function listDispatches() {
   }
   const result = await response.json()
   if (!Array.isArray(result?.dispatches)) throw new Error('La respuesta de encargos documentales no es válida.')
-  return result.dispatches
+  requireDispatchPersistence(result.persistence)
+  return withDispatchPersistence(result.dispatches, result.persistence)
 }
 
 export async function reserveDocumentNumber(documentType, documentPeriod, csrfToken, issuerCode) {
@@ -107,7 +108,8 @@ export async function dispatchDocument(documentId, recipientUserIds, instruction
     error.documentId = body.documentId || documentId
     throw error
   }
-  return body.dispatch
+  requireDispatchPersistence(body.persistence)
+  return withDispatchPersistence([body.dispatch], body.persistence)[0]
 }
 
 export async function getDirectorOfficeInboxes() {

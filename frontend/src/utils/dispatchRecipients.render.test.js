@@ -64,12 +64,52 @@ test('successive persisted dispatches show every responsible user even when they
   const html = render(DirectorPage, {
     title: 'Recibidos', allowAlfresco: true, inbox: { documents: [document] },
     dispatchRecords: [
-      { documentId: document.id, recipients: [{ userId: 'head', displayName: 'Jefatura responsable', status: 'ASIGNADO', unit }] },
-      { documentId: document.id, recipients: [{ userId: 'staff', displayName: 'Especialista responsable', status: 'ASIGNADO', unit }] },
+      { persistence: 'alfresco', documentId: document.id, recipients: [{ userId: 'head', displayName: 'Jefatura responsable', status: 'ASIGNADO', unit }] },
+      { persistence: 'alfresco', documentId: document.id, recipients: [{ userId: 'staff', displayName: 'Especialista responsable', status: 'ASIGNADO', unit }] },
     ],
   })
   assert.ok(html.includes('Jefatura responsable'))
   assert.ok(html.includes('Especialista responsable'))
+})
+
+test('dropdown marks only persisted active recipients, keeps annulled/unassigned candidates and separates Para mi', () => {
+  const records = [
+    { persistence: 'alfresco', documentId: document.id, status: 'ASIGNADO', recipients: [
+      { userId: response.recipients[0].id, status: 'ASIGNADO' },
+      { userId: response.recipients[1].id, status: 'ANULADO' },
+      { userId: response.recipients[2].id, status: 'DESPACHADO' },
+    ] },
+    { persistence: 'local', documentId: document.id, recipients: [{ userId: response.recipients[1].id, status: 'ASIGNADO' }] },
+  ]
+  for (let reload = 0; reload < 2; reload++) {
+    const html = render(DirectorPage, {
+      title: 'Recibidos', allowAlfresco: true, canDispatch: true, inbox: { documents: [document] },
+      recipients: response.recipients, recipientRoles: response.allowedRecipientRoles,
+      dispatchRecords: structuredClone(records), attentionIds: [document.id], onPersonalAttentionChange: () => {},
+    })
+    const options = [...html.matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/g)]
+    for (const [index, recipient] of response.recipients.entries()) {
+      const option = options.find((match) => match[1].includes(`dispatch:${recipient.id}`))
+      assert.ok(option, 'already assigned users remain selectable; no duplicate rule changed')
+      assert.equal(option[2].includes('Ya asignado'), index !== 1)
+      assert.ok(!option[1].includes('disabled'))
+    }
+    const personal = options.find((match) => match[1].includes('value="self"'))
+    assert.ok(!personal[2].includes('Ya asignado'))
+    assert.ok(html.includes('document-table__row--assigned'))
+    assert.ok(html.includes('--assignment-background:linear-gradient'))
+    assert.ok(html.includes('/ 0.06)'))
+    assert.equal((html.match(/data-user-id=/g) || []).length, 2)
+  }
+})
+
+test('local provisional records and personal attention alone never create an official visual indicator', () => {
+  const html = render(DirectorPage, {
+    title: 'Recibidos', allowAlfresco: true, inbox: { documents: [document] }, attentionIds: [document.id],
+    dispatchRecords: [{ persistence: 'local', documentId: document.id, recipients: [{ userId: 'head', status: 'ASIGNADO' }] }],
+  })
+  assert.ok(!html.includes('document-assignment-markers'))
+  assert.ok(!html.includes('document-table__row--assigned'))
 })
 
 test('Jefatura only renders specialists even when passed the complete Dirección response', () => {

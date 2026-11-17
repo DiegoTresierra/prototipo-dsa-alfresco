@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { eligibleDispatchRecipients } from '../utils/dispatchRecipients'
 
 /* eslint-disable react/prop-types */
-export function DispatchPanel({ document, recipients = [], allowedRecipientRoles = [], initialRecipientIds = [], loading, error, onDispatch, originAssignmentId = null }) {
+export function DispatchPanel({ document, recipients = [], allowedRecipientRoles = [], initialRecipientIds = [], assignedUserIds = [], loading, error, onDispatch, originAssignmentId = null }) {
   const eligibleRecipients = eligibleDispatchRecipients(recipients, allowedRecipientRoles)
   const [selectedIds, setSelectedIds] = useState(() => initialRecipientIds.filter((id) => eligibleRecipients.some((recipient) => recipient.id === id)))
   const [instruction, setInstruction] = useState('')
@@ -41,7 +41,7 @@ export function DispatchPanel({ document, recipients = [], allowedRecipientRoles
     {!loading && !error && !eligibleRecipients.length && <p className="form-message" role="status">No hay destinatarios habilitados para tu rol y dependencia.</p>}
     <fieldset className="dispatch-panel__recipients" disabled={disabled}><legend>Destinatarios equivalentes</legend>{eligibleRecipients.map((recipient) => <label className="dispatch-panel__recipient" key={recipient.id}>
       <input checked={selectedIds.includes(recipient.id)} onChange={() => toggleRecipient(recipient.id)} type="checkbox" />
-      <span><strong>{recipient.displayName}</strong><small>{recipient.functionalRole === 'jefe-unidad' ? 'Jefatura' : 'Especialista'} · {recipient.unit?.name || recipient.dependency?.toUpperCase()}</small></span>
+      <span><strong>{recipient.displayName}</strong><small>{recipient.functionalRole === 'jefe-unidad' ? 'Jefatura' : 'Especialista'} · {recipient.unit?.name || recipient.dependency?.toUpperCase()}{assignedUserIds.includes(recipient.id) ? ' — Ya asignado' : ''}</small></span>
     </label>)}</fieldset>
     <label className="form-field"><span>Instrucción de atención</span><textarea disabled={disabled} maxLength="2000" onChange={(event) => setInstruction(event.target.value)} required rows="3" value={instruction} /></label>
     <label className="form-field"><span>Prioridad</span><select disabled={disabled} onChange={(event) => setPriority(event.target.value)} value={priority}><option>Normal</option><option>Alta</option><option>Urgente</option></select></label>

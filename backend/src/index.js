@@ -392,19 +392,23 @@ function requireDeliveryLock(request, response, next) {
   })
 
   app.get('/api/documents/dispatches', requireSession, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
     const userId = request.session.alfresco?.id || request.session.user?.id
     if (!userId || request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
     if (!request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_REQUIRED' })
     try {
-      const dispatches = await listDispatchesForUser(userId, request.session.functionalRole, request.session.dependency, request.session)
-      const sentDispatches = ['direccion', 'jefe-unidad'].includes(request.session.functionalRole) ? await listSentDispatches(userId, request.session.dependency, request.session) : []
-      if (request.query.include !== 'documents') return response.json({ dispatches, sentDispatches })
+      const snapshot = dispatchRepository.loadInbox ? await dispatchRepository.loadInbox(request.session) : null
+      const dispatches = snapshot?.dispatches || await listDispatchesForUser(userId, request.session.functionalRole, request.session.dependency, request.session)
+      const sentDispatches = ['direccion', 'jefe-unidad'].includes(request.session.functionalRole)
+        ? snapshot?.sentDispatches || await listSentDispatches(userId, request.session.dependency, request.session) : []
+      if (request.query.include !== 'documents') return response.json({ dispatches, sentDispatches, persistence: dispatchRepository.kind })
       if (!['jefe-unidad', 'especialista'].includes(request.session.functionalRole)) return response.status(400).json({ error: 'ASSIGNMENT_INBOX_ROLE_REQUIRED' })
       const ids = [...new Set([...dispatches, ...sentDispatches].map((record) => record.documentId))]
       if (ids.length > 10_000) return response.status(503).json({ error: 'DOCUMENT_QUERY_LIMIT_EXCEEDED' })
       const documents = []
       const documentErrors = []
-      const context = { session: request.session, settings: config, listDispatches: listDispatchesForUser }
+      const context = { session: request.session, settings: config, listDispatches: () => dispatches,
+        actorNodes: snapshot?.actorNodes }
       for (const documentId of ids) {
         try {
           if (await authorizeNodeRead(context, documentId)) documents.push(context.nodes.get(documentId))
@@ -413,7 +417,7 @@ function requireDeliveryLock(request, response, next) {
           documentErrors.push({ documentId, error: 'DOCUMENT_READ_UNAVAILABLE' })
         }
       }
-      return response.json({ dispatches, sentDispatches, documents, documentErrors })
+      return response.json({ dispatches, sentDispatches, documents, documentErrors, persistence: dispatchRepository.kind })
     } catch (error) {
       return response.status(error.status || 503).json({ error: error.message || 'DISPATCH_STORE_UNAVAILABLE' })
     }
@@ -579,11 +583,11 @@ function requireDeliveryLock(request, response, next) {
           return response.status(403).json({ error: 'DISPATCH_DOCUMENT_NOT_ALLOWED', ...(config.alfrescoDiagnostics ? { diagnostic } : {}) })
         }
       }
-      if (existing && ['ASIGNADO', 'DESPACHADO'].includes(existing.status)) return response.status(200).json({ dispatch: existing })
+      if (dispatchRepository.kind === 'local' && existing && ['ASIGNADO', 'DESPACHADO'].includes(existing.status)) return response.status(200).json({ dispatch: existing, persistence: 'local' })
 
       if (dispatchRepository.kind === 'alfresco') {
         dispatch = await createDispatch({ ...input, senderUserId: userId }, request.session)
-        return response.status(201).json({ dispatch })
+        return response.status(existing ? 200 : 201).json({ dispatch, persistence: 'alfresco' })
       }
 
       dispatch = existing || createDispatch({
@@ -598,7 +602,7 @@ function requireDeliveryLock(request, response, next) {
         }))
       }
       dispatch = updateDispatch(dispatch.id, (current) => ({ ...current, status: 'ASIGNADO', assignmentCompletedAt: new Date().toISOString() }))
-      return response.status(201).json({ dispatch })
+      return response.status(201).json({ dispatch, persistence: 'local' })
       })
     } catch (error) {
       if (error.code === 'DISTRIBUTION_SERVICE_NOT_CONFIGURED' || error.code === 'DISTRIBUTION_SERVICE_AUTH_FAILED') {

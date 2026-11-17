@@ -69,7 +69,10 @@ async function assignedIds(context) {
 export async function authorizeNodeRead(context, nodeId) {
   context.decisions ||= new Map()
   if (context.decisions.has(nodeId)) return context.decisions.get(nodeId)
-  const payload = await upstream(context, `${core}/nodes/${encodeURIComponent(nodeId)}`, '?include=properties')
+  // Only the server's current-request snapshot may supply actor-ACL-filtered nodes.
+  // No shared cache or frontend node data enters this context; policy below is unchanged.
+  const payload = context.actorNodes?.has(nodeId) ? { entry: context.actorNodes.get(nodeId) }
+    : await upstream(context, `${core}/nodes/${encodeURIComponent(nodeId)}`, '?include=properties')
   if (payload.denied) return false
   const node = payload.entry
   if (!node || node.id !== nodeId) fail('ALFRESCO_INVALID_NODE_RESPONSE', 502)

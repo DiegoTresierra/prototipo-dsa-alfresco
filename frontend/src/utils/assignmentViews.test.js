@@ -29,7 +29,7 @@ test('each refresh requests assignments and original metadata together, without 
   const calls = []
   const fetch = async (url, options) => {
     calls.push({ url, options })
-    return { ok: true, json: async () => ({ dispatches: records, sentDispatches: [], documents: [{ id: 'same-uuid' }], documentErrors: [] }) }
+    return { ok: true, json: async () => ({ persistence: 'alfresco', dispatches: records, sentDispatches: [], documents: [{ id: 'same-uuid' }], documentErrors: [] }) }
   }
   const first = await loadAssignmentInbox(fetch, (node) => node)
   const second = await loadAssignmentInbox(fetch, (node) => node)
@@ -40,7 +40,7 @@ test('each refresh requests assignments and original metadata together, without 
 
 test('an assignment read failure rejects the snapshot; a PDF denial retains the assignment and an explicit document error', async () => {
   await assert.rejects(loadAssignmentInbox(async () => Response.json({ error: 'DISPATCH_STORE_UNAVAILABLE' }, { status: 503 }), (node) => node), /No se pudieron consultar/)
-  const snapshot = await loadAssignmentInbox(async () => ({ ok: true, json: async () => ({ dispatches: records, sentDispatches: [], documents: [], documentErrors: [{ documentId: 'same-uuid', error: 'DOCUMENT_READ_NOT_ALLOWED' }] }) }), (node) => node)
+  const snapshot = await loadAssignmentInbox(async () => ({ ok: true, json: async () => ({ persistence: 'alfresco', dispatches: records, sentDispatches: [], documents: [], documentErrors: [{ documentId: 'same-uuid', error: 'DOCUMENT_READ_NOT_ALLOWED' }] }) }), (node) => node)
   assert.equal(snapshot.dispatchRecords.length, 2)
   assert.equal(snapshot.documentErrors.length, 1)
 })

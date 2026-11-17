@@ -18,6 +18,7 @@ backend/data/dispatches.json
 backend/data/document-numbers.json
 backend/data/dispatch-pilot.lock
 backend/data/model-backups/
+frontend/artifacts/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

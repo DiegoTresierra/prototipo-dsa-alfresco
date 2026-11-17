@@ -4,19 +4,22 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createAlfrescoDispatchRepository, assignmentProperty, responsibleProperty, dependencyProperty, parseAssignments, maxAssignmentBytes } from './alfrescoDispatchRepository.js'
-import { acquirePilotLease } from './dispatchPilot.js'
+import { acquirePilotLease, pilotAcknowledgements } from './dispatchPilot.js'
 
 const documentId = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
-const director = { alfresco: { id: 'director' }, authorization: 'Basic actor', functionalRole: 'direccion', dependency: 'DSA' }
+const director = { alfresco: { id: 'director' }, authorization: 'Basic actor', functionalRole: 'direccion', dependency: 'DSA',
+  authorizationStatus: 'active', capabilities: ['documents:read', 'documents:write'] }
 const input = (key = 'one', recipients = ['head-a']) => ({ documentId, requestKey: key, senderUserId: 'director',
   senderDependency: 'dsa', senderRole: 'direccion', originAssignmentId: null, instruction: 'Atender', priority: 'Normal',
   recipients: recipients.map((id) => ({ id, dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null })) })
 
 function fixture() {
   const settings = { alfrescoTarget: 'https://alfresco.invalid', distributionService: { username: 'gd_distribucion', password: 'test-only' },
-    dispatchPilot: { writesEnabled: true, controlledEnvironment: true, expectedTarget: 'https://alfresco.invalid', documentIds: [documentId] },
+    dispatchPilot: { writesEnabled: true, environment: 'dev', environments: {
+      dev: { enabled: true, acknowledgement: pilotAcknowledgements.dev, expectedTarget: 'https://alfresco.invalid' },
+    } },
     officeInboxNodeIds: { DSA: { porAtender: 'folder' } } }
-  const state = { node: { id: documentId, isFile: true, parentId: 'foreign-primary', content: { mimeType: 'application/pdf' },
+  const state = { node: { id: documentId, nodeType: 'cm:content', isFile: true, parentId: 'foreign-primary', content: { mimeType: 'application/pdf' },
     aspectNames: ['cm:versionable'], allowableOperations: ['update'], properties: { 'gd:estado': 'existing-state', 'cm:title': 'preserve' } },
     model: true, actorDenied: false, writeStatus: 200, reads: 0, calls: [], onGet: null, onPut: null }
   const fetchImpl = async (url, options) => {
@@ -27,9 +30,13 @@ function fixture() {
     if (pathname.endsWith('/classes/gd_tramite')) return Response.json({ properties: state.model ? Object.fromEntries([
       [assignmentProperty, false], [responsibleProperty, true], [dependencyProperty, true],
     ].map(([name, multiValued]) => [name, { dataType: 'd:text', multiValued, protected: false, indexed: name !== assignmentProperty }])) : {} })
-    if (pathname.endsWith('/children')) return Response.json({ list: { entries: [{ entry: { ...state.node,
-      association: { assocType: 'cm:contains', isPrimary: false } } }], pagination: { hasMoreItems: false } } })
-    assert.equal(pathname.split('/').at(-1), documentId)
+    if (pathname.endsWith('/children')) {
+      if (state.folderDenied && options.headers.Authorization === director.authorization) return Response.json({}, { status: 403 })
+      const entry = { ...state.node, association: { assocType: 'cm:contains', isPrimary: false } }
+      if (state.omitChildProperties) { delete entry.properties; delete entry.aspectNames }
+      return Response.json({ list: { entries: [{ entry }], pagination: { hasMoreItems: false } } })
+    }
+    assert.equal(pathname.split('/').at(-1), state.node.id)
     if (options.method === 'PUT') {
       if (state.writeStatus !== 200) return Response.json({}, { status: state.writeStatus })
       const body = JSON.parse(options.body)
@@ -92,7 +99,7 @@ test('idempotent retry survives repository restart and page/list reload without 
 })
 
 test('chained dispatch preserves original obligation, IDs and individual trace', async () => {
-  const { create, state } = fixture()
+  const { create, state, repo } = fixture()
   const parent = await create()
   const derived = { ...input('child'), senderUserId: 'head-a', senderRole: 'jefe-unidad', originAssignmentId: parent.recipients[0].id,
     recipients: [{ id: 'staff', dependency: 'dsa', functionalRole: 'especialista' }] }
@@ -102,16 +109,18 @@ test('chained dispatch preserves original obligation, IDs and individual trace',
   assert.deepEqual(value.dispatches[0], parent)
   assert.deepEqual(state.node.properties[responsibleProperty], ['head-a', 'staff'])
   assert.equal(value.history[1].assignmentIds[0], result.recipients[0].id)
+  assert.equal((await repo.listDispatchesForUser('director', 'direccion', 'DSA', director)).length, 2,
+    'Direction must see equivalent responsibilities created by Jefatura too')
   await assert.rejects(create({ ...derived, requestKey: 'wrong', originAssignmentId: 'unknown' }, { ...director, alfresco: { id: 'head-a' } }), /DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED/)
 })
 
-test('missing model, disabled writing and non-test UUID fail before PUT', async () => {
+test('missing model, disabled writing and missing institutional configuration fail before PUT', async () => {
   for (const scenario of ['model', 'disabled', 'scope']) {
     const { create, state, settings } = fixture()
     if (scenario === 'model') state.model = false
     if (scenario === 'disabled') settings.dispatchPilot.writesEnabled = false
-    if (scenario === 'scope') settings.dispatchPilot.documentIds = []
-    await assert.rejects(create(), /DISPATCH_ALFRESCO_MODEL_NOT_READY|DISPATCH_ALFRESCO_WRITES_DISABLED|DISPATCH_PILOT_DOCUMENT_NOT_ALLOWED/)
+    if (scenario === 'scope') settings.officeInboxNodeIds = {}
+    await assert.rejects(create(), /DISPATCH_ALFRESCO_MODEL_NOT_READY|DISPATCH_ALFRESCO_WRITES_DISABLED|DISPATCH_INSTITUTIONAL_SCOPE_REQUIRED/)
     assert.equal(state.calls.filter((call) => call.method === 'PUT').length, 0)
   }
 })
@@ -208,13 +217,71 @@ test('pilot requires explicit deployment attestation and exclusive local lease; 
     const { settings } = fixture()
     settings.dispatchPersistence = 'alfresco'
     settings.dispatchPilot.leasePath = path.join(directory, 'pilot.lock')
-    settings.dispatchPilot.controlledEnvironment = false
+    settings.dispatchPilot.environments.dev.acknowledgement = ''
     assert.throws(() => acquirePilotLease(settings), /DISPATCH_PILOT_ENVIRONMENT_REQUIRED/)
-    settings.dispatchPilot.controlledEnvironment = true
+    settings.dispatchPilot.environments.dev.acknowledgement = pilotAcknowledgements.dev
     const release = acquirePilotLease(settings)
+    const lease = JSON.parse(fs.readFileSync(settings.dispatchPilot.leasePath, 'utf8'))
+    assert.deepEqual(lease.institutionalFolders, { DSA: ['folder'] })
+    assert.equal(lease.environment, 'dev')
+    assert.equal(lease.testFolderIds, undefined)
+    assert.equal(lease.alfrescoTarget, settings.alfrescoTarget)
+    assert.equal(lease.documentIds, undefined)
     assert.throws(() => acquirePilotLease(settings), /DISPATCH_PILOT_LEASE_UNAVAILABLE/)
     release()
     const releaseAfterRestart = acquirePilotLease(settings)
     releaseAfterRestart()
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('one inbox snapshot scans six folders once, deduplicates UUID and uses complete ACTOR child properties without N+1', async () => {
+  const { repo, create, state, settings } = fixture()
+  await create()
+  settings.officeInboxNodeIds = { DSA: { emitidos: 'a', porAtender: 'b', porConocimiento: 'c' }, DTI: { emitidos: 'd', porAtender: 'e', porConocimiento: 'f' } }
+  state.calls.length = 0
+  const snapshot = await repo.loadInbox(director)
+  assert.equal(snapshot.dispatches.length, 1)
+  assert.equal(snapshot.sentDispatches.length, 1)
+  assert.equal(snapshot.actorNodes.size, 1)
+  const children = state.calls.filter((call) => call.pathname.endsWith('/children'))
+  assert.equal(children.length, 6)
+  assert.ok(children.every((call) => call.headers.Authorization === director.authorization))
+  assert.ok(state.calls.every((call) => !call.pathname.endsWith(`/${documentId}`)))
+  assert.equal(state.calls.length, 8)
+  await create(input('fresh', ['head-b']))
+  assert.equal((await repo.loadInbox(director)).dispatches.length, 2, 'next request cannot reuse an old snapshot')
+})
+
+test('technical discovery never bypasses actor ACL; incomplete children use one actor GET per UUID', async () => {
+  const { repo, create, state } = fixture()
+  await create()
+  state.folderDenied = true
+  state.actorDenied = true
+  assert.equal((await repo.loadInbox(director)).dispatches.length, 0)
+  state.actorDenied = false
+  assert.equal((await repo.loadInbox(director)).dispatches.length, 1)
+  state.folderDenied = false
+  state.omitChildProperties = true
+  state.calls.length = 0
+  assert.equal((await repo.loadInbox(director)).dispatches.length, 1)
+  const nodes = state.calls.filter((call) => call.pathname.endsWith(`/${documentId}`))
+  assert.equal(nodes.length, 1)
+  assert.equal(nodes[0].headers.Authorization, director.authorization)
+})
+
+test('secondary associations with out-of-order metadata keep the newest actor-readable snapshot', async () => {
+  const { settings, state, create, fetchImpl } = fixture()
+  await create()
+  state.node.modifiedAt = '2026-11-17T12:00:00Z'
+  const older = structuredClone(state.node)
+  await create(input('newer', ['head-b']))
+  state.node.modifiedAt = '2026-11-17T13:00:00Z'
+  settings.officeInboxNodeIds = { DSA: { porAtender: 'a', porConocimiento: 'b' } }
+  const repository = createAlfrescoDispatchRepository(settings, async (url, options) => {
+    if (new URL(url).pathname.endsWith('/b/children')) return Response.json({ list: { entries: [{ entry: {
+      ...older, association: { assocType: 'cm:contains', isPrimary: false },
+    } }], pagination: { hasMoreItems: false } } })
+    return fetchImpl(url, options)
+  })
+  assert.equal((await repository.loadInbox(director)).dispatches.length, 2)
 })

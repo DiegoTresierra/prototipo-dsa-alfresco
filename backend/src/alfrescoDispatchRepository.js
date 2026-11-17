@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { buildAlfrescoUrl } from './alfrescoClient.js'
 import { createDocumentQueue } from './documentQueue.js'
+import { verifyPilotDocumentScope } from './dispatchPilotScope.js'
+import { mapConcurrent } from './mapConcurrent.js'
 
 export const assignmentProperty = 'gd:asignaciones'
 export const responsibleProperty = 'gd:responsablesActuales'
@@ -128,7 +130,9 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
   }
   async function read(documentId, authorization, verifyProjections = true) {
     const payload = await request(`${core}/nodes/${encodeURIComponent(documentId)}`, { authorization, query: '?include=properties,aspectNames,allowableOperations' })
-    const node = payload.entry
+    return decodeNode(payload.entry, documentId, verifyProjections)
+  }
+  function decodeNode(node, documentId, verifyProjections = true) {
     if (node?.id !== documentId || !node.isFile || node.content?.mimeType !== 'application/pdf') fail('DISPATCH_INVALID_DOCUMENT', 403)
     const raw = node.properties?.[assignmentProperty]
     if (raw !== undefined && !node.aspectNames?.includes('gd:tramite')) fail('DISPATCH_INVALID_ASSIGNMENTS')
@@ -137,16 +141,16 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
       !sameProjection(node.properties?.[name], expected))) fail('DISPATCH_ASSIGNMENTS_PROJECTION_MISMATCH', 409)
     return { node, raw, envelope }
   }
-  function assertWriteEnabled(documentId) {
+  function assertWriteEnabled() {
     if (!pilot().writesEnabled) fail('DISPATCH_ALFRESCO_WRITES_DISABLED')
-    if (!pilot().controlledEnvironment || !pilot().documentIds?.includes(documentId)) fail('DISPATCH_PILOT_DOCUMENT_NOT_ALLOWED', 403)
   }
   async function createDispatch(input, session) {
     // Caller holds withDocument throughout business authorization and this R/M/W/verify.
-    assertWriteEnabled(input.documentId)
+    assertWriteEnabled()
     await assertModel()
     if (!session?.authorization || input.senderUserId !== (session.alfresco?.id || session.user?.id)) fail('SESSION_IDENTITY_REQUIRED', 403)
-    await read(input.documentId, session.authorization) // Actor ACL cannot be bypassed by the writer.
+    const actor = await read(input.documentId, session.authorization) // Actor ACL cannot be bypassed by the writer.
+    await verifyPilotDocumentScope(settings, session, actor.node, request)
     const { node, envelope, raw } = await read(input.documentId)
     if (!node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
     const existing = envelope.dispatches.find((record) => record.senderUserId === input.senderUserId && record.requestKey === input.requestKey)
@@ -198,52 +202,81 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     await assertModel()
     return (await read(documentId)).envelope.dispatches
   }
-  async function allRecords(session) {
+  async function readSnapshot(session) {
     await assertModel()
     if (!session?.authorization) fail('SESSION_IDENTITY_REQUIRED', 403)
     const folders = [...new Set(Object.values(settings.officeInboxNodeIds || {}).flatMap((office) => Object.values(office)).filter(Boolean))]
     if (!folders.length) fail('DISPATCH_DISCOVERY_FOLDERS_REQUIRED')
     const ids = new Set()
+    // Request-scoped only: these nodes are proven readable by THIS actor.
+    const actorNodes = new Map()
     let scanned = 0
-    for (const folder of folders) {
+    await mapConcurrent(folders, 4, async (folder) => {
       let skip = 0
       let more
+      let useServiceDiscovery = false
       do {
-        const payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, {
-          query: `?include=association&maxItems=100&skipCount=${skip}`,
-        })
+        let payload
+        const options = { authorization: useServiceDiscovery ? serviceAuthorization() : session.authorization,
+          query: `?include=properties,aspectNames,association&maxItems=100&skipCount=${skip}` }
+        try { payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, options) } catch (error) {
+          // Folder enumeration may be denied while individual documents remain readable.
+          // Technical discovery is never an actor ACL proof; each such node needs actor GET.
+          if (error.message !== 'DISPATCH_NODE_READ_DENIED' || useServiceDiscovery) throw error
+          useServiceDiscovery = true
+          payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, { ...options, authorization: serviceAuthorization() })
+        }
         const list = payload.list
         if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
         for (const { entry } of list.entries) {
-          if (entry?.isFile && entry.content?.mimeType === 'application/pdf' && entry.association?.assocType === 'cm:contains') ids.add(entry.id)
+          if (entry?.isFile && entry.content?.mimeType === 'application/pdf' && entry.association?.assocType === 'cm:contains') {
+            if (typeof entry.id !== 'string') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
+            ids.add(entry.id)
+            if (!useServiceDiscovery && Object.hasOwn(entry, 'properties') && Array.isArray(entry.aspectNames)) {
+              const previous = actorNodes.get(entry.id)
+              if (!previous || !(Date.parse(previous.modifiedAt) > Date.parse(entry.modifiedAt))) actorNodes.set(entry.id, entry)
+            }
+          }
         }
         more = list.pagination.hasMoreItems
         skip += list.entries.length
         scanned += list.entries.length
         if (scanned > 10_000 || more && !list.entries.length) fail('DISPATCH_DISCOVERY_LIMIT_EXCEEDED')
       } while (more)
-    }
-    const records = []
-    for (const id of ids) {
+    })
+    const batches = await mapConcurrent([...ids], 4, async (id) => {
       // Use actor credentials for authoritative reads: an assignment never bypasses Alfresco ACL.
-      try { records.push(...(await read(id, session.authorization)).envelope.dispatches) } catch (error) {
-        if (error.message === 'DISPATCH_NODE_READ_DENIED') continue
+      try {
+        const value = actorNodes.has(id) ? decodeNode(actorNodes.get(id), id) : await read(id, session.authorization)
+        actorNodes.set(id, value.node)
+        return value.envelope.dispatches
+      } catch (error) {
+        if (error.message === 'DISPATCH_NODE_READ_DENIED') return []
         throw error
       }
-    }
-    return records
+    })
+    return { records: batches.flat(), actorNodes }
   }
+  async function allRecords(session) { return (await readSnapshot(session)).records }
+  const receivedRecords = (records, userId, role, dependency) => records.filter((record) => role === 'direccion'
+    ? record.senderDependency === String(dependency).toLowerCase()
+    : record.recipients.some((recipient) => recipient.userId === userId && recipient.functionalRole === role &&
+      recipient.dependency === String(dependency).toLowerCase() && active(recipient)))
+  const sentRecords = (records, userId, dependency) => records.filter((record) =>
+    record.senderUserId === userId && record.senderDependency === String(dependency).toLowerCase())
   return {
     kind: 'alfresco', withDocument, createDispatch, assertModel, allRecords,
+    loadInbox: async (session) => {
+      const snapshot = await readSnapshot(session)
+      const userId = session.alfresco?.id || session.user?.id
+      return { dispatches: receivedRecords(snapshot.records, userId, session.functionalRole, session.dependency),
+        sentDispatches: sentRecords(snapshot.records, userId, session.dependency), actorNodes: snapshot.actorNodes }
+    },
     findDispatch: async (userId, requestKey, documentId) => (await documentRecords(documentId)).find((record) => record.senderUserId === userId && record.requestKey === requestKey) || null,
     findAttentionAssignment: async (userId, documentId, dependency, assignmentId) => (await documentRecords(documentId))
       .flatMap((record) => record.recipients).find((recipient) => recipient.id === assignmentId && recipient.userId === userId &&
         recipient.functionalRole === 'jefe-unidad' && recipient.dependency === String(dependency).toLowerCase() && active(recipient)) || null,
-    listDispatchesForUser: async (userId, role, dependency, session) => (await allRecords(session)).filter((record) => role === 'direccion'
-      ? record.senderUserId === userId && record.senderDependency === String(dependency).toLowerCase()
-      : record.recipients.some((recipient) => recipient.userId === userId && recipient.functionalRole === role &&
-        recipient.dependency === String(dependency).toLowerCase() && active(recipient))),
-    listSentDispatches: async (userId, dependency, session) => (await allRecords(session)).filter((record) =>
-      record.senderUserId === userId && record.senderDependency === String(dependency).toLowerCase()),
+    listDispatchesForUser: async (userId, role, dependency, session) => receivedRecords(await allRecords(session), userId, role, dependency),
+    listSentDispatches: async (userId, dependency, session) => sentRecords(await allRecords(session), userId, dependency),
   }
 }

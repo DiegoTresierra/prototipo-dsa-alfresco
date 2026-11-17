@@ -5,6 +5,7 @@ import { once } from 'node:events'
 
 test('director delivery preserves a partial node and retries only ACL/association with authorization', async (t) => {
   Object.assign(process.env, {
+    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false',
     PORT: '0', SESSION_SECRET: 'test-secret-only', ALFRESCO_TARGET: 'http://alfresco.invalid',
     KEYCLOAK_ISSUER: 'http://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DTI: 'GROUP_DTI', DSA: 'GROUP_DSA' }, functions: { direccion: 'GROUP_directors' } }),

@@ -13,6 +13,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     'head-b': { code: 'fixture-b', name: 'Unidad de prueba B', dependency: 'DSA' },
   }
   Object.assign(process.env, {
+    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false',
     PORT: '0', SESSION_SECRET: 'dispatch-test-secret', ALFRESCO_TARGET: 'https://alfresco.invalid',
     ALFRESCO_DIAGNOSTICS: 'true',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',

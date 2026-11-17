@@ -41,6 +41,20 @@ test('one read policy preserves own, knowledge, secondary parents and assigned d
   for (const id of ['unassigned', 'foreign', 'denied', 'missing']) assert.equal(await authorizeNodeRead(context, id), false, id)
 })
 
+test('actor-filtered metadata reuse preserves the same own/knowledge/assignment policy and does not rescan', async () => {
+  const { context, calls } = fixture()
+  context.actorNodes = new Map()
+  for (const id of ['own', 'assigned', 'knowledge', 'secondary', 'unassigned', 'foreign']) {
+    const payload = await context.fetchImpl(`https://alfresco.invalid${core}/nodes/${id}`, { headers: { Authorization: context.session.authorization } })
+    context.actorNodes.set(id, (await payload.json()).entry)
+  }
+  calls.length = 0
+  for (const id of ['own', 'assigned', 'knowledge', 'secondary']) assert.equal(await authorizeNodeRead(context, id), true)
+  for (const id of ['unassigned', 'foreign', 'denied']) assert.equal(await authorizeNodeRead(context, id), false)
+  assert.equal(calls.filter((url) => /\/nodes\/(own|assigned|knowledge|secondary|unassigned|foreign)$/.test(new URL(url).pathname)).length, 0)
+  assert.ok(calls.some((url) => new URL(url).pathname.endsWith('/denied')), 'no actor ACL proof means the normal real-user GET is mandatory')
+})
+
 test('metadata and PDF paths require read capability and identical policy; folders and search cannot expand scope', () => {
   const { context } = fixture()
   for (const suffix of ['', '/content']) {

@@ -1,4 +1,4 @@
-import { dispatchPersistenceError } from './dispatchPersistence.js'
+import { dispatchPersistenceError, requireDispatchPersistence, withDispatchPersistence } from './dispatchPersistence.js'
 
 export async function loadAssignmentInbox(apiFetch, mapDocument) {
   const response = await apiFetch('/api/documents/dispatches?include=documents', { credentials: 'include', headers: { Accept: 'application/json' } })
@@ -10,5 +10,7 @@ export async function loadAssignmentInbox(apiFetch, mapDocument) {
   if (![result.dispatches, result.sentDispatches, result.documents, result.documentErrors].every(Array.isArray)) {
     throw new Error('La respuesta de la bandeja de asignaciones no es válida.')
   }
-  return { documents: result.documents.map(mapDocument), dispatchRecords: result.dispatches, sentDispatches: result.sentDispatches, documentErrors: result.documentErrors }
+  requireDispatchPersistence(result.persistence)
+  return { documents: result.documents.map(mapDocument), dispatchRecords: withDispatchPersistence(result.dispatches, result.persistence),
+    sentDispatches: withDispatchPersistence(result.sentDispatches, result.persistence), documentErrors: result.documentErrors }
 }

@@ -67,6 +67,26 @@ function parseGroupMappings() {
   return { dependencies: {}, functions: {} }
 }
 
+export function dispatchPilotSettings(environment = process.env) {
+  return {
+    writesEnabled: environment.DISPATCH_ALFRESCO_WRITES_ENABLED === 'true',
+    environment: environment.DISPATCH_PILOT_ENVIRONMENT || '',
+    environments: {
+      dev: {
+        enabled: true,
+        acknowledgement: environment.DISPATCH_PILOT_ACK || '',
+        expectedTarget: environment.DISPATCH_PILOT_ALFRESCO_TARGET || '',
+      },
+      preprod: {
+        enabled: environment.DISPATCH_PREPROD_WRITES_ENABLED === 'true',
+        acknowledgement: environment.DISPATCH_PREPROD_ACK || '',
+        expectedTarget: environment.DISPATCH_PREPROD_ALFRESCO_TARGET || '',
+      },
+    },
+    leasePath: environment.DISPATCH_PILOT_LEASE_PATH || path.join(backendRoot, 'data', 'dispatch-pilot.lock'),
+  }
+}
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   sessionSecret: required('SESSION_SECRET'),
@@ -80,14 +100,8 @@ export const config = {
   officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
   officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
   dispatchStorePath: process.env.DISPATCH_STORE_PATH || path.join(backendRoot, 'data', 'dispatches.json'),
-  dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'local',
-  dispatchPilot: {
-    writesEnabled: process.env.DISPATCH_ALFRESCO_WRITES_ENABLED === 'true',
-    controlledEnvironment: process.env.DISPATCH_PILOT_ACK === 'single-instance-exclusive-writer-dev-test-documents',
-    expectedTarget: process.env.DISPATCH_PILOT_ALFRESCO_TARGET || '',
-    documentIds: parseJson('DISPATCH_PILOT_DOCUMENT_IDS_JSON', []),
-    leasePath: process.env.DISPATCH_PILOT_LEASE_PATH || path.join(backendRoot, 'data', 'dispatch-pilot.lock'),
-  },
+  dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'alfresco',
+  dispatchPilot: dispatchPilotSettings(),
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',

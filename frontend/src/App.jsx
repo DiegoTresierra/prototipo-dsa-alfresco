@@ -67,14 +67,18 @@ function ApplicationShell({ session, onLogout }) {
   const [recipientsError, setRecipientsError] = useState('')
   const [dispatchRecords, setDispatchRecords] = useState([])
   const [dispatchError, setDispatchError] = useState('')
+  const assignmentRequestVersion = useRef(0)
   const loadAssignments = useCallback(async () => {
+    const version = ++assignmentRequestVersion.current
     try {
       const records = await listDispatches()
-      setDispatchRecords(records)
-      setDispatchError('')
+      if (version === assignmentRequestVersion.current) {
+        setDispatchRecords(records)
+        setDispatchError('')
+      }
       return records
     } catch (error) {
-      setDispatchError(error.message)
+      if (version === assignmentRequestVersion.current) setDispatchError(error.message)
       throw error
     }
   }, [])
@@ -131,11 +135,6 @@ function ApplicationShell({ session, onLogout }) {
   const recipientRoles = session.dispatchRecipientRoles || []
   const canDispatchInternal = canWriteAlfresco && recipientRoles.length > 0
   useEffect(() => {
-    if (!canReadAlfresco || isAssignmentUser) return
-    // Other roles retain their independent document loading path.
-    loadAssignments().catch(() => {}) // loadAssignments already exposes the error in the UI.
-  }, [canReadAlfresco, isAssignmentUser, loadAssignments, activePanel])
-  useEffect(() => {
     if (!canReadAlfresco || isAssignmentUser || !session.dependency) return undefined
     let active = true
     getDirectorOfficeInboxes()
@@ -180,7 +179,8 @@ function ApplicationShell({ session, onLogout }) {
     allowed: canReadAlfresco && !isAssignmentUser,
     folderIds: inboxFolderIds,
     folderKinds: inboxFolderKinds,
-
+    loadAssignments,
+    refreshKey: activePanel,
   })
   const assignmentInbox = useAssignmentInbox({ active: isAssignmentUser, allowed: canReadAlfresco, refreshKey: activePanel })
   const inbox = isAssignmentUser ? assignmentInbox : institutionalInbox
@@ -264,6 +264,7 @@ function ApplicationShell({ session, onLogout }) {
 
   const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId = null) => {
     const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken, originAssignmentId)
+    assignmentRequestVersion.current++ // Do not let an older in-flight GET erase this verified success.
     setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
     window.dispatchEvent(new Event('uac:alfresco-document-created'))
     return dispatch
