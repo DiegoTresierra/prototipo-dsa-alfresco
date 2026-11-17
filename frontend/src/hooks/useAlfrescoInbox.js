@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listNodeChildren } from '../api/alfresco'
+import { refreshInboxSources } from '../utils/refreshInbox'
 
 const initialState = { documents: [], loading: false, refreshing: false, error: '', lastUpdated: null }
 
@@ -22,7 +23,7 @@ function getSafeLoadError(error) {
   return 'No se pudo conectar con Alfresco DEV. Revisa el proxy local y la configuración de la API.'
 }
 
-export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [], folderKinds = [] }) {
+export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [], folderKinds = [], loadAssignments }) {
   const [state, setState] = useState(initialState)
   const refreshRef = useRef(null)
   const folderKey = JSON.stringify(folderIds
@@ -46,10 +47,10 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
       try {
         const currentFolders = JSON.parse(folderKey)
         if (currentFolders.length === 0) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
-        const folderResults = await Promise.all(currentFolders.map(async (folder) => ({
+        const folderResults = await refreshInboxSources(() => Promise.all(currentFolders.map(async (folder) => ({
           kind: folder.kind,
-          documents: await listNodeChildren(folder.id, { where: '(isFile=true)' }),
-        })))
+          documents: await listNodeChildren(folder.id, { where: '(isFile=true)', allPages: true }),
+        }))), loadAssignments)
         if (cancelled) return
         const documentsById = new Map()
         for (const result of folderResults) {
@@ -99,7 +100,7 @@ export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folder
       window.removeEventListener('uac:alfresco-document-created', refreshAfterSend)
       refreshRef.current = null
     }
-  }, [active, allowed, folderKey])
+  }, [active, allowed, folderKey, loadAssignments])
 
   const refresh = useCallback(() => refreshRef.current?.(), [])
   return { ...state, refresh }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import './components/Sidebar.css'
 import './components/TopBar.css'
@@ -9,10 +9,12 @@ import { rolePages } from './pages'
 import { CONFIRMED_STORAGE_KEY, loadAlfrescoConfirmedDocuments, recordAlfrescoConfirmedDocument } from './utils/documentStore'
 import { getAuthStatus, getSession, logout } from './auth'
 import { LoginPage } from './components/LoginPage'
-import { dispatchDocument, getDirectorOfficeInboxes, listDispatches, listUnitHeads, uploadPdfToDirectorInbox, uploadPdfToFolder } from './api/alfresco'
+import { dispatchDocument, getDirectorOfficeInboxes, listDispatches, listDispatchRecipients, uploadPdfToDirectorInbox, uploadPdfToFolder } from './api/alfresco'
 import { useAlfrescoInbox } from './hooks/useAlfrescoInbox'
 import { DirectorPage } from './pages/DirectorPage'
 import { JefeUnidadPage } from './pages/JefeUnidadPage'
+import { EspecialistaPage } from './pages/EspecialistaPage'
+import { useAssignmentInbox } from './hooks/useAssignmentInbox'
 import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
@@ -60,10 +62,22 @@ function ApplicationShell({ session, onLogout }) {
   const [notificationData, setNotificationData] = useState(() => loadDocumentNotificationState(window.localStorage, notificationStorageKey))
   const [officeInboxFolders, setOfficeInboxFolders] = useState(null)
   const [officeInboxError, setOfficeInboxError] = useState('')
-  const [unitHeads, setUnitHeads] = useState([])
-  const [unitHeadsLoading, setUnitHeadsLoading] = useState(false)
-  const [unitHeadsError, setUnitHeadsError] = useState('')
+  const [recipients, setRecipients] = useState([])
+  const [recipientsLoading, setRecipientsLoading] = useState(false)
+  const [recipientsError, setRecipientsError] = useState('')
   const [dispatchRecords, setDispatchRecords] = useState([])
+  const [dispatchError, setDispatchError] = useState('')
+  const loadAssignments = useCallback(async () => {
+    try {
+      const records = await listDispatches()
+      setDispatchRecords(records)
+      setDispatchError('')
+      return records
+    } catch (error) {
+      setDispatchError(error.message)
+      throw error
+    }
+  }, [])
   const [alfrescoDocuments, setAlfrescoDocuments] = useState(getInitialAlfrescoDocuments)
   const attentionStorageKey = personalAttentionKey(session.alfresco?.id || session.user?.id || '', session.dependency || '')
   const [attentionIds, setAttentionIds] = useState(() => {
@@ -111,46 +125,65 @@ function ApplicationShell({ session, onLogout }) {
     issuerCode: getIssuerCode({ roleId: session.roleId, dependencyAcronym: dependency.acronym, unitAcronym: unit?.acronym || unit?.code || '', personCode: derivePersonCode(currentUserName) }),
   }
   const isDirector = String(session.functionalRole || '').toLowerCase() === 'direccion'
+  const isUnitHead = session.functionalRole === 'jefe-unidad'
+  const isSpecialist = session.functionalRole === 'especialista'
+  const isAssignmentUser = isUnitHead || isSpecialist
+  const recipientRoles = session.dispatchRecipientRoles || []
+  const canDispatchInternal = canWriteAlfresco && recipientRoles.length > 0
   useEffect(() => {
-    if (!canReadAlfresco || !session.dependency) return undefined
+    if (!canReadAlfresco || isAssignmentUser) return
+    // Other roles retain their independent document loading path.
+    loadAssignments().catch(() => {}) // loadAssignments already exposes the error in the UI.
+  }, [canReadAlfresco, isAssignmentUser, loadAssignments, activePanel])
+  useEffect(() => {
+    if (!canReadAlfresco || isAssignmentUser || !session.dependency) return undefined
     let active = true
     getDirectorOfficeInboxes()
       .then((folders) => { if (active) { setOfficeInboxFolders(folders); setOfficeInboxError('') } })
       .catch((error) => { if (active) setOfficeInboxError(error.message) })
     return () => { active = false }
-  }, [canReadAlfresco, isDirector, session.dependency])
+  }, [canReadAlfresco, isAssignmentUser, isDirector, session.dependency])
   useEffect(() => {
+    if (!canDispatchInternal) return undefined
     let active = true
-    listDispatches()
-      .then((records) => { if (active) setDispatchRecords(records) })
-      .catch(() => { if (active) setDispatchRecords([]) })
-    return () => { active = false }
-  }, [session.alfresco?.id, session.functionalRole])
-  useEffect(() => {
-    if (!isDirector) return undefined
-    let active = true
-    setUnitHeadsLoading(true)
-    listUnitHeads()
-      .then((heads) => { if (active) { setUnitHeads(heads); setUnitHeadsError('') } })
-      .catch((error) => { if (active) setUnitHeadsError(error.message) })
-      .finally(() => { if (active) setUnitHeadsLoading(false) })
-    return () => { active = false }
-  }, [isDirector, session.dependency])
+    let inFlight = false
+    const load = async () => {
+      if (inFlight) return
+      inFlight = true
+      setRecipientsLoading(true)
+      try {
+        const result = await listDispatchRecipients()
+        if (active) { setRecipients(result.recipients); setRecipientsError('') }
+      } catch (error) {
+        if (active) { setRecipients([]); setRecipientsError(error.message) }
+      } finally {
+        inFlight = false
+        if (active) setRecipientsLoading(false)
+      }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    load()
+    window.addEventListener('focus', onVisible)
+    const timer = window.setInterval(onVisible, 60_000)
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', onVisible) }
+  }, [canDispatchInternal, session.dependency, session.functionalRole])
   const visibleMenu = role.menu.filter((item) => !item.devOnly || import.meta.env.DEV)
   const activeItem = visibleMenu.find((item) => item.id === activePanel) || visibleMenu[0]
-  const isUnitHead = session.functionalRole === 'jefe-unidad'
   const inboxFolderIds = isDirector || isUnitHead
     ? activePanel === 'para-conocimiento'
       ? [officeInboxFolders?.porConocimiento]
       : [officeInboxFolders?.porAtender, officeInboxFolders?.porConocimiento]
     : [session.userInboxNodeId || '']
   const inboxFolderKinds = isDirector || isUnitHead ? ['por-atender', 'por-conocimiento'] : ['personal']
-  const inbox = useAlfrescoInbox({
-    active: canReadAlfresco && ((!isDirector && !isUnitHead) || Boolean(officeInboxFolders)),
-    allowed: canReadAlfresco,
+  const institutionalInbox = useAlfrescoInbox({
+    active: canReadAlfresco && !isAssignmentUser && ((!isDirector && !isUnitHead) || Boolean(officeInboxFolders)),
+    allowed: canReadAlfresco && !isAssignmentUser,
     folderIds: inboxFolderIds,
     folderKinds: inboxFolderKinds,
+
   })
+  const assignmentInbox = useAssignmentInbox({ active: isAssignmentUser, allowed: canReadAlfresco, refreshKey: activePanel })
+  const inbox = isAssignmentUser ? assignmentInbox : institutionalInbox
   const receivedDocuments = withKnownPriorities(inbox.documents, alfrescoDocuments)
   useEffect(() => {
     if (!canReadAlfresco) return
@@ -192,7 +225,7 @@ function ApplicationShell({ session, onLogout }) {
   const visibleInbox = {
     ...inbox,
     documents: activePanel === 'para-atencion' ? personalAttentionDocuments(inboxDocumentsForPanel, attentionIds) : inboxDocumentsForPanel,
-    error: inbox.error || officeInboxError,
+    error: (isAssignmentUser ? '' : dispatchError) || inbox.error || (isAssignmentUser ? '' : officeInboxError),
   }
   const selectPersonalAttention = (documentId, selected) => {
     if (!canReadAlfresco || !receivedDocuments.some((document) => document.id === documentId)) return
@@ -229,8 +262,8 @@ function ApplicationShell({ session, onLogout }) {
     setIsSidebarOpen(false)
   }
 
-  const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey) => {
-    const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken)
+  const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId = null) => {
+    const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken, originAssignmentId)
     setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
     window.dispatchEvent(new Event('uac:alfresco-document-created'))
     return dispatch
@@ -329,10 +362,12 @@ function ApplicationShell({ session, onLogout }) {
           ? <NotificationsPage notifications={canReadAlfresco ? notificationData.notifications : []} onViewDocument={handleViewNotification} />
           : activePanel === 'nuevo-documento'
           ? <DocumentForm allowAlfrescoUpload={canWriteAlfresco} csrfToken={session.csrfToken} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} />
-          : activePanel === 'documentos-recibidos' && isUnitHead
-            ? <JefeUnidadPage allowAlfresco={canReadAlfresco} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} unit={unit} userId={session.alfresco?.id || session.user?.id || ''} />
+          : isUnitHead && ['documentos-recibidos', 'derivaciones-enviadas'].includes(activePanel)
+            ? <JefeUnidadPage key={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} mode={activePanel === 'derivaciones-enviadas' ? 'sent' : 'received'} recipientRoles={recipientRoles} recipients={recipients} recipientsLoading={recipientsLoading} recipientsError={recipientsError} onDispatch={handleDispatch} />
+          : isSpecialist && ['documentos-recibidos', 'mis-asignaciones'].includes(activePanel)
+            ? <EspecialistaPage key={activePanel} activePanel={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
-            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} unitHeads={unitHeads} unitHeadsError={unitHeadsError} unitHeadsLoading={unitHeadsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} />
+            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} />
           : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>

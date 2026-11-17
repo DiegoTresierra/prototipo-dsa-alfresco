@@ -174,7 +174,8 @@
 .received-inbox__date { display: grid; gap: 5px; font-size: 13px; white-space: nowrap; }
 .received-inbox__date small { color: var(--color-text-accessible-secondary); font-size: 12px; }
 .received-inbox__assignee { min-width: 150px; }
-.received-inbox__assignee select { min-height: 36px; padding: 7px 10px; cursor: not-allowed; font-size: 13px; }
+.received-inbox__assignee select { min-height: 36px; padding: 7px 10px; cursor: pointer; font-size: 13px; }
+.received-inbox__assignee select:disabled { cursor: not-allowed; }
 .received-inbox__assignee small { font-size: 11px; }
 .received-inbox__open { min-height: 34px; padding: 7px 11px; font-size: 13px; white-space: nowrap; }
 .received-inbox__table .received-inbox__empty { padding: 44px 24px; color: var(--color-text-accessible-secondary); text-align: center; }

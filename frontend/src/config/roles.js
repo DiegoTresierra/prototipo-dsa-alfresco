@@ -44,12 +44,15 @@ export const roleDefinitions = {
     label: 'Jefe de unidad',
     menu: [item('inicio', 'Inicio', 'Espacio de trabajo del jefe de unidad.', 'home'), newDocumentItem(), item('documentos-recibidos', 'Documentos recibidos', 'Consulta los documentos recibidos por esta cuenta.', 'inbox')],
   },
-  especialista: { id: 'especialista', label: 'Especialista responsable', menu: [item('inicio', 'Inicio', 'Consulta el espacio de trabajo del especialista responsable.', 'home'), newDocumentItem(), item('mis-asignaciones', 'Mis asignaciones', 'Consulta los documentos asignados al responsable principal.', 'inbox'), item('solicitar-colaborador', 'Solicitar colaborador', 'Espacio reservado para solicitudes de apoyo.'), item('solicitar-cierre', 'Solicitar cierre', 'Espacio reservado para solicitudes de cierre.'), item('historial', 'Historial', 'Consulta del historial de actividades del especialista.', 'archive')] },
+  especialista: { id: 'especialista', label: 'Especialista responsable', menu: [item('inicio', 'Inicio', 'Consulta el espacio de trabajo del especialista responsable.', 'home'), newDocumentItem(), item('mis-asignaciones', 'Mis asignaciones', 'Consulta tus encargos individuales sobre los documentos originales.', 'inbox'), item('solicitar-colaborador', 'Solicitar colaborador', 'Espacio reservado para solicitudes de apoyo.'), item('solicitar-cierre', 'Solicitar cierre', 'Espacio reservado para solicitudes de cierre.'), item('historial', 'Historial', 'Consulta del historial de actividades del especialista.', 'archive')] },
   colaborador: { id: 'colaborador', label: 'Colaborador', menu: [item('inicio', 'Inicio', 'Consulta el espacio de trabajo del colaborador.', 'home'), newDocumentItem(), item('mis-actividades', 'Mis actividades', 'Consulta de las actividades asignadas al colaborador.', 'inbox'), item('documentos-compartidos', 'Documentos compartidos', 'Consulta de documentos compartidos para colaboración.', 'archive'), item('resultados', 'Resultados', 'Consulta de resultados asociados a las actividades.', 'chart')] },
   tecnico: { id: 'tecnico', label: 'Técnico (pruebas API)', menu: [item('inicio', 'Inicio', 'Consulta el espacio de pruebas del rol Técnico.', 'home'), newDocumentItem(), item('consultar-documentos', 'Consultar documentos', 'Espacio reservado para futuras consultas técnicas.', 'inbox'), item('metadatos', 'Metadatos', 'Espacio reservado para revisar metadatos técnicos.'), item('pruebas-conexion', 'Pruebas de conexión', 'Espacio reservado para futuras pruebas de conexión.')] },
 }
 
 for (const role of new Set(Object.values(roleDefinitions))) {
+  if (role.id?.startsWith('jefe-unidad-')) {
+    role.menu.push(item('derivaciones-enviadas', 'Derivaciones realizadas', 'Consulta los encargos que derivaste a especialistas.', 'inbox'))
+  }
   if (!role.menu.some((entry) => entry.id === 'documentos-recibidos')) {
     const newDocumentIndex = role.menu.findIndex((entry) => entry.id === 'nuevo-documento')
     role.menu.splice(newDocumentIndex + 1, 0, item('documentos-recibidos', 'Documentos recibidos', 'Consulta los documentos recibidos por esta cuenta.', 'inbox'))

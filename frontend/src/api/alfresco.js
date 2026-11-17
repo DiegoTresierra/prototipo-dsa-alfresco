@@ -1,4 +1,7 @@
 import { apiFetch } from './client'
+import { collectInboxPages } from '../utils/inboxPages'
+import { loadAssignmentInbox } from '../utils/assignmentInbox'
+import { dispatchPersistenceError } from '../utils/dispatchPersistence'
 
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
@@ -24,24 +27,37 @@ export async function listEligibleDocumentRecipients() {
   return result.recipients
 }
 
-export async function listUnitHeads() {
-  const response = await apiFetch('/api/directory/unit-heads', { credentials: 'include', headers: { Accept: 'application/json' } })
+export async function listDispatchRecipients() {
+  const response = await apiFetch('/api/directory/dispatch-recipients', { credentials: 'include', headers: { Accept: 'application/json' } })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
+    const configurationMessages = {
+      DISPATCH_DIRECTORY_CREDENTIALS_REQUIRED: 'Falta configurar la cuenta de consulta del directorio de despacho en el backend.',
+      GROUP_MAPPINGS_REQUIRED: 'Falta configurar los grupos institucionales del despacho en el backend.',
+      DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED: 'El directorio contiene subgrupos y requiere verificar su política de membresías antes de despachar.',
+    }
+    if (configurationMessages[body.error]) throw new Error(configurationMessages[body.error])
     const messages = {
-      403: 'La sesión no tiene permiso de Dirección para consultar jefaturas.',
-      502: 'No se pudo consultar el directorio institucional de jefaturas.',
+      403: 'Tu rol no permite realizar derivaciones internas.',
+      502: 'No se pudo consultar el directorio institucional de destinatarios.',
     }
     throw new Error(messages[response.status] || body.error || 'No se pudieron cargar las jefaturas autorizadas.')
   }
   const result = await response.json()
   if (!Array.isArray(result?.recipients)) throw new Error('El directorio de jefaturas no tiene un formato válido.')
-  return result.recipients
+  return { recipients: result.recipients, allowedRecipientRoles: result.allowedRecipientRoles || [] }
+}
+
+export async function getAssignmentInbox() {
+  return loadAssignmentInbox(apiFetch, nodeToDocument)
 }
 
 export async function listDispatches() {
   const response = await apiFetch('/api/documents/dispatches', { credentials: 'include', headers: { Accept: 'application/json' } })
-  if (!response.ok) throw new Error('No se pudieron consultar los encargos documentales.')
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(dispatchPersistenceError(body.error, 'No se pudieron consultar los encargos documentales. Reintenta la actualización de la bandeja.'))
+  }
   const result = await response.json()
   if (!Array.isArray(result?.dispatches)) throw new Error('La respuesta de encargos documentales no es válida.')
   return result.dispatches
@@ -66,24 +82,26 @@ export async function reserveDocumentNumber(documentType, documentPeriod, csrfTo
   return body.number
 }
 
-export async function dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, csrfToken) {
+export async function dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, csrfToken, originAssignmentId = null) {
   const response = await apiFetch('/api/documents/dispatch', {
     method: 'POST',
     credentials: 'include',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify({ documentId, recipientUserIds, instruction, priority, requestKey }),
+    body: JSON.stringify({ documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId }),
   })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
     const messages = {
-      DIRECTOR_DISPATCH_REQUIRED: 'Solo una Dirección autorizada puede realizar despachos.',
+      HIERARCHICAL_DISPATCH_REQUIRED: 'Tu rol no permite realizar esta derivación interna.',
       DISPATCH_RECIPIENT_NOT_ALLOWED: 'Uno o más destinatarios no pertenecen a la dependencia autorizada.',
-      DISPATCH_DOCUMENT_NOT_ALLOWED: 'El documento no pertenece a una bandeja autorizada para esta Dirección.',
+      DISPATCH_DOCUMENT_NOT_ALLOWED: 'No tienes autorización documental para derivar este PDF.',
+      DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED: 'Debes tener una asignación propia y vigente de atención. Leer el documento o haberlo creado no basta para derivarlo.',
+      INVALID_DISPATCH_ORIGIN: 'La referencia a la asignación de origen no es válida.',
       DISPATCH_REQUEST_CONFLICT: 'La clave de reintento ya corresponde a otro despacho.',
       DISTRIBUTION_SERVICE_NOT_CONFIGURED: 'La cuenta técnica de distribución no está configurada.',
       DISTRIBUTION_SERVICE_AUTH_FAILED: 'No se pudo autenticar la cuenta técnica de distribución.',
     }
-    const error = new Error(messages[body.error] || 'No se pudo completar el despacho documental.')
+    const error = new Error(dispatchPersistenceError(body.error, messages[body.error] || 'No se pudo completar el despacho documental.'))
     error.status = response.status
     error.dispatchId = body.dispatchId || ''
     error.documentId = body.documentId || documentId
@@ -161,9 +179,11 @@ export async function listNodeChildren(nodeId, options = {}) {
   if (!nodeId) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
   const params = new URLSearchParams({ include: 'properties,association,content,path', maxItems: String(options.maxItems || 100) })
   if (options.where) params.set('where', options.where)
-  const response = await request(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?${params}`)
-  if (!Array.isArray(response?.list?.entries) || response.list.entries.some((record) => !record?.entry)) throw new Error('ALFRESCO_INVALID_LIST_RESPONSE')
-  return response.list.entries.map(({ entry }) => nodeToDocument(entry))
+  const entries = await collectInboxPages((skipCount) => {
+    params.set('skipCount', String(skipCount))
+    return request(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?${params}`)
+  }, options.allPages)
+  return entries.map(({ entry }) => nodeToDocument(entry))
 }
 
 export async function searchDocuments(query, options = {}) {

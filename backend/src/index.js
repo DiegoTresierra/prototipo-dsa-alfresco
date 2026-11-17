@@ -7,13 +7,20 @@ import { Issuer, generators } from 'openid-client'
 import { Buffer } from 'node:buffer'
 import { config } from './config.js'
 import { authenticateBasic, authenticateBearer, buildAlfrescoUrl, getAlfrescoGroupMembers } from './alfrescoClient.js'
-import { createDispatch, findDispatch, listDispatchesForUser, updateDispatch } from './dispatchStore.js'
-import { canDispatch, dispatchIdentity, validateDispatchRequest } from './dispatchPolicy.js'
+import { createDispatchRepository } from './dispatchRepository.js'
+import { acquirePilotLease } from './dispatchPilot.js'
+import { allowedRecipientRoles, canDispatch, dispatchIdentity, validateDispatchRequest } from './dispatchPolicy.js'
 import { reserveDocumentNumber } from './numberingStore.js'
 import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSession, getSession } from './sessionStore.js'
 import { resolveRole } from './roleResolver.js'
+import { loadDispatchDirectory } from './dispatchDirectory.js'
+import { authorizeNodeRead, filterDocumentCollection, validateDocumentReadRequest } from './documentReadPolicy.js'
 
 const app = express()
+const dispatchRepository = createDispatchRepository(config)
+const releasePilotLease = acquirePilotLease(config)
+process.once('exit', releasePilotLease)
+const { createDispatch, findAttentionAssignment, findDispatch, listDispatchesForUser, listSentDispatches, updateDispatch } = dispatchRepository
 const SESSION_COOKIE = 'gd_session'
 const OIDC_COOKIE = 'gd_oidc_transaction'
 let keycloakClientPromise
@@ -74,6 +81,7 @@ function publicSession(session) {
     roleId: session.roleId,
     authorizationStatus: session.authorizationStatus,
     capabilities: session.capabilities,
+    dispatchRecipientRoles: allowedRecipientRoles(session),
     csrfToken: session.csrfToken,
     expiresAt: session.expiresAt,
   }
@@ -291,10 +299,6 @@ app.get('/api/auth/me', (request, response) => {
 
 app.get('/api/directory/recipients', requireSession, async (request, response) => {
   if (request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
-  const documentMatch = request.path.match(/^\/api\/-default-\/public\/alfresco\/versions\/1\/nodes\/([^/]+)(?:\/content)?$/)
-  if (request.method === 'GET' && documentMatch && !isAssignedDocument(request.session, decodeURIComponent(documentMatch[1]))) {
-    return response.status(403).json({ error: 'DOCUMENT_ASSIGNMENT_REQUIRED' })
-  }
   if (!Object.keys(config.groupMappings.dependencies || {}).length || !Object.keys(config.groupMappings.functions || {}).length) {
     return response.status(503).json({ error: 'GROUP_MAPPINGS_REQUIRED' })
   }
@@ -370,27 +374,48 @@ function requireDeliveryLock(request, response, next) {
   next()
 }
 
-  app.get('/api/directory/unit-heads', requireSession, async (request, response) => {
-    if (!canDispatch(request.session)) return response.status(403).json({ error: 'DIRECTOR_DISPATCH_REQUIRED' })
+  app.get(['/api/directory/dispatch-recipients', '/api/directory/unit-heads'], requireSession, async (request, response) => {
+    if (!canDispatch(request.session)) return response.status(403).json({ error: 'HIERARCHICAL_DISPATCH_REQUIRED' })
     try {
-      const recipients = await getConfiguredRecipients(request.session, { requireInbox: false })
+      const directory = await loadDispatchDirectory(config)
+      const dependency = String(request.session.dependency || '').toLowerCase()
       return response.json({
-        recipients: recipients.filter((recipient) =>
-          recipient.functionalRole === 'jefe-unidad' &&
-          recipient.dependency === String(request.session.dependency || '').toLowerCase()),
+        recipients: directory.recipients.filter((recipient) =>
+          allowedRecipientRoles(request.session).includes(recipient.functionalRole) &&
+          (!request.path.endsWith('/unit-heads') || recipient.functionalRole === 'jefe-unidad') &&
+          recipient.dependency === dependency),
+        allowedRecipientRoles: allowedRecipientRoles(request.session),
       })
-    } catch {
-      return response.status(502).json({ error: 'UNIT_HEAD_DIRECTORY_UNAVAILABLE' })
+    } catch (error) {
+      return response.status(error.status || 502).json({ error: error.message || 'UNIT_HEAD_DIRECTORY_UNAVAILABLE' })
     }
   })
 
-  app.get('/api/documents/dispatches', requireSession, (request, response) => {
+  app.get('/api/documents/dispatches', requireSession, async (request, response) => {
     const userId = request.session.alfresco?.id || request.session.user?.id
     if (!userId || request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
+    if (!request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_REQUIRED' })
     try {
-      return response.json({ dispatches: listDispatchesForUser(userId, request.session.functionalRole, request.session.unit) })
-    } catch {
-      return response.status(503).json({ error: 'DISPATCH_STORE_UNAVAILABLE' })
+      const dispatches = await listDispatchesForUser(userId, request.session.functionalRole, request.session.dependency, request.session)
+      const sentDispatches = ['direccion', 'jefe-unidad'].includes(request.session.functionalRole) ? await listSentDispatches(userId, request.session.dependency, request.session) : []
+      if (request.query.include !== 'documents') return response.json({ dispatches, sentDispatches })
+      if (!['jefe-unidad', 'especialista'].includes(request.session.functionalRole)) return response.status(400).json({ error: 'ASSIGNMENT_INBOX_ROLE_REQUIRED' })
+      const ids = [...new Set([...dispatches, ...sentDispatches].map((record) => record.documentId))]
+      if (ids.length > 10_000) return response.status(503).json({ error: 'DOCUMENT_QUERY_LIMIT_EXCEEDED' })
+      const documents = []
+      const documentErrors = []
+      const context = { session: request.session, settings: config, listDispatches: listDispatchesForUser }
+      for (const documentId of ids) {
+        try {
+          if (await authorizeNodeRead(context, documentId)) documents.push(context.nodes.get(documentId))
+          else documentErrors.push({ documentId, error: 'DOCUMENT_READ_NOT_ALLOWED' })
+        } catch {
+          documentErrors.push({ documentId, error: 'DOCUMENT_READ_UNAVAILABLE' })
+        }
+      }
+      return response.json({ dispatches, sentDispatches, documents, documentErrors })
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.message || 'DISPATCH_STORE_UNAVAILABLE' })
     }
   })
 
@@ -424,39 +449,141 @@ function requireDeliveryLock(request, response, next) {
     })
   }
 
-  async function sourceDocumentBelongsToDependency(session, documentId) {
+  async function verifyConfiguredFolderMembership(session, documentId, allowedFolders, diagnostic) {
+    // A 403 on /parents can deny enumeration without denying the PDF itself.
+    // Prove membership from the other end, using only server-configured folders
+    // and the same user's ACL-filtered children responses. Never use service auth.
+    diagnostic.folderChecks = []
+    let inspected = 0
+    for (const folderId of allowedFolders) {
+      let skipCount = 0
+      let more
+      do {
+        const query = new URLSearchParams({ include: 'association', maxItems: '100', skipCount: String(skipCount) })
+        const url = buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(folderId)}/children`, `?${query}`)
+        const response = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { Accept: 'application/json', Authorization: session.authorization } })
+        diagnostic.folderChecks.push({ folderId, skipCount, status: response.status })
+        if ([403, 404].includes(response.status)) break
+        if (!response.ok) { diagnostic.reason = 'ALFRESCO_SCOPE_FOLDER_READ_REJECTED'; return false }
+        const payload = await response.json().catch(() => null)
+        const list = payload?.list
+        if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') {
+          diagnostic.reason = 'ALFRESCO_SCOPE_FOLDER_INVALID_RESPONSE'
+          return false
+        }
+        if (list.entries.some(({ entry }) => entry?.id === documentId && entry.association?.assocType === 'cm:contains')) {
+          diagnostic.reason = 'CONFIGURED_FOLDER_MEMBERSHIP_VERIFIED'
+          diagnostic.matchedFolderId = folderId
+          return true
+        }
+        more = list.pagination.hasMoreItems
+        skipCount += list.entries.length
+        inspected += list.entries.length
+        if ((!list.entries.length && more) || inspected > 10_000) {
+          diagnostic.reason = 'ALFRESCO_SCOPE_FOLDER_INVALID_PAGING'
+          return false
+        }
+      } while (more)
+    }
+    diagnostic.reason = 'DOCUMENT_SCOPE_NOT_VERIFIED'
+    return false
+  }
+
+  async function sourceDocumentBelongsToDependency(session, documentId, diagnostic = {}) {
     const allowedFolders = new Set(Object.values(config.officeInboxNodeIds?.[String(session.dependency || '').toUpperCase()] || {}).filter(Boolean))
+    Object.assign(diagnostic, {
+      userId: session.alfresco?.id || session.user?.id,
+      functionalRole: session.functionalRole,
+      dependency: session.dependency,
+      documentId,
+      configuredFolderIds: [...allowedFolders],
+    })
+    const reject = (reason) => { diagnostic.reason = reason; return false }
     const url = buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(documentId)}`, '?include=path')
-    const result = await fetch(url, { headers: { Accept: 'application/json', Authorization: session.authorization } })
+    const result = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { Accept: 'application/json', Authorization: session.authorization } })
+    diagnostic.nodeStatus = result.status
     const payload = await result.json().catch(() => null)
     const entry = payload?.entry
-    if (!result.ok || !entry?.isFile || entry?.content?.mimeType !== 'application/pdf') return false
-    if (allowedFolders.has(entry.parentId)) return true
-    const parentsUrl = buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(documentId)}/parents`, '?include=association&maxItems=100')
-    const parentsResponse = await fetch(parentsUrl, { headers: { Accept: 'application/json', Authorization: session.authorization } })
-    const parents = await parentsResponse.json().catch(() => null)
-    return parentsResponse.ok && parents?.list?.entries?.some(({ entry: parent }) => allowedFolders.has(parent?.id))
+    if (!result.ok) return reject('ALFRESCO_NODE_READ_REJECTED')
+    diagnostic.nodeId = entry?.id
+    diagnostic.primaryParentId = entry?.parentId
+    diagnostic.isFile = entry?.isFile
+    diagnostic.mimeType = entry?.content?.mimeType
+    if (entry?.id !== documentId) return reject('ALFRESCO_NODE_ID_MISMATCH')
+    if (!entry.isFile || entry.content?.mimeType !== 'application/pdf') return reject('ALFRESCO_NODE_NOT_PDF')
+    if (allowedFolders.has(entry.parentId)) {
+      diagnostic.reason = 'PRIMARY_PARENT_IN_SCOPE'
+      diagnostic.matchedFolderId = entry.parentId
+      return true
+    }
+    let skipCount = 0
+    let more
+    do {
+      const parentsUrl = buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(documentId)}/parents`, `?include=association&maxItems=100&skipCount=${skipCount}`)
+      const parentsResponse = await fetch(parentsUrl, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { Accept: 'application/json', Authorization: session.authorization } })
+      diagnostic.parentsStatus = parentsResponse.status
+      const parents = await parentsResponse.json().catch(() => null)
+      if (parentsResponse.status === 403) return verifyConfiguredFolderMembership(session, documentId, allowedFolders, diagnostic)
+      if (!parentsResponse.ok) return reject('ALFRESCO_PARENTS_READ_REJECTED')
+      if (!Array.isArray(parents?.list?.entries)) return reject('ALFRESCO_PARENTS_INVALID_RESPONSE')
+      const match = parents.list.entries.find(({ entry: parent }) => allowedFolders.has(parent?.id))
+      if (match) {
+        diagnostic.reason = 'SECONDARY_PARENT_IN_SCOPE'
+        diagnostic.matchedFolderId = match.entry.id
+        return true
+      }
+      more = parents.list.pagination?.hasMoreItems
+      skipCount += parents.list.entries.length
+      if (typeof more !== 'boolean' || (!parents.list.entries.length && more) || skipCount > 10_000) return reject('ALFRESCO_PARENTS_INVALID_PAGING')
+    } while (more)
+    return reject('DOCUMENT_OUTSIDE_DEPENDENCY')
   }
 
   app.post('/api/documents/dispatch', requireSession, requireCsrf, requireDeliveryLock, async (request, response) => {
     let dispatch
     try {
       const userId = request.session.alfresco?.id || request.session.user?.id
-      const recipients = await getConfiguredRecipients(request.session, { requireInbox: false })
+      if (!canDispatch(request.session)) return dispatchError(response, 403, 'HIERARCHICAL_DISPATCH_REQUIRED')
+      if (!request.session.capabilities?.includes('documents:read')) return dispatchError(response, 403, 'DOCUMENT_READ_REQUIRED')
+      const { recipients } = await loadDispatchDirectory(config)
       const input = validateDispatchRequest(request.body, request.session, recipients)
+      return await dispatchRepository.withDocument(input.documentId, async () => {
       const identity = dispatchIdentity(request.session, input.requestKey)
-      const existing = findDispatch(userId, input.requestKey)
+      const existing = await findDispatch(userId, input.requestKey, input.documentId)
       if (existing) {
-        const requestedRecipients = input.recipients.map((recipient) => recipient.id).sort().join(',')
-        const storedRecipients = existing.recipients.map((recipient) => recipient.userId).sort().join(',')
-        if (existing.documentId !== input.documentId || storedRecipients !== requestedRecipients) {
+        const requestedRecipients = JSON.stringify(input.recipients.map((recipient) => [recipient.id, recipient.functionalRole]).sort())
+        const storedRecipients = JSON.stringify(existing.recipients.map((recipient) => [recipient.userId, recipient.functionalRole]).sort())
+        if (existing.documentId !== input.documentId || storedRecipients !== requestedRecipients ||
+            existing.instruction !== input.instruction || existing.priority !== input.priority ||
+            (existing.originAssignmentId || null) !== input.originAssignmentId || existing.senderRole !== input.senderRole) {
           return dispatchError(response, 409, 'DISPATCH_REQUEST_CONFLICT', existing)
         }
-        if (existing.status === 'ASIGNADO' || existing.status === 'DESPACHADO') return response.status(200).json({ dispatch: existing })
       }
       if (identity.startsWith(':')) return dispatchError(response, 403, 'SESSION_IDENTITY_REQUIRED')
-      if (!await sourceDocumentBelongsToDependency(request.session, input.documentId)) {
-        return dispatchError(response, 403, 'DISPATCH_DOCUMENT_NOT_ALLOWED')
+      if (request.session.functionalRole === 'jefe-unidad') {
+        const origin = await findAttentionAssignment(userId, input.documentId, input.senderDependency, input.originAssignmentId)
+        if (!origin) return dispatchError(response, 403, 'DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED')
+        const source = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(input.documentId)}`), {
+          method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000),
+          headers: { Accept: 'application/json', Authorization: request.session.authorization },
+        })
+        const node = (await source.json().catch(() => null))?.entry
+        if (!source.ok || node?.id !== input.documentId || !node.isFile || node.content?.mimeType !== 'application/pdf') {
+          return dispatchError(response, 403, 'DISPATCH_DOCUMENT_NOT_ALLOWED')
+        }
+      } else {
+        const diagnostic = {}
+        const allowed = await sourceDocumentBelongsToDependency(request.session, input.documentId, diagnostic)
+        if (config.alfrescoDiagnostics) console.info('[dispatch-authorization]', JSON.stringify({ ...diagnostic, allowed }))
+        if (!allowed) {
+          return response.status(403).json({ error: 'DISPATCH_DOCUMENT_NOT_ALLOWED', ...(config.alfrescoDiagnostics ? { diagnostic } : {}) })
+        }
+      }
+      if (existing && ['ASIGNADO', 'DESPACHADO'].includes(existing.status)) return response.status(200).json({ dispatch: existing })
+
+      if (dispatchRepository.kind === 'alfresco') {
+        dispatch = await createDispatch({ ...input, senderUserId: userId }, request.session)
+        return response.status(201).json({ dispatch })
       }
 
       dispatch = existing || createDispatch({
@@ -470,13 +597,14 @@ function requireDeliveryLock(request, response, next) {
           recipients: current.recipients.map((entry) => entry.userId === recipient.id ? { ...entry, status: 'ASIGNADO', assignedAt: new Date().toISOString() } : entry),
         }))
       }
-      dispatch = updateDispatch(dispatch.id, (current) => ({ ...current, status: 'ASIGNADO', completedAt: new Date().toISOString() }))
+      dispatch = updateDispatch(dispatch.id, (current) => ({ ...current, status: 'ASIGNADO', assignmentCompletedAt: new Date().toISOString() }))
       return response.status(201).json({ dispatch })
+      })
     } catch (error) {
       if (error.code === 'DISTRIBUTION_SERVICE_NOT_CONFIGURED' || error.code === 'DISTRIBUTION_SERVICE_AUTH_FAILED') {
         return dispatchError(response, 503, error.code, dispatch)
       }
-      if (dispatch?.id) {
+      if (dispatch?.id && dispatchRepository.kind === 'local') {
         const updated = updateDispatch(dispatch.id, (current) => ({
           ...current,
           status: 'PARCIAL',
@@ -705,13 +833,6 @@ function isAllowedAlfrescoRequest(request) {
   return false
 }
 
-function isAssignedDocument(session, documentId) {
-  const userId = session.alfresco?.id || session.user?.id
-  if (!userId || session.functionalRole !== 'jefe-unidad') return true
-  return listDispatchesForUser(userId, session.functionalRole, session.unit)
-    .some((dispatch) => dispatch.documentId === documentId && ['ASIGNADO', 'DESPACHADO'].includes(dispatch.status))
-}
-
 function isPdfMultipart(request, body) {
   const contentType = request.get('content-type') || ''
   const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i)
@@ -740,6 +861,7 @@ function isPdfMultipart(request, body) {
 app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) => {
   try {
     if (request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
+    const readRequest = validateDocumentReadRequest(request, config)
     if (!isAllowedAlfrescoRequest(request)) {
       const isUpload = request.method === 'POST' && /\/nodes\/[^/]+\/children$/.test(request.path)
       if (isUpload && !request.session.capabilities?.includes('documents:write')) {
@@ -749,6 +871,14 @@ app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) 
       return response.status(403).json({ error: 'ALFRESCO_OPERATION_NOT_ALLOWED' })
     }
     const requestPath = request.path
+    const readContext = { session: request.session, settings: config, listDispatches: listDispatchesForUser }
+    if (readRequest?.nodeId && !readRequest.collection && !await authorizeNodeRead(readContext, readRequest.nodeId)) {
+      return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+    }
+    if (readRequest?.collection) {
+      const payload = await filterDocumentCollection(readContext, request, readRequest)
+      return response.set('x-content-type-options', 'nosniff').json(payload)
+    }
     const url = buildAlfrescoUrl(config.alfrescoTarget, requestPath, request.url.split('?')[1] ? `?${request.url.split('?')[1]}` : '')
     const body = await requestBody(request)
     const contentType = request.get('content-type')
@@ -759,19 +889,6 @@ app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) 
     if (contentType) headers['Content-Type'] = contentType
     const upstream = await fetch(url, { method: request.method, headers, body })
     let responseBody = Buffer.from(await upstream.arrayBuffer())
-    if (request.method === 'GET' && request.path.endsWith('/children') && request.session.functionalRole === 'jefe-unidad' && upstream.ok) {
-      try {
-        const payload = JSON.parse(responseBody.toString('utf8'))
-        const userId = request.session.alfresco?.id || request.session.user?.id
-        const assignedIds = new Set(listDispatchesForUser(userId, request.session.functionalRole, request.session.unit).map((dispatch) => dispatch.documentId))
-        if (Array.isArray(payload?.list?.entries)) {
-          payload.list.entries = payload.list.entries.filter(({ entry }) => assignedIds.has(entry?.id))
-          responseBody = Buffer.from(JSON.stringify(payload))
-        }
-      } catch {
-        return response.status(502).json({ error: 'ALFRESCO_INVALID_LIST_RESPONSE' })
-      }
-    }
     response.status(upstream.status)
     const upstreamContentType = upstream.headers.get('content-type')
     const isContentResponse = request.path.endsWith('/content')
@@ -791,3 +908,7 @@ app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) 
 export const server = app.listen(config.port, () => {
   console.log(`Authentication backend listening on port ${config.port}`)
 })
+server.once('close', releasePilotLease)
+if (config.dispatchPersistence === 'alfresco' && config.dispatchPilot.writesEnabled) {
+  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.close(() => process.exit(0)))
+}

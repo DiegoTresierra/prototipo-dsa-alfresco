@@ -80,6 +80,14 @@ export const config = {
   officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
   officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
   dispatchStorePath: process.env.DISPATCH_STORE_PATH || path.join(backendRoot, 'data', 'dispatches.json'),
+  dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'local',
+  dispatchPilot: {
+    writesEnabled: process.env.DISPATCH_ALFRESCO_WRITES_ENABLED === 'true',
+    controlledEnvironment: process.env.DISPATCH_PILOT_ACK === 'single-instance-exclusive-writer-dev-test-documents',
+    expectedTarget: process.env.DISPATCH_PILOT_ALFRESCO_TARGET || '',
+    documentIds: parseJson('DISPATCH_PILOT_DOCUMENT_IDS_JSON', []),
+    leasePath: process.env.DISPATCH_PILOT_LEASE_PATH || path.join(backendRoot, 'data', 'dispatch-pilot.lock'),
+  },
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',

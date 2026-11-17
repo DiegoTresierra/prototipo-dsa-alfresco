@@ -1,14 +1,30 @@
 const allowedPriorities = new Set(['Normal', 'Alta', 'Urgente'])
 
+export const dispatchRecipientRoles = {
+  direccion: ['jefe-unidad', 'especialista'],
+  'jefe-unidad': ['especialista'],
+  especialista: [],
+}
+
+export function allowedRecipientRoles(session) {
+  if (session?.authorizationStatus !== 'active' || !session.capabilities?.includes('documents:write') ||
+      !['dsa', 'dti'].includes(String(session.dependency || '').toLowerCase())) return []
+  return dispatchRecipientRoles[session.functionalRole] || []
+}
+
+export function isValidDispatchUnit(unit, dependency) {
+  return Boolean(unit && typeof unit.code === 'string' && unit.code.trim() &&
+    typeof unit.name === 'string' && unit.name.trim() &&
+    typeof unit.dependency === 'string' && unit.dependency.trim().toLowerCase() === String(dependency || '').toLowerCase())
+}
+
 export function canDispatch(session) {
-  return session?.authorizationStatus === 'active' &&
-    session.functionalRole === 'direccion' &&
-    session.capabilities?.includes('documents:write')
+  return allowedRecipientRoles(session).length > 0
 }
 
 export function validateDispatchRequest(input = {}, session, recipients = []) {
   if (!canDispatch(session)) {
-    const error = new Error('DIRECTOR_DISPATCH_REQUIRED')
+    const error = new Error('HIERARCHICAL_DISPATCH_REQUIRED')
     error.status = 403
     throw error
   }
@@ -17,6 +33,7 @@ export function validateDispatchRequest(input = {}, session, recipients = []) {
   const instruction = String(input.instruction || '').trim()
   const priority = String(input.priority || '').trim()
   const requestKey = String(input.requestKey || '').trim()
+  const originAssignmentId = String(input.originAssignmentId || '').trim() || null
   const recipientUserIds = [...new Set(Array.isArray(input.recipientUserIds)
     ? input.recipientUserIds.map((value) => String(value || '').trim()).filter(Boolean)
     : [])]
@@ -33,10 +50,17 @@ export function validateDispatchRequest(input = {}, session, recipients = []) {
   }
 
   const senderDependency = String(session.dependency || '').toLowerCase()
+  if (session.functionalRole === 'jefe-unidad' && !originAssignmentId) {
+    throw Object.assign(new Error('DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED'), { status: 403 })
+  }
+  if ((originAssignmentId && !/^[A-Za-z0-9:_-]{1,250}$/.test(originAssignmentId)) ||
+      (session.functionalRole === 'direccion' && originAssignmentId)) {
+    throw Object.assign(new Error('INVALID_DISPATCH_ORIGIN'), { status: 400 })
+  }
+  const roles = allowedRecipientRoles(session)
   const allowedRecipients = new Map(recipients
-    .filter((recipient) => recipient.functionalRole === 'jefe-unidad' &&
-      recipient.dependency === senderDependency &&
-      (recipient.unit?.code || recipient.unit?.id || recipient.unit?.name))
+    .filter((recipient) => roles.includes(recipient.functionalRole) &&
+      recipient.dependency === senderDependency)
     .map((recipient) => [recipient.id, recipient]))
   const selectedRecipients = recipientUserIds.map((userId) => allowedRecipients.get(userId))
   if (selectedRecipients.some((recipient) => !recipient)) {
@@ -51,6 +75,8 @@ export function validateDispatchRequest(input = {}, session, recipients = []) {
     priority,
     requestKey,
     senderDependency,
+    senderRole: session.functionalRole,
+    originAssignmentId,
     recipients: selectedRecipients,
   }
 }

@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { config } from './config.js'
-import { createDispatch, findDispatch, listDispatchesForUser, updateDispatch } from './dispatchStore.js'
+import { createDispatch, findAttentionAssignment, findDispatch, listDispatchesForUser, updateDispatch } from './dispatchStore.js'
 
 test('persists dispatches and returns the same record for an idempotent request', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uac-dispatch-'))
@@ -23,6 +23,7 @@ test('persists dispatches and returns the same record for an idempotent request'
     const first = createDispatch(input)
     const second = createDispatch(input)
     assert.equal(second.id, first.id)
+    assert.throws(() => createDispatch({ ...input, instruction: 'Otro encargo' }), /DISPATCH_REQUEST_CONFLICT/)
     assert.equal(findDispatch('director-dsa', 'request-1').documentId, 'pdf-1')
     const updated = updateDispatch(first.id, (record) => ({ ...record, status: 'DESPACHADO' }))
     assert.equal(updated.status, 'DESPACHADO')
@@ -31,6 +32,40 @@ test('persists dispatches and returns the same record for an idempotent request'
       recipients: record.recipients.map((recipient) => ({ ...recipient, status: 'DESPACHADO' })),
     }))
     assert.equal(listDispatchesForUser('head-dsa', 'jefe-unidad').length, 1)
+  } finally {
+    config.dispatchStorePath = previousPath
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('malformed storage is an explicit error and is never replaced by an empty dispatch list', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uac-dispatch-invalid-'))
+  const previousPath = config.dispatchStorePath
+  config.dispatchStorePath = path.join(directory, 'dispatches.json')
+  try {
+    fs.writeFileSync(config.dispatchStorePath, '{}', 'utf8')
+    assert.throws(() => listDispatchesForUser('head', 'jefe-unidad'), /DISPATCH_STORE_UNAVAILABLE/)
+    assert.equal(fs.readFileSync(config.dispatchStorePath, 'utf8'), '{}')
+  } finally {
+    config.dispatchStorePath = previousPath
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('legacy head assignments have stable origin IDs without mutating existing data on reads', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uac-dispatch-legacy-'))
+  const previousPath = config.dispatchStorePath
+  config.dispatchStorePath = path.join(directory, 'dispatches.json')
+  try {
+    const original = JSON.stringify([{ id: 'old-dispatch', documentId: 'original-uuid', senderUserId: 'director', senderDependency: 'dsa', instruction: 'Atender', createdAt: '2026-11-17T00:00:00Z', recipients: [{ userId: 'head', dependency: 'dsa', status: 'ASIGNADO', unit: null }] }])
+    fs.writeFileSync(config.dispatchStorePath, original, 'utf8')
+    const first = listDispatchesForUser('head', 'jefe-unidad', 'DSA')[0].recipients[0]
+    const second = listDispatchesForUser('head', 'jefe-unidad', 'DSA')[0].recipients[0]
+    assert.equal(first.id, second.id)
+    assert.equal(findAttentionAssignment('head', 'original-uuid', 'dsa', first.id).id, first.id)
+    assert.equal(findAttentionAssignment('another-head', 'original-uuid', 'dsa', first.id), null)
+    assert.equal(findAttentionAssignment('head', 'original-uuid', 'dti', first.id), null)
+    assert.equal(fs.readFileSync(config.dispatchStorePath, 'utf8'), original)
   } finally {
     config.dispatchStorePath = previousPath
     fs.rmSync(directory, { recursive: true, force: true })

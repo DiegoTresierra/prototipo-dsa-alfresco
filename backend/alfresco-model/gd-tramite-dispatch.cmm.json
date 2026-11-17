@@ -1,0 +1,41 @@
+{
+  "name": "tramite",
+  "properties": [
+    {
+      "name": "asignaciones",
+      "title": "Asignaciones del documento",
+      "description": "JSON versionado de despachos, asignaciones equivalentes e historial. Fuente de verdad del despacho interno.",
+      "dataType": "d:text",
+      "multiValued": false,
+      "mandatory": false,
+      "mandatoryEnforced": false,
+      "indexed": false,
+      "facetable": "FALSE",
+      "indexTokenisationMode": "FALSE"
+    },
+    {
+      "name": "responsablesActuales",
+      "title": "Responsables actuales equivalentes",
+      "description": "Proyección única de usuarios con asignaciones vigentes. Sin responsable principal ni correspondencia posicional con dependencias.",
+      "dataType": "d:text",
+      "multiValued": true,
+      "mandatory": false,
+      "mandatoryEnforced": false,
+      "indexed": true,
+      "facetable": "FALSE",
+      "indexTokenisationMode": "FALSE"
+    },
+    {
+      "name": "dependenciasResponsablesActuales",
+      "title": "Dependencias responsables actuales",
+      "description": "Proyección sin duplicados de dependencias con asignaciones vigentes. Las relaciones completas están en gd:asignaciones.",
+      "dataType": "d:text",
+      "multiValued": true,
+      "mandatory": false,
+      "mandatoryEnforced": false,
+      "indexed": true,
+      "facetable": "FALSE",
+      "indexTokenisationMode": "FALSE"
+    }
+  ]
+}

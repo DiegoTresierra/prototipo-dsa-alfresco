@@ -16,6 +16,8 @@ dist-ssr
 !.env.example
 backend/data/dispatches.json
 backend/data/document-numbers.json
+backend/data/dispatch-pilot.lock
+backend/data/model-backups/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import { PanelPage } from '../components/PanelPage'
 import { PdfPreview } from '../components/PdfPreview'
 import { Icon } from '../components/Icon'
+import { DispatchPanel } from '../components/DispatchPanel'
 import { documentPriority } from '../utils/documentViews'
+import { eligibleDispatchRecipients } from '../utils/dispatchRecipients'
+import { documentResponsibilities } from '../utils/dispatchPersistence'
 
 function normalize(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim()
@@ -22,8 +25,10 @@ function assignmentColor(value) {
 function assignmentUnits(dispatch) {
   return [...new Map((dispatch?.recipients || []).map((recipient) => {
     const unit = recipient.unit
-    const label = unit?.name || unit?.acronym || unit?.code || ''
-    const key = unit?.code || unit?.acronym || label
+    const person = recipient.displayName || recipient.userId || ''
+    const unitLabel = unit?.name || unit?.acronym || unit?.code || ''
+    const label = person && unitLabel ? `${person} · ${unitLabel}` : person || unitLabel
+    const key = recipient.userId || label
     return [key, { key, label, color: assignmentColor(key) }]
   }).filter(([, unit]) => unit.label))]
     .map(([, unit]) => unit)
@@ -37,46 +42,9 @@ function DocumentDate({ value }) {
     <small>{date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}</small>
   </time>
 }
-function DispatchPanel({ document, unitHeads, loading, error, onDispatch }) {
-  const [selectedIds, setSelectedIds] = useState([])
-  const [instruction, setInstruction] = useState('')
-  const [priority, setPriority] = useState('Normal')
-  const [submitting, setSubmitting] = useState(false)
-  const [message, setMessage] = useState('')
-  const [requestKey] = useState(() => `${Date.now()}-${Math.random().toString(36).slice(2)}`)
-  const toggleRecipient = (id) => setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])
-  const submit = async (event) => {
-    event.preventDefault()
-    if (!selectedIds.length || !instruction.trim()) {
-      setMessage('Selecciona al menos una jefatura e indica la instrucción del encargo.')
-      return
-    }
-    setSubmitting(true)
-    setMessage('')
-    try {
-      await onDispatch(document.id, selectedIds, instruction.trim(), priority, requestKey)
-      setMessage('Despacho registrado correctamente.')
-    } catch (dispatchError) {
-      setMessage(dispatchError.message)
-    } finally {
-      setSubmitting(false)
-    }
-  }
-  return <form className="dispatch-panel" onSubmit={submit}>
-    <h3>Despachar a jefaturas</h3>
-    <p>Documento: <strong>{document.subject || document.attachmentName}</strong></p>
-    {loading && <p className="form-message" role="status">Consultando jefaturas autorizadas...</p>}
-    {error && <p className="form-message form-message--error" role="alert">{error}</p>}
-    {!loading && !error && unitHeads.length === 0 && <p className="form-message" role="status">No hay jefaturas con bandeja institucional configurada.</p>}
-    <fieldset className="dispatch-panel__recipients"><legend>Jefaturas destinatarias</legend>{unitHeads.map((head) => <label className="dispatch-panel__recipient" key={head.id}><input checked={selectedIds.includes(head.id)} onChange={() => toggleRecipient(head.id)} type="checkbox" /><span><strong>{head.displayName}</strong><small>{head.unit?.name || head.unit?.code || head.dependency}</small></span></label>)}</fieldset>
-    <label className="form-field"><span>Instrucción de atención</span><textarea maxLength="2000" onChange={(event) => setInstruction(event.target.value)} required rows="3" value={instruction} /></label>
-    <label className="form-field"><span>Prioridad</span><select onChange={(event) => setPriority(event.target.value)} value={priority}><option>Normal</option><option>Alta</option><option>Urgente</option></select></label>
-    {message && <p className="form-message" role="status">{message}</p>}
-    <button className="button-primary" disabled={submitting || loading || !unitHeads.length} type="submit">{submitting ? 'Despachando...' : 'Confirmar despacho'}</button>
-  </form>
-}
-export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '', canDispatch = false, unitHeads = [], unitHeadsLoading = false, unitHeadsError = '', onDispatch, dispatchRecords = [], openDocumentId = '', onDocumentPreviewClose }) {
+export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '', canDispatch = false, recipients = [], recipientRoles = [], recipientsLoading = false, recipientsError = '', onDispatch, dispatchRecords = [], openDocumentId = '', onDocumentPreviewClose }) {
   const [selectedDocumentId, setSelectedDocumentId] = useState('')
+  const [pendingRecipient, setPendingRecipient] = useState(null)
   const [query, setQuery] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [sortOrder, setSortOrder] = useState('newest')
@@ -85,6 +53,18 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
   }, [openDocumentId])
   const isSent = mode === 'sent'
   const isAttention = mode === 'attention'
+  const dispatchRecipients = canDispatch ? eligibleDispatchRecipients(recipients, recipientRoles) : []
+  const chooseAssignee = (documentId, value) => {
+    if (value.startsWith('dispatch:')) {
+      const recipientId = value.slice('dispatch:'.length)
+      if (!dispatchRecipients.some((recipient) => recipient.id === recipientId)) return
+      setPendingRecipient({ documentId, recipientId })
+      setSelectedDocumentId(documentId)
+      return // Choosing a candidate never sends a dispatch or changes personal attention.
+    }
+    setPendingRecipient(null)
+    onPersonalAttentionChange?.(documentId, value === 'self')
+  }
   if (!allowAlfresco) {
     return <PanelPage description={description} title={title}><p className="form-message" role="status">La consulta requiere una sesión autenticada con permiso de lectura.</p></PanelPage>
   }
@@ -121,6 +101,7 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
       </header>
       {inbox.error && <p className="form-message form-message--error" role="alert">{inbox.error}</p>}
       {assignmentError && <p className="form-message form-message--error" role="alert">{assignmentError}</p>}
+      {canDispatch && recipientsError && <p className="form-message form-message--error" role="alert">{recipientsError}</p>}
       <div className="received-inbox__filters" aria-label="Organizar documentos recibidos">
         <label className="form-field received-inbox__search"><span>Buscar documento</span><input onChange={(event) => setQuery(event.target.value)} placeholder={isSent ? 'Asunto, archivo o destinatario' : 'Asunto, archivo o remitente'} type="search" value={query} /></label>
         <label className="form-field"><span>Prioridad</span><select onChange={(event) => setPriorityFilter(event.target.value)} value={priorityFilter}><option value="all">Todas las prioridades</option><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option><option value="unknown">No registrada</option></select></label>
@@ -133,21 +114,21 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
           <tbody>{visibleDocuments.length === 0 ? <tr><td colSpan={isSent ? 5 : 7} className="received-inbox__empty">{emptyMessage}</td></tr> : visibleDocuments.map((document) => {
             const priority = priorityOf(document)
             const subject = document.subject || document.attachmentName || 'Documento sin título'
-            const documentDispatch = dispatchRecords.find((dispatch) => dispatch.documentId === document.id)
+            const documentDispatch = { recipients: documentResponsibilities(dispatchRecords, document.id) }
             const assignedUnits = assignmentUnits(documentDispatch)
             return <tr className={selectedDocumentId === document.id ? 'document-table__row--selected' : ''} key={document.id}>
               <td><div className="received-inbox__document">{assignedUnits.length > 0 && <span aria-label={'Asignado a: ' + assignedUnits.map((unit) => unit.label).join(', ')} className="document-assignment-markers" title={assignedUnits.map((unit) => unit.label).join(', ')}>{assignedUnits.map((unit) => <i key={unit.key} style={{ '--assignment-color': unit.color }} />)}</span>}<span className="received-inbox__file-icon"><Icon name="file" size={21} /></span><div><button className="document-link received-inbox__subject" onClick={() => setSelectedDocumentId(document.id)} type="button">{subject}</button><span className="table-secondary">{document.attachmentName}</span>{document.description && <p className="received-inbox__description">{document.description}</p>}</div></div></td>
               <td>{isSent ? <><span className="received-inbox__sender">{document.recipientName || 'No registrado'}</span><span className="table-secondary">{document.recipientUnit || document.recipientDependencyId?.toLocaleUpperCase('es')}</span></> : <><span className="received-inbox__sender">{document.sender || 'No registrado'}</span>{document.originatingDependency && <span className="table-secondary">{document.originatingDependency}</span>}</>}</td>
               <td><DocumentDate value={isSent ? document.emissionDate || document.createdAt : document.createdAt} /></td>{!isSent && <td><DocumentDate value={document.receivedAt} /></td>}
               <td><span className={'inbox-priority inbox-priority--' + priority.className} title={document.prioritySource === 'browser' || isSent ? 'Prioridad seleccionada al enviar, guardada en este navegador' : undefined}>{priority.label}</span></td>
-              {!isSent && <td><label className="form-field received-inbox__assignee"><select aria-label={'Asignar responsable a ' + subject} value={attentionIds.includes(document.id) ? 'self' : ''} disabled={!onPersonalAttentionChange} onChange={(event) => onPersonalAttentionChange(document.id, event.target.value === 'self')}><option value="">Sin seleccionar</option><option value="self">Para mí</option></select><small>{onPersonalAttentionChange ? 'Selección personal' : 'No disponible'}</small></label></td>}
+              {!isSent && <td><label className="form-field received-inbox__assignee"><select aria-label={'Asignar responsable a ' + subject} value={pendingRecipient?.documentId === document.id ? `dispatch:${pendingRecipient.recipientId}` : attentionIds.includes(document.id) ? 'self' : ''} disabled={!onPersonalAttentionChange && (!canDispatch || recipientsLoading || Boolean(recipientsError) || !dispatchRecipients.length)} onChange={(event) => chooseAssignee(document.id, event.target.value)}><option value="">Sin seleccionar</option><option disabled={!onPersonalAttentionChange} value="self">Para mí</option>{canDispatch && <optgroup disabled={recipientsLoading || Boolean(recipientsError)} label="Derivar a"><>{dispatchRecipients.map((recipient) => <option key={recipient.id} value={`dispatch:${recipient.id}`}>{recipient.displayName} · {recipient.functionalRole === 'jefe-unidad' ? 'Jefatura' : 'Especialista'}</option>)}</></optgroup>}</select><small>{canDispatch ? recipientsLoading ? 'Consultando destinatarios...' : 'Elige un destinatario y confirma en el formulario de derivación.' : onPersonalAttentionChange ? 'Selección personal' : 'No disponible'}</small></label></td>}
               <td><button className="button-secondary received-inbox__open" aria-label={'Ver PDF: ' + subject} onClick={() => setSelectedDocumentId(document.id)} type="button">Ver PDF</button></td>
             </tr>
           })}</tbody>
         </table>
       </div>
       <p className="received-inbox__data-note">{isSent ? 'Se muestran tus envíos confirmados y su prioridad guardada en este navegador.' : 'Tu selección Para mí se conserva en este navegador. La prioridad se muestra cuando el envío está registrado aquí. La fecha de recepción sigue pendiente de registro.'}</p>
-      {selectedDocument && <section aria-labelledby="document-preview-title" className="document-preview"><div className="document-preview__header"><div><p className="breadcrumb">Vista previa del documento</p><h2 id="document-preview-title">{selectedDocument.subject || selectedDocument.attachmentName}</h2></div><button className="button-secondary" onClick={() => { setSelectedDocumentId(''); onDocumentPreviewClose?.() }} type="button">Cerrar vista previa</button></div>{selectedDispatch && <div className="dispatch-summary"><strong>Encargo: {selectedDispatch.status}</strong><p><b>Instrucción:</b> {selectedDispatch.instruction}</p><p><b>Fecha:</b> {new Date(selectedDispatch.createdAt).toLocaleString('es-PE')} · <b>Prioridad:</b> {selectedDispatch.priority}</p></div>}{canDispatch && <DispatchPanel document={selectedDocument} error={unitHeadsError} loading={unitHeadsLoading} onDispatch={onDispatch} unitHeads={unitHeads} />}<PdfPreview declaredMimeType={selectedDocument.mimeType || selectedDocument.attachmentType} fileName={selectedDocument.attachmentName} nodeId={selectedDocument.id} /></section>}
+      {selectedDocument && <section aria-labelledby="document-preview-title" className="document-preview"><div className="document-preview__header"><div><p className="breadcrumb">Vista previa del documento</p><h2 id="document-preview-title">{selectedDocument.subject || selectedDocument.attachmentName}</h2></div><button className="button-secondary" onClick={() => { setSelectedDocumentId(''); setPendingRecipient(null); onDocumentPreviewClose?.() }} type="button">Cerrar vista previa</button></div>{selectedDispatch && <div className="dispatch-summary"><strong>Encargo: {selectedDispatch.status}</strong><p><b>Instrucción:</b> {selectedDispatch.instruction}</p><p><b>Fecha:</b> {new Date(selectedDispatch.createdAt).toLocaleString('es-PE')} · <b>Prioridad:</b> {selectedDispatch.priority}</p></div>}{canDispatch && <DispatchPanel key={`${selectedDocument.id}:${pendingRecipient?.documentId === selectedDocument.id ? pendingRecipient.recipientId : ''}`} document={selectedDocument} error={recipientsError} loading={recipientsLoading} onDispatch={onDispatch} recipients={recipients} allowedRecipientRoles={recipientRoles} initialRecipientIds={pendingRecipient?.documentId === selectedDocument.id ? [pendingRecipient.recipientId] : []} />}<PdfPreview declaredMimeType={selectedDocument.mimeType || selectedDocument.attachmentType} fileName={selectedDocument.attachmentName} nodeId={selectedDocument.id} /></section>}
     </section>
   )
 }
