@@ -10,7 +10,7 @@ const directorMenu = [
   item('mis-documentos', 'Mis documentos', 'Consulta los originales de tu dependencia creados por tu usuario.', 'archive'),
   item('aprobar-cierres', 'Aprobar cierres', 'Consulta de cierres cuando el flujo correspondiente esté conectado.'),
   item('seguimiento', 'Seguimiento', 'Consulta estados publicados por Alfresco.', 'chart'),
-  item('gestion-jerarquia', 'Gestión de jerarquía', 'Administración de usuarios cuando el directorio institucional esté conectado.', 'users'),
+  item('gestion-jerarquia', 'Ajustes', 'Administra la organización documental de tu oficina.', 'users'),
 ]
 
 const directorRole = { id: 'director', label: 'Director', menu: directorMenu }
