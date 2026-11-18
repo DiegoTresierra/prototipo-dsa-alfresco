@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test src/*.test.js",
-    "dev": "node --watch src/index.js",
+    "dev": "node --watch-path=src src/index.js",
     "start": "node src/index.js",
     "test:resolver": "node --test src/roleResolver.test.js"
   },

@@ -103,6 +103,7 @@ export const config = {
   dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'alfresco',
   dispatchPilot: dispatchPilotSettings(),
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
+  organizationStorePath: process.env.ORGANIZATION_STORE_PATH || path.join(backendRoot, 'data', 'organization.json'),
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',
     password: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME

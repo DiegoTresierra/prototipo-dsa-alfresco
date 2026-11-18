@@ -45,12 +45,12 @@ function DirectorHome({ office, sent, received }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, alfrescoDocuments = [], office, localScopeId, allowAlfresco = false, inbox }) {
+export function DirectorWorkspacePage({ title, description, activePanel, alfrescoDocuments = [], office, localScopeId, allowAlfresco = false, inbox, csrfToken }) {
   const sent = ownSentDocuments(alfrescoDocuments, office.userId)
   const received = inbox?.documents || []
 
   if (activePanel === 'inicio') return <DirectorHome office={office} received={received} sent={sent} />
-  if (activePanel === 'gestion-jerarquia') return <HierarchyManagementPage localScopeId={localScopeId} office={office} />
+  if (activePanel === 'gestion-jerarquia') return <HierarchyManagementPage csrfToken={csrfToken} localScopeId={localScopeId} office={office} />
   if (['documentos-recibidos', 'para-conocimiento', 'para-atencion'].includes(activePanel)) {
     return <DirectorPage allowAlfresco={allowAlfresco} description={description} inbox={inbox} title={title} />
   }

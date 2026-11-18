@@ -49,6 +49,47 @@ export async function listDispatchRecipients() {
   return { recipients: result.recipients, allowedRecipientRoles: result.allowedRecipientRoles || [] }
 }
 
+async function hierarchyRequest(url, options = {}) {
+  const { csrfToken, ...fetchOptions } = options
+  const response = await apiFetch(url, {
+    credentials: 'include',
+    ...fetchOptions,
+    headers: {
+      Accept: 'application/json',
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+      ...(fetchOptions.body ? { 'Content-Type': 'application/json' } : {}),
+      ...fetchOptions.headers,
+    },
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const messages = {
+      DIRECTOR_HIERARCHY_REQUIRED: 'Solo la Dirección autorizada de esta dependencia puede administrar su oficina.',
+      DISPATCH_DIRECTORY_CREDENTIALS_REQUIRED: 'Falta configurar la cuenta de consulta del directorio de Alfresco.',
+      GROUP_MAPPINGS_REQUIRED: 'Faltan los grupos institucionales de dependencia y función.',
+      DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED: 'Alfresco devolvió subgrupos; el directorio requiere revisar la política de membresías.',
+      HIERARCHY_MEMBER_NOT_ALLOWED: 'Uno de los usuarios no pertenece al grupo funcional de este carril en tu dependencia.',
+      HIERARCHY_UNIT_HEAD_NOT_ALLOWED: 'La jefatura seleccionada para el especialista ya no pertenece a la jerarquía de la oficina.',
+      INVALID_HIERARCHY_ASSIGNMENTS: 'La estructura enviada no tiene un formato válido.',
+      HIERARCHY_DIRECTORY_UNAVAILABLE: 'No se pudo consultar el directorio institucional de Alfresco.',
+      HIERARCHY_STORE_UNAVAILABLE: 'No se pudo leer o guardar la estructura de la oficina en el BFF.',
+      HIERARCHY_SAVE_FAILED: 'No se pudo guardar la estructura de la oficina.',
+    }
+    const error = new Error(messages[body.error] || body.error || `La consulta de oficina falló (HTTP ${response.status}).`)
+    error.code = body.error
+    error.status = response.status
+    throw error
+  }
+  return body
+}
+
+export const getHierarchy = () => hierarchyRequest('/api/hierarchy')
+export const saveHierarchy = (assignments, csrfToken) => hierarchyRequest('/api/hierarchy', {
+  method: 'PUT',
+  csrfToken,
+  body: JSON.stringify({ assignments }),
+})
+
 export async function getAssignmentInbox() {
   return loadAssignmentInbox(apiFetch, nodeToDocument)
 }

@@ -10,6 +10,7 @@ import { authenticateBasic, authenticateBearer, buildAlfrescoUrl, getAlfrescoGro
 import { createDispatchRepository } from './dispatchRepository.js'
 import { acquirePilotLease } from './dispatchPilot.js'
 import { allowedRecipientRoles, canDispatch, dispatchIdentity, validateDispatchRequest } from './dispatchPolicy.js'
+import { getHierarchyAssignments, replaceHierarchyAssignments } from './organizationStore.js'
 import { reserveDocumentNumber } from './numberingStore.js'
 import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSession, getSession } from './sessionStore.js'
 import { resolveRole } from './roleResolver.js'
@@ -391,6 +392,76 @@ function requireDeliveryLock(request, response, next) {
       })
     } catch (error) {
       return response.status(error.status || 502).json({ error: error.message || 'UNIT_HEAD_DIRECTORY_UNAVAILABLE' })
+    }
+  })
+
+  function requireOfficeHierarchy(request, response) {
+    if (request.session.authorizationStatus !== 'active' || request.session.functionalRole !== 'direccion' ||
+        !request.session.capabilities?.includes('documents:write') || !request.session.dependency) {
+      response.status(403).json({ error: 'DIRECTOR_HIERARCHY_REQUIRED' })
+      return false
+    }
+    return true
+  }
+
+  app.get('/api/hierarchy', requireSession, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    if (!requireOfficeHierarchy(request, response)) return
+    try {
+      const dependency = String(request.session.dependency).toLowerCase()
+      const directory = await loadDispatchDirectory(config)
+      return response.json({
+        dependency,
+        director: {
+          id: request.session.alfresco?.id || request.session.user?.id || '',
+          displayName: request.session.alfresco?.displayName || request.session.user?.name || request.session.user?.id || 'Director',
+        },
+        recipients: directory.recipients.filter((recipient) => recipient.dependency === dependency),
+        assignments: getHierarchyAssignments(dependency),
+      })
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.message || 'HIERARCHY_DIRECTORY_UNAVAILABLE' })
+    }
+  })
+
+  app.put('/api/hierarchy', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) {
+      return
+    }
+    const assignments = request.body?.assignments
+    if (!Array.isArray(assignments) || assignments.length > 500) {
+      return response.status(400).json({ error: 'INVALID_HIERARCHY_ASSIGNMENTS' })
+    }
+    try {
+      const dependency = String(request.session.dependency).toLowerCase()
+      const directory = await loadDispatchDirectory(config)
+      const eligible = new Map(directory.recipients
+        .filter((recipient) => recipient.dependency === dependency)
+        .map((recipient) => [recipient.id, recipient]))
+      const laneRoles = { jefes: 'jefe-unidad', especialistas: 'especialista' }
+      const seenUsers = new Set()
+      const assignedHeads = new Set(assignments
+        .filter((assignment) => assignment?.laneId === 'jefes')
+        .map((assignment) => String(assignment?.userId || '')))
+      for (const assignment of assignments) {
+        const laneRole = laneRoles[assignment?.laneId]
+        const recipient = eligible.get(String(assignment?.userId || ''))
+        if (!laneRole || !recipient || recipient.functionalRole !== laneRole || seenUsers.has(recipient.id)) {
+          return response.status(400).json({ error: 'HIERARCHY_MEMBER_NOT_ALLOWED' })
+        }
+        if (assignment.laneId === 'especialistas' && assignment.unitHeadUserId &&
+            (!assignedHeads.has(String(assignment.unitHeadUserId)) || eligible.get(String(assignment.unitHeadUserId))?.functionalRole !== 'jefe-unidad')) {
+          return response.status(400).json({ error: 'HIERARCHY_UNIT_HEAD_NOT_ALLOWED' })
+        }
+        seenUsers.add(recipient.id)
+      }
+      const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+      const saved = replaceHierarchyAssignments(dependency, assignments, actorId)
+      return response.json({ assignments: saved })
+    } catch (error) {
+      const status = error.status || (error.message === 'ORGANIZATION_STORE_UNAVAILABLE' ? 503 : 502)
+      const code = error.message === 'ORGANIZATION_STORE_UNAVAILABLE' ? error.message : 'HIERARCHY_SAVE_FAILED'
+      return response.status(status).json({ error: code })
     }
   })
 
