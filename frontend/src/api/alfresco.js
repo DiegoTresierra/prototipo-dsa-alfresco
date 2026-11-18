@@ -2,6 +2,7 @@ import { apiFetch } from './client'
 import { collectInboxPages } from '../utils/inboxPages'
 import { loadAssignmentInbox } from '../utils/assignmentInbox'
 import { dispatchPersistenceError, requireDispatchPersistence, withDispatchPersistence } from '../utils/dispatchPersistence'
+import { documentIdentity } from '../utils/documentIdentity'
 
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
@@ -166,6 +167,7 @@ function nodeToDocument(node) {
     sender: node.createdByUser?.displayName || node.createdByUser?.id || '',
     senderUserId: node.createdByUser?.id || '',
     originatingDependency: '',
+    documentIdentity: documentIdentity(node),
     unitName: '',
     specialistName: '',
     attachmentName: node.name,
@@ -198,9 +200,42 @@ export async function searchDocuments(query, options = {}) {
   return (response.list?.entries || []).map(({ entry }) => nodeToDocument(entry))
 }
 
-export function getNodeContent(nodeId) {
-  return requestBlob(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/content?attachment=false`)
+export function getNodeContent(nodeId, originalDocumentId) {
+  return requestBlob(originalDocumentId
+    ? `/api/documents/response-content?documentId=${encodeURIComponent(originalDocumentId)}&responseDocumentId=${encodeURIComponent(nodeId)}`
+    : `${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/content?attachment=false`)
 }
+
+async function attentionRequest(path, body, csrfToken) {
+  const response = await apiFetch(path, { method: body ? 'POST' : 'GET', credentials: 'include', cache: 'no-store',
+    headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}) })
+  const result = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const messages = {
+      ATTENTION_ASSIGNMENT_NOT_OWNED: 'Solo puedes atender tus propias asignaciones.',
+      ATTENTION_REQUIRED: 'Tu sesión no está autorizada para registrar atención individual.',
+      INVALID_ATTENTION_REQUEST: 'La solicitud de atención o vinculación no tiene un formato válido.',
+      ASSIGNMENT_NOT_ACTIVE: 'La asignación ya no está vigente. Actualiza la bandeja.',
+      RESPONSE_EMISSION_NOT_ALLOWED: 'Tu rol no tiene una emisión institucional habilitada para responder.',
+      RESPONSE_NOT_OWN_EMISSION: 'Selecciona un PDF emitido por tu usuario en Emitidos de tu dependencia.',
+      RESPONSE_UPDATE_DENIED: 'Alfresco no permite actualizar tu documento de respuesta. No se cambiarán permisos.',
+      RESPONSE_REFERENCE_DENIED: 'Alfresco denegó crear la relación documental. No se cambiarán permisos.',
+      RESPONSE_ORIGIN_CONFLICT: 'El origen registrado de la respuesta no coincide con tu dependencia.',
+      RESPONSE_REFERENCE_MODEL_REQUIRED: 'La asociación estándar de referencia no está disponible en este repositorio.',
+      RESPONSE_ALREADY_LINKED: 'Esta respuesta ya está vinculada. Actualiza los documentos relacionados.',
+      RESPONSE_LINK_PARTIAL: 'La emisión existe, pero no se confirmó todo el vínculo. No vuelvas a emitir: reintenta con el mismo UUID y solicitud.',
+      ATTENTION_RESPONSE_NOT_LINKED: 'La respuesta no tiene un vínculo verificado con el original.',
+      ALFRESCO_ATTENTION_REQUIRED: 'La atención individual requiere persistencia Alfresco activa.',
+    }
+    throw new Error(dispatchPersistenceError(result.error, messages[result.error] || result.error || 'No se pudo registrar la atención.'))
+  }
+  return result
+}
+export const attendAssignment = (input, csrfToken) => attentionRequest('/api/documents/assignments/attend', input, csrfToken)
+export const linkAssignmentResponse = (input, csrfToken) => attentionRequest('/api/documents/assignments/response', input, csrfToken)
+export const listResponseCandidates = () => attentionRequest('/api/documents/response-candidates')
+export const getLinkedResponses = (documentId) => attentionRequest(`/api/documents/assignment-responses?documentId=${encodeURIComponent(documentId)}`)
 
 export async function uploadPdfToFolder(nodeId, file, { title, description }, csrfToken, recipientUserId) {
   if (!nodeId) throw new Error('No está configurada la bandeja personal del destinatario en Alfresco.')

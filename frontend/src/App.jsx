@@ -9,7 +9,7 @@ import { rolePages } from './pages'
 import { CONFIRMED_STORAGE_KEY, loadAlfrescoConfirmedDocuments, recordAlfrescoConfirmedDocument } from './utils/documentStore'
 import { getAuthStatus, getSession, logout } from './auth'
 import { LoginPage } from './components/LoginPage'
-import { dispatchDocument, getDirectorOfficeInboxes, listDispatches, listDispatchRecipients, uploadPdfToDirectorInbox, uploadPdfToFolder } from './api/alfresco'
+import { dispatchDocument, getDirectorOfficeInboxes, listDispatches, listDispatchRecipients, uploadPdfToDirectorInbox, uploadPdfToFolder, linkAssignmentResponse } from './api/alfresco'
 import { useAlfrescoInbox } from './hooks/useAlfrescoInbox'
 import { DirectorPage } from './pages/DirectorPage'
 import { JefeUnidadPage } from './pages/JefeUnidadPage'
@@ -67,6 +67,8 @@ function ApplicationShell({ session, onLogout }) {
   const [recipientsError, setRecipientsError] = useState('')
   const [dispatchRecords, setDispatchRecords] = useState([])
   const [dispatchError, setDispatchError] = useState('')
+  const [responseContext, setResponseContext] = useState(null)
+  const [responseNotice, setResponseNotice] = useState('')
   const assignmentRequestVersion = useRef(0)
   const loadAssignments = useCallback(async () => {
     const version = ++assignmentRequestVersion.current
@@ -242,6 +244,7 @@ function ApplicationShell({ session, onLogout }) {
   const handleNavigate = (panelId) => {
     if (!visibleMenu.some((item) => item.id === panelId)) return
     setActivePanel(panelId)
+    setResponseContext(null)
     setSelectedDocumentId('')
     setIsSidebarOpen(false)
   }
@@ -268,6 +271,20 @@ function ApplicationShell({ session, onLogout }) {
     setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
     window.dispatchEvent(new Event('uac:alfresco-document-created'))
     return dispatch
+  }
+
+  const handleAttentionChanged = (result) => {
+    assignmentRequestVersion.current++
+    if (result?.dispatch && result.persistence === 'alfresco') setDispatchRecords((current) => [
+      { ...result.dispatch, persistence: 'alfresco' }, ...current.filter((record) => record.id !== result.dispatch.id),
+    ])
+    window.dispatchEvent(new Event('uac:alfresco-document-created'))
+  }
+  const handleEmitResponse = (context) => {
+    if (!session.canIssueInstitutionalResponse) return
+    setResponseContext({ ...context, requestKey: globalThis.crypto.randomUUID() })
+    setResponseNotice('')
+    setActivePanel('nuevo-documento')
   }
 
   const handleDocumentSubmit = async (documentData) => {
@@ -334,6 +351,18 @@ function ApplicationShell({ session, onLogout }) {
         warning = 'Alfresco creó el documento, pero no se pudo guardar su resumen en este navegador.'
       }
       setAlfrescoDocuments(nextDocuments)
+      if (responseContext) {
+        try {
+          const linked = await linkAssignmentResponse({ ...responseContext, responseDocumentId: entry.id }, session.csrfToken)
+          handleAttentionChanged(linked)
+          setResponseNotice('Respuesta emitida y vinculada. La asignación sigue pendiente hasta que marques su atención.')
+        } catch (error) {
+          setResponseNotice(`El documento ${entry.id} ya fue emitido. No vuelvas a emitirlo. ${error.message} Puedes seleccionarlo desde la asignación original para revisar o recuperar el vínculo.`)
+        }
+        setSelectedDocumentId(responseContext.documentId)
+        setActivePanel('documentos-recibidos')
+        setResponseContext(null)
+      }
       window.dispatchEvent(new Event('uac:alfresco-document-created'))
       return { ok: true, document, warning }
     } catch (error) {
@@ -344,6 +373,9 @@ function ApplicationShell({ session, onLogout }) {
   }
 
   const ActivePage = rolePages[getDashboardRoleId(session)]
+  const attentionProps = { userId: currentOffice.userId, csrfToken: session.csrfToken,
+    canAttend: session.canAttendAssignments === true, canIssueResponse: session.canIssueInstitutionalResponse === true,
+    onAttentionChanged: handleAttentionChanged, onEmitResponse: handleEmitResponse }
   return (
     <div className="app-shell">
       <Sidebar activePanel={activePanel} collapsed={isSidebarCollapsed} isOpen={isSidebarOpen} items={visibleMenu} office={currentOffice} roleLabel={role.label} onNavigate={handleNavigate} onClose={() => setIsSidebarOpen(false)} onToggleCollapse={() => setIsSidebarCollapsed((collapsed) => !collapsed)} onLogout={onLogout} />
@@ -359,16 +391,16 @@ function ApplicationShell({ session, onLogout }) {
           onViewAllNotifications={handleViewAllNotifications}
           pendingNotificationMessage={canReadAlfresco ? 'Las tareas pendientes requieren un estado verificable del BFF.' : ''}
         />
-        <main className="main-content">{activePanel === 'notificaciones'
+        <main className="main-content">{responseNotice && <p className="form-message" role="status">{responseNotice}</p>}{activePanel === 'notificaciones'
           ? <NotificationsPage notifications={canReadAlfresco ? notificationData.notifications : []} onViewDocument={handleViewNotification} />
           : activePanel === 'nuevo-documento'
-          ? <DocumentForm allowAlfrescoUpload={canWriteAlfresco} csrfToken={session.csrfToken} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} />
+          ? <>{responseContext && <p className="form-message">Respuesta al documento {responseContext.documentId}. Emitir no marca la asignación como atendida.</p>}<DocumentForm allowAlfrescoUpload={canWriteAlfresco} csrfToken={session.csrfToken} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} /></>
           : isUnitHead && ['documentos-recibidos', 'derivaciones-enviadas'].includes(activePanel)
-            ? <JefeUnidadPage key={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} mode={activePanel === 'derivaciones-enviadas' ? 'sent' : 'received'} recipientRoles={recipientRoles} recipients={recipients} recipientsLoading={recipientsLoading} recipientsError={recipientsError} onDispatch={handleDispatch} />
+            ? <JefeUnidadPage key={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} mode={activePanel === 'derivaciones-enviadas' ? 'sent' : 'received'} recipientRoles={recipientRoles} recipients={recipients} recipientsLoading={recipientsLoading} recipientsError={recipientsError} onDispatch={handleDispatch} {...attentionProps} />
           : isSpecialist && ['documentos-recibidos', 'mis-asignaciones'].includes(activePanel)
-            ? <EspecialistaPage key={activePanel} activePanel={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} />
+            ? <EspecialistaPage key={activePanel} activePanel={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} {...attentionProps} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
-            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} />
+            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} {...attentionProps} />
           : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>

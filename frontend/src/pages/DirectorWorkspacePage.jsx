@@ -29,7 +29,7 @@ function DirectorHome({ office, sent, received }) {
         {recent.length === 0 ? <div className="empty-state">No hay documentos confirmados por Alfresco para mostrar.</div> : (
           <div className="table-scroll">
             <table className="document-table director-activity__table">
-              <thead><tr><th>Archivo</th><th>Asunto</th><th>Remitente</th><th>Fecha</th><th>Estado</th></tr></thead>
+              <thead><tr><th>Archivo</th><th>Asunto</th><th>Creado por</th><th>Fecha</th><th>Estado</th></tr></thead>
               <tbody>{recent.map((document) => (
                 <tr key={document.id}>
                   <td>{document.attachmentName || '—'}</td><td>{document.subject || '—'}</td>

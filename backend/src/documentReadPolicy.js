@@ -60,7 +60,9 @@ async function assignedIds(context) {
   const { session } = context
   try {
     context.assignedIds = new Set((await context.listDispatches(userId(session), session.functionalRole, session.dependency, session))
-      .filter((record) => record.recipients.some((recipient) => isAttentionAssignment(recipient, userId(session), session.functionalRole, session.dependency)))
+      .filter((record) => record.recipients.some((recipient) => isAttentionAssignment(recipient, userId(session), session.functionalRole, session.dependency) ||
+        recipient.userId === userId(session) && recipient.functionalRole === session.functionalRole &&
+        recipient.dependency === String(session.dependency).toLowerCase() && recipient.status === 'ATENDIDO'))
       .map((record) => record.documentId))
     return context.assignedIds
   } catch (error) { fail(/^DISPATCH_[A-Z_]+$/.test(error.message) ? error.message : 'DISPATCH_STORE_UNAVAILABLE', 503) }

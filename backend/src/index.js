@@ -15,6 +15,7 @@ import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSes
 import { resolveRole } from './roleResolver.js'
 import { loadDispatchDirectory } from './dispatchDirectory.js'
 import { authorizeNodeRead, filterDocumentCollection, validateDocumentReadRequest } from './documentReadPolicy.js'
+import { canAttendSession, canIssueResponse, validateAttentionInput } from './attentionPolicy.js'
 
 const app = express()
 const dispatchRepository = createDispatchRepository(config)
@@ -82,6 +83,8 @@ function publicSession(session) {
     authorizationStatus: session.authorizationStatus,
     capabilities: session.capabilities,
     dispatchRecipientRoles: allowedRecipientRoles(session),
+    canAttendAssignments: canAttendSession(session),
+    canIssueInstitutionalResponse: canIssueResponse(session),
     csrfToken: session.csrfToken,
     expiresAt: session.expiresAt,
   }
@@ -421,6 +424,49 @@ function requireDeliveryLock(request, response, next) {
     } catch (error) {
       return response.status(error.status || 503).json({ error: error.message || 'DISPATCH_STORE_UNAVAILABLE' })
     }
+  })
+
+  app.post(['/api/documents/assignments/attend', '/api/documents/assignments/response'], requireSession, requireCsrf, async (request, response) => {
+    try {
+      if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
+      if (!canAttendSession(request.session)) return response.status(403).json({ error: 'ATTENTION_REQUIRED' })
+      const input = validateAttentionInput(request.body, request.path.endsWith('/response'))
+      const result = request.path.endsWith('/response') ? await dispatchRepository.linkResponse(input, request.session)
+        : await dispatchRepository.attendAssignment(input, request.session)
+      return response.json({ ...result, persistence: 'alfresco' })
+    } catch (error) {
+      return response.status(error.status || 502).json({ error: error.message || 'ATTENTION_FAILED',
+        ...(error.responseDocumentId ? { responseDocumentId: error.responseDocumentId } : {}) })
+    }
+  })
+
+  app.get('/api/documents/response-candidates', requireSession, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    try {
+      if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
+      return response.json({ documents: await dispatchRepository.listResponseCandidates(request.session) })
+    } catch (error) { return response.status(error.status || 502).json({ error: error.message || 'RESPONSE_READ_FAILED' }) }
+  })
+
+  app.get(['/api/documents/assignment-responses', '/api/documents/response-content'], requireSession, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    try {
+      if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
+      const documentId = request.query.documentId
+      if (typeof documentId !== 'string' || !/^[A-Za-z0-9-]+$/.test(documentId) || request.session.authorizationStatus !== 'active' || !request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+      const context = { session: request.session, settings: config, listDispatches: listDispatchesForUser }
+      if (['jefe-unidad', 'especialista'].includes(request.session.functionalRole) && !await authorizeNodeRead(context, documentId)) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+      const bundle = await dispatchRepository.relatedResponses(documentId, request.session)
+      if (request.path.endsWith('/assignment-responses')) return response.json(bundle)
+      const linked = bundle.responses.find((entry) => entry.documentId === request.query.responseDocumentId && entry.available)
+      if (!linked) return response.status(403).json({ error: 'RESPONSE_READ_NOT_ALLOWED' })
+      const content = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(linked.documentId)}/content`), {
+        method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { Authorization: request.session.authorization },
+      })
+      if (!content.ok) return response.status(content.status).json({ error: 'RESPONSE_READ_NOT_ALLOWED' })
+      if (!content.headers.get('content-type')?.startsWith('application/pdf')) return response.status(415).json({ error: 'PDF_REQUIRED' })
+      return response.type('application/pdf').set('Content-Disposition', 'attachment').send(Buffer.from(await content.arrayBuffer()))
+    } catch (error) { return response.status(error.status || 502).json({ error: error.message || 'RESPONSE_READ_FAILED' }) }
   })
 
   app.post('/api/documents/numbers', requireSession, requireCsrf, requireDeliveryLock, (request, response) => {

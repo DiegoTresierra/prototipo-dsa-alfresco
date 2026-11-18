@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { buildAlfrescoUrl } from './alfrescoClient.js'
 import { createDocumentQueue } from './documentQueue.js'
-import { verifyPilotDocumentScope } from './dispatchPilotScope.js'
+import { verifyPilotDocumentScope, verifyAttentionDocumentScope, belongsToFolder } from './dispatchPilotScope.js'
 import { mapConcurrent } from './mapConcurrent.js'
+import { assignmentIsActive, canAttendSession, canIssueResponse, ownsAssignment, attentionSummary } from './attentionPolicy.js'
+import { documentIdentity } from './documentIdentity.js'
+import { allowedRecipientRoles } from './dispatchPolicy.js'
 
 export const assignmentProperty = 'gd:asignaciones'
 export const responsibleProperty = 'gd:responsablesActuales'
@@ -23,7 +26,7 @@ export function parseAssignments(raw, documentId) {
   let value
   try { value = JSON.parse(raw) } catch { fail('DISPATCH_INVALID_ASSIGNMENTS') }
   if (value?.schemaVersion !== 1 || value.documentId !== documentId || !Number.isSafeInteger(value.revision) || value.revision < 0 ||
-      !Array.isArray(value.dispatches) || !Array.isArray(value.history)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      !Array.isArray(value.dispatches) || !Array.isArray(value.history) || value.responses !== undefined && !Array.isArray(value.responses)) fail('DISPATCH_INVALID_ASSIGNMENTS')
   const ids = new Set()
   const keys = new Set()
   const assignments = new Map()
@@ -42,7 +45,7 @@ export function parseAssignments(raw, documentId) {
     for (const recipient of record.recipients) {
       if (!recipient || typeof recipient !== 'object') fail('DISPATCH_INVALID_ASSIGNMENTS')
       if (!text(recipient.id) || assignments.has(recipient.id) || !text(recipient.userId) || users.has(recipient.userId) ||
-          !['jefe-unidad', 'especialista'].includes(recipient.functionalRole) || recipient.dependency !== record.senderDependency ||
+          !['direccion', 'jefe-unidad', 'especialista'].includes(recipient.functionalRole) || recipient.dependency !== record.senderDependency ||
           record.senderRole === 'jefe-unidad' && recipient.functionalRole !== 'especialista' ||
           !['ASIGNADO', 'DESPACHADO', 'ATENDIDO', 'ANULADO'].includes(recipient.status) ||
           recipient.documentId !== documentId || recipient.dispatchId !== record.id || !date(recipient.createdAt) ||
@@ -51,6 +54,13 @@ export function parseAssignments(raw, documentId) {
           recipient.instruction !== record.instruction) fail('DISPATCH_INVALID_ASSIGNMENTS')
       users.add(recipient.userId)
       assignments.set(recipient.id, recipient)
+      if (recipient.responses !== undefined && !Array.isArray(recipient.responses)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      if (recipient.attendedAt !== undefined && (!date(recipient.attendedAt) || recipient.attendedByUserId !== recipient.userId || recipient.status !== 'ATENDIDO')) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      for (const response of recipient.responses || []) {
+        if (!text(response.documentId) || response.documentId === documentId || response.originalDocumentId !== documentId ||
+            response.linkedByUserId !== recipient.userId || !dependencies.includes(response.emitterDependency) ||
+            !text(response.emittedByUserId) || !date(response.linkedAt)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      }
     }
   }
   for (const record of value.dispatches) {
@@ -61,17 +71,40 @@ export function parseAssignments(raw, documentId) {
         Date.parse(origin.createdAt) > Date.parse(record.createdAt)) fail('DISPATCH_INVALID_ASSIGNMENTS')
   }
   const eventIds = new Set()
+  const operationKeys = new Set()
+  for (const response of value.responses || []) {
+    if (!text(response.documentId) || response.documentId === documentId || response.originalDocumentId !== documentId ||
+        !text(response.linkedByUserId) || response.emittedByUserId !== response.linkedByUserId ||
+        !dependencies.includes(response.emitterDependency) || !date(response.linkedAt)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+  }
   for (const event of value.history) {
     if (!event || typeof event !== 'object') fail('DISPATCH_INVALID_ASSIGNMENTS')
     if (!text(event.id) || eventIds.has(event.id) || !text(event.actorUserId) || !date(event.at) ||
-        event.action !== 'DISPATCH_CREATED' || !ids.has(event.dispatchId) || !Array.isArray(event.assignmentIds) ||
+        !['DISPATCH_CREATED', 'ASSIGNMENT_ATTENDED', 'RESPONSE_LINKED', 'DOCUMENT_RESPONSE_LINKED'].includes(event.action) ||
+        event.action !== 'DOCUMENT_RESPONSE_LINKED' && !ids.has(event.dispatchId) || !Array.isArray(event.assignmentIds) ||
         event.assignmentIds.some((id) => !assignments.has(id) || assignments.get(id).dispatchId !== event.dispatchId)) fail('DISPATCH_INVALID_ASSIGNMENTS')
     eventIds.add(event.id)
+    if (event.action !== 'DISPATCH_CREATED') {
+      const key = JSON.stringify([event.actorUserId, event.requestKey])
+      if (operationKeys.has(key)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      operationKeys.add(key)
+    }
+    if (event.action === 'DOCUMENT_RESPONSE_LINKED') {
+      if (event.assignmentIds.length || !text(event.requestKey) || !value.responses?.some((response) => response.documentId === event.responseDocumentId && response.linkedByUserId === event.actorUserId && response.linkedAt === event.at)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+    } else if (event.action !== 'DISPATCH_CREATED') {
+      const assignment = assignments.get(event.assignmentIds[0])
+      if (event.assignmentIds.length !== 1 || !text(event.requestKey) || event.actorUserId !== assignment?.userId) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      if (event.action === 'ASSIGNMENT_ATTENDED' && (assignment.status !== 'ATENDIDO' || assignment.attendedAt !== event.at || assignment.attendedByUserId !== event.actorUserId)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      if (event.action === 'RESPONSE_LINKED' && !assignment.responses?.some((response) => response.documentId === event.responseDocumentId && response.linkedAt === event.at)) fail('DISPATCH_INVALID_ASSIGNMENTS')
+    }
   }
   // Every assignment must have a traceable creation event.
   for (const record of value.dispatches) {
-    if (!value.history.some((event) => event.dispatchId === record.id && event.actorUserId === record.senderUserId &&
+    if (!value.history.some((event) => event.action === 'DISPATCH_CREATED' && event.dispatchId === record.id && event.actorUserId === record.senderUserId &&
       record.recipients.every((recipient) => event.assignmentIds.includes(recipient.id)))) fail('DISPATCH_INVALID_ASSIGNMENTS')
+  }
+  for (const response of value.responses || []) {
+    if (!value.history.some((event) => event.action === 'DOCUMENT_RESPONSE_LINKED' && event.responseDocumentId === response.documentId && event.actorUserId === response.linkedByUserId && event.at === response.linkedAt)) fail('DISPATCH_INVALID_ASSIGNMENTS')
   }
   return value
 }
@@ -103,7 +136,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
   async function request(path, { authorization = serviceAuthorization(), method = 'GET', body, query = '' } = {}) {
     let response
     try {
-      const url = path === '/service/api/classes/gd_tramite'
+      const url = ['/service/api/classes/gd_tramite', '/service/api/classes/cm_referencing'].includes(path)
         ? `${settings.alfrescoTarget}/alfresco${path}` : buildAlfrescoUrl(settings.alfrescoTarget, path, query)
       response = await fetchImpl(url, {
         method, redirect: 'error', signal: AbortSignal.timeout(15_000),
@@ -149,6 +182,8 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     assertWriteEnabled()
     await assertModel()
     if (!session?.authorization || input.senderUserId !== (session.alfresco?.id || session.user?.id)) fail('SESSION_IDENTITY_REQUIRED', 403)
+    if (input.senderRole !== session.functionalRole || input.senderDependency !== String(session.dependency).toLowerCase() ||
+        input.recipients.some((recipient) => !allowedRecipientRoles(session).includes(recipient.functionalRole) || recipient.dependency !== input.senderDependency)) fail('DISPATCH_RECIPIENT_NOT_ALLOWED', 403)
     const actor = await read(input.documentId, session.authorization) // Actor ACL cannot be bypassed by the writer.
     await verifyPilotDocumentScope(settings, session, actor.node, request)
     const { node, envelope, raw } = await read(input.documentId)
@@ -181,26 +216,204 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     const next = { ...envelope, revision: envelope.revision + 1, dispatches: [...envelope.dispatches, record],
       history: [...envelope.history, { id: randomUUID(), action: 'DISPATCH_CREATED', at, actorUserId: input.senderUserId,
         dispatchId: id, assignmentIds: record.recipients.map((recipient) => recipient.id) }] }
+    await persistEnvelope(input.documentId, next, raw)
+    return record
+  }
+  async function persistEnvelope(documentId, next, raw) {
     const serialized = JSON.stringify(next)
     if (Buffer.byteLength(serialized) > maxAssignmentBytes) fail('DISPATCH_ASSIGNMENTS_SIZE_LIMIT', 413)
-    parseAssignments(serialized, input.documentId)
+    parseAssignments(serialized, documentId)
     // Best-effort external-change detection, NOT compare-and-swap: a writer can still race after this GET.
-    const current = await read(input.documentId)
+    const current = await read(documentId)
     if (current.raw !== raw) fail('DISPATCH_EXTERNAL_MODIFICATION', 409)
     if (!current.node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
     const expected = { [assignmentProperty]: serialized, ...projections(next) }
-    await request(`${core}/nodes/${encodeURIComponent(input.documentId)}`, { method: 'PUT', body: {
+    await request(`${core}/nodes/${encodeURIComponent(documentId)}`, { method: 'PUT', body: {
       ...(current.node.aspectNames?.includes('gd:tramite') ? {} : { aspectNames: [...(current.node.aspectNames || []), 'gd:tramite'] }), properties: expected,
     } })
     let verified
-    try { verified = await read(input.documentId, undefined, false) } catch { fail('DISPATCH_WRITE_OUTCOME_UNKNOWN', 502) }
+    try { verified = await read(documentId, undefined, false) } catch { fail('DISPATCH_WRITE_OUTCOME_UNKNOWN', 502) }
     if (!verified.node.aspectNames?.includes('gd:tramite') || verified.raw !== serialized ||
         Object.entries(projections(next)).some(([key, value]) => !sameProjection(verified.node.properties?.[key], value))) fail('DISPATCH_WRITE_VERIFICATION_FAILED', 409)
-    return record
+    return verified.envelope
   }
   async function documentRecords(documentId) {
     await assertModel()
     return (await read(documentId)).envelope.dispatches
+  }
+  async function prepareAttention(input, session) {
+    assertWriteEnabled()
+    if (!canAttendSession(session)) fail('ATTENTION_REQUIRED', 403)
+    await assertModel()
+    const actor = await read(input.documentId, session.authorization)
+    await verifyAttentionDocumentScope(settings, session, actor.node, request)
+    const stored = await read(input.documentId)
+    if (!stored.node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
+    const record = stored.envelope.dispatches.find((dispatch) => dispatch.recipients.some((recipient) => recipient.id === input.assignmentId))
+    const assignment = record?.recipients.find((recipient) => recipient.id === input.assignmentId)
+    if (!assignment || !ownsAssignment(assignment, session)) fail('ATTENTION_ASSIGNMENT_NOT_OWNED', 403)
+    return { ...stored, record, assignment, actor: actor.node }
+  }
+  function previousOperation(value, input, session, action) {
+    const event = value.envelope.history.find((entry) => entry.actorUserId === (session.alfresco?.id || session.user?.id) && entry.requestKey === input.requestKey)
+    if (event && (event.action !== action || (event.assignmentIds[0] || null) !== (input.assignmentId || null) || (event.responseDocumentId || null) !== input.responseDocumentId)) fail('DISPATCH_REQUEST_CONFLICT', 409)
+    return event
+  }
+  function attentionResult(value, envelope = value.envelope) {
+    if (!value.record) return { dispatch: null, assignment: null, documentId: envelope.documentId, summary: attentionSummary(envelope) }
+    const record = envelope.dispatches.find((entry) => entry.id === value.record.id)
+    return { dispatch: { ...record, documentIdentity: documentIdentity(value.actor, settings) },
+      assignment: record.recipients.find((recipient) => recipient.id === value.assignment.id), summary: attentionSummary(envelope) }
+  }
+  async function referenceExists(responseId, originalId, authorization) {
+    let skipCount = 0
+    let more
+    do {
+      const payload = await request(`${core}/nodes/${encodeURIComponent(responseId)}/targets`, { authorization,
+        query: `?where=${encodeURIComponent("(assocType='cm:references')")}&maxItems=100&skipCount=${skipCount}` })
+      const list = payload?.list
+      if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
+      if (list.entries.some(({ entry }) => entry?.id === originalId && entry.association?.assocType === 'cm:references')) return true
+      more = list.pagination.hasMoreItems
+      skipCount += list.entries.length
+      if (skipCount > 10_000 || more && !list.entries.length) fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
+    } while (more)
+    return false
+  }
+  async function validateResponse(input, session) {
+    if (!canIssueResponse(session) || input.responseDocumentId === input.documentId || !input.responseDocumentId) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
+    const response = await read(input.responseDocumentId, session.authorization)
+    const folder = settings.officeInboxNodeIds?.[String(session.dependency).toUpperCase()]?.emitidos
+    if (response.node.nodeType !== 'cm:content' || response.node.createdByUser?.id !== (session.alfresco?.id || session.user?.id) || !folder ||
+        !await belongsToFolder(response.node.id, [folder], session.authorization, request)) fail('RESPONSE_NOT_OWN_EMISSION', 403)
+    const origin = response.node.properties?.['gd:dependenciaOrigen']
+    if (origin && String(origin).toLowerCase() !== String(session.dependency).toLowerCase()) fail('RESPONSE_ORIGIN_CONFLICT', 409)
+    return response.node
+  }
+  async function ensureResponseReference(input, session, node) {
+    if (await referenceExists(node.id, input.documentId, session.authorization)) return
+    if (!node.allowableOperations?.includes('update')) fail('RESPONSE_UPDATE_DENIED', 403)
+    const model = await request('/service/api/classes/cm_referencing')
+    if (model.associations?.['cm:references']?.target?.class !== 'cm:content') fail('RESPONSE_REFERENCE_MODEL_REQUIRED')
+    if (!node.aspectNames?.includes('cm:referencing')) {
+      try {
+        await request(`${core}/nodes/${encodeURIComponent(node.id)}`, { method: 'PUT', authorization: session.authorization,
+          body: { aspectNames: [...(node.aspectNames || []), 'cm:referencing'] } })
+      } catch (error) { if (error.status === 403) fail('RESPONSE_UPDATE_DENIED', 403); throw error }
+    }
+    // Existing generic Alfresco association; adds no permissions or document copies.
+    try {
+      await request(`${core}/nodes/${encodeURIComponent(node.id)}/targets`, { method: 'POST', authorization: session.authorization,
+        body: { targetId: input.documentId, assocType: 'cm:references' } })
+    } catch (error) {
+      if (error.status === 403) fail('RESPONSE_REFERENCE_DENIED', 403)
+      // A timeout or duplicate may already have created the association. Prove it by GET.
+      if (!await referenceExists(node.id, input.documentId, session.authorization)) throw error
+    }
+    if (!await referenceExists(node.id, input.documentId, session.authorization)) fail('RESPONSE_LINK_PARTIAL', 502)
+  }
+  async function attendAssignment(input, session) {
+    return withDocument(input.documentId, async () => {
+      const value = await prepareAttention(input, session)
+      if (previousOperation(value, input, session, 'ASSIGNMENT_ATTENDED')) return attentionResult(value)
+      if (!assignmentIsActive(value.assignment)) fail('ASSIGNMENT_NOT_ACTIVE', 409)
+      if (input.responseDocumentId) {
+        const links = [...(value.envelope.responses || []), ...value.envelope.dispatches.flatMap((dispatch) => dispatch.recipients).flatMap((assignment) => assignment.responses || [])]
+        if (!links.some((response) => response.documentId === input.responseDocumentId && response.linkedByUserId === value.assignment.userId)) fail('ATTENTION_RESPONSE_NOT_LINKED', 409)
+        await read(input.responseDocumentId, session.authorization)
+        if (!await referenceExists(input.responseDocumentId, input.documentId, session.authorization)) fail('ATTENTION_RESPONSE_NOT_LINKED', 409)
+      }
+      const next = structuredClone(value.envelope)
+      const assignment = next.dispatches.flatMap((dispatch) => dispatch.recipients).find((entry) => entry.id === input.assignmentId)
+      const at = new Date().toISOString()
+      assignment.status = 'ATENDIDO'
+      assignment.attendedAt = at
+      assignment.attendedByUserId = session.alfresco?.id || session.user?.id
+      next.revision++
+      next.history.push({ id: randomUUID(), action: 'ASSIGNMENT_ATTENDED', at, actorUserId: assignment.userId,
+        dispatchId: value.record.id, assignmentIds: [assignment.id], requestKey: input.requestKey,
+        responseDocumentId: input.responseDocumentId, mode: input.responseDocumentId ? 'response' : 'direct' })
+      await persistEnvelope(input.documentId, next, value.raw)
+      return attentionResult(value, next)
+    })
+  }
+  async function linkResponse(input, session) {
+    if (!canIssueResponse(session)) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
+    if (!input.responseDocumentId || input.responseDocumentId === input.documentId) fail('INVALID_RESPONSE_DOCUMENT', 400)
+    // Lock both UUIDs in stable order; never hold the same lock twice.
+    const ids = [input.documentId, input.responseDocumentId].sort()
+    return withDocument(ids[0], () => withDocument(ids[1], async () => {
+      let value
+      if (input.assignmentId) value = await prepareAttention(input, session)
+      else {
+        assertWriteEnabled(); await assertModel()
+        const actor = await read(input.documentId, session.authorization)
+        await verifyPilotDocumentScope(settings, session, actor.node, request)
+        value = { ...await read(input.documentId), actor: actor.node }
+        if (!value.node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
+      }
+      const action = input.assignmentId ? 'RESPONSE_LINKED' : 'DOCUMENT_RESPONSE_LINKED'
+      if (previousOperation(value, input, session, action)) {
+        await validateResponse(input, session)
+        if (!await referenceExists(input.responseDocumentId, input.documentId, session.authorization)) fail('RESPONSE_LINK_PARTIAL', 409)
+        return attentionResult(value)
+      }
+      if (value.assignment && !assignmentIsActive(value.assignment)) fail('ASSIGNMENT_NOT_ACTIVE', 409)
+      const existing = [...(value.envelope.responses || []), ...value.envelope.dispatches.flatMap((dispatch) => dispatch.recipients).flatMap((assignment) => assignment.responses || [])]
+      if (existing.some((response) => response.documentId === input.responseDocumentId)) fail('RESPONSE_ALREADY_LINKED', 409)
+      const response = await validateResponse(input, session)
+      const next = structuredClone(value.envelope)
+      const assignment = input.assignmentId ? next.dispatches.flatMap((dispatch) => dispatch.recipients).find((entry) => entry.id === input.assignmentId) : null
+      const at = new Date().toISOString()
+      const owner = assignment || next
+      owner.responses ||= []
+      owner.responses.push({ documentId: response.id, originalDocumentId: input.documentId, linkedAt: at,
+        linkedByUserId: session.alfresco?.id || session.user?.id, emitterDependency: String(session.dependency).toLowerCase(), emittedByUserId: response.createdByUser.id })
+      next.revision++
+      next.history.push({ id: randomUUID(), action, at, actorUserId: session.alfresco?.id || session.user?.id,
+        dispatchId: value.record?.id || null, assignmentIds: assignment ? [assignment.id] : [], requestKey: input.requestKey, responseDocumentId: response.id })
+      const serialized = JSON.stringify(next)
+      if (Buffer.byteLength(serialized) > maxAssignmentBytes) fail('DISPATCH_ASSIGNMENTS_SIZE_LIMIT', 413)
+      parseAssignments(serialized, input.documentId)
+      await ensureResponseReference(input, session, response)
+      try { await persistEnvelope(input.documentId, next, value.raw) } catch (error) {
+        throw Object.assign(new Error('RESPONSE_LINK_PARTIAL'), { status: error.status || 502, responseDocumentId: response.id })
+      }
+      return attentionResult(value, next)
+    }))
+  }
+  async function listResponseCandidates(session) {
+    if (!canIssueResponse(session)) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
+    const folder = settings.officeInboxNodeIds?.[String(session.dependency).toUpperCase()]?.emitidos
+    if (!folder) fail('OFFICE_INBOX_MAPPING_REQUIRED')
+    const nodes = []
+    let skipCount = 0
+    let more
+    do {
+      const payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, { authorization: session.authorization,
+        query: `?include=properties,aspectNames,association&maxItems=100&skipCount=${skipCount}` })
+      const list = payload?.list
+      if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
+      nodes.push(...list.entries.map((entry) => entry.entry).filter((node) => node?.isFile && node.nodeType === 'cm:content' && node.content?.mimeType === 'application/pdf' &&
+        node.association?.assocType === 'cm:contains' && node.createdByUser?.id === (session.alfresco?.id || session.user?.id)))
+      more = list.pagination.hasMoreItems
+      skipCount += list.entries.length
+      if (skipCount > 10_000 || more && !list.entries.length) fail('DISPATCH_DISCOVERY_LIMIT_EXCEEDED')
+    } while (more)
+    return [...new Map(nodes.map((node) => [node.id, node])).values()]
+  }
+  async function relatedResponses(documentId, session) {
+    const original = await read(documentId, session.authorization)
+    const links = [...new Map([...(original.envelope.responses || []), ...original.envelope.dispatches.flatMap((dispatch) => dispatch.recipients)
+      .flatMap((assignment) => assignment.responses || [])].map((response) => [response.documentId, response])).values()]
+    const responses = await mapConcurrent(links, 4, async (link) => {
+      try {
+        const response = await read(link.documentId, session.authorization)
+        const verified = await referenceExists(link.documentId, documentId, session.authorization)
+        return { ...link, available: verified, ...(verified ? { node: response.node } : { error: 'RESPONSE_RELATION_NOT_VERIFIED' }) }
+      } catch { return { ...link, available: false, error: 'RESPONSE_READ_UNAVAILABLE' } }
+    })
+    return { responses, summary: attentionSummary(original.envelope), documentIdentity: documentIdentity(original.node, settings) }
   }
   async function readSnapshot(session) {
     await assertModel()
@@ -255,17 +468,18 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
         throw error
       }
     })
-    return { records: batches.flat(), actorNodes }
+    return { records: batches.flat().map((record) => ({ ...record, documentIdentity: documentIdentity(actorNodes.get(record.documentId), settings) })), actorNodes }
   }
   async function allRecords(session) { return (await readSnapshot(session)).records }
   const receivedRecords = (records, userId, role, dependency) => records.filter((record) => role === 'direccion'
     ? record.senderDependency === String(dependency).toLowerCase()
     : record.recipients.some((recipient) => recipient.userId === userId && recipient.functionalRole === role &&
-      recipient.dependency === String(dependency).toLowerCase() && active(recipient)))
+        recipient.dependency === String(dependency).toLowerCase() && ['ASIGNADO', 'DESPACHADO', 'ATENDIDO'].includes(recipient.status)))
   const sentRecords = (records, userId, dependency) => records.filter((record) =>
     record.senderUserId === userId && record.senderDependency === String(dependency).toLowerCase())
   return {
     kind: 'alfresco', withDocument, createDispatch, assertModel, allRecords,
+    attendAssignment, linkResponse, listResponseCandidates, relatedResponses,
     loadInbox: async (session) => {
       const snapshot = await readSnapshot(session)
       const userId = session.alfresco?.id || session.user?.id

@@ -63,6 +63,8 @@
 .dispatch-panel__recipient small { color: var(--color-text-accessible-secondary); }
 .dispatch-summary { margin: 18px 0; padding: 14px; border-left: 3px solid var(--color-accent); background: var(--color-background-secondary); }
 .dispatch-summary p { margin: 6px 0 0; color: var(--color-text-accessible-secondary); line-height: 1.5; }
+.dispatch-summary button { margin: 8px 8px 0 0; }
+.assignment-state--attended { display: inline-block; padding: 3px 7px; border-radius: 5px; background: #e8f3ed; color: #205736; font-weight: 600; }
 .document-assignment-markers { display: inline-flex; width: 11px; min-height: 42px; flex: 0 0 11px; flex-direction: column; gap: 2px; margin-right: 2px; overflow: hidden; border-radius: 3px; }
 .document-assignment-markers i { display: block; min-height: 8px; flex: 1; background: var(--assignment-color); }
 .document-table tbody tr.document-table__row--assigned { background-image: var(--assignment-background); }

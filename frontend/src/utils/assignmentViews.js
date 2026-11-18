@@ -1,7 +1,7 @@
 export function assignmentRows(records, userId, mode = 'received') {
   return records.flatMap((dispatch) => (dispatch.recipients || [])
     .filter((assignment) => mode === 'sent' ? dispatch.senderUserId === userId :
-      assignment.userId === userId && ['ASIGNADO', 'DESPACHADO'].includes(assignment.status))
+      assignment.userId === userId && ['ASIGNADO', 'DESPACHADO', 'ATENDIDO'].includes(assignment.status))
     .map((assignment) => ({ dispatch, assignment })))
 }
 

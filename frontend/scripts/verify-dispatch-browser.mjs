@@ -24,17 +24,18 @@ const people = [
 const node = { id, name: 'oficio-prueba.pdf', isFile: true, nodeType: 'cm:content', parentId: 'dsa-attention',
   content: { mimeType: 'application/pdf', sizeInBytes: 500 }, aspectNames: ['gd:tramite'],
   createdAt: '2026-11-17T12:00:00Z', createdByUser: { id: 'DTI_T', displayName: 'Dirección DTI' },
-  properties: { 'cm:title': 'Documento de prueba: responsabilidades equivalentes' } }
+  properties: { 'cm:title': 'Documento de prueba: responsabilidades equivalentes', 'gd:dependenciaOrigen': 'DTI', 'cm:author': 'Home' } }
 const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'DSA_T', senderRole: 'direccion', senderDependency: 'dsa',
   requestKey: key, originAssignmentId: null, instruction: 'Instrucción de prueba local', priority: 'Normal', createdAt: node.createdAt,
   status: 'ASIGNADO', recipients: recipients.map((person) => ({ ...person, id: `${key}:${person.id}`, userId: person.id, documentId: id,
     dispatchId: key, status: 'ASIGNADO', createdAt: node.createdAt })) })
 // Same response shape and active recipient observed by GET in DEV; content is synthetic.
 const records = [record('initial-fixture', [people[0]])]
-const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0 }
+const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0, mockAttentions: 0 }
 const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
   alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
-  capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only' }
+  capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
+  canAttendAssignments: true, canIssueInstitutionalResponse: true }
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const json = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)) }
@@ -45,13 +46,27 @@ const server = http.createServer(async (request, response) => {
     if (url.pathname === '/api/directory/dispatch-recipients') { counters.directory++; return json({ recipients: people, allowedRecipientRoles: session.dispatchRecipientRoles }) }
     if (url.pathname === '/api/documents/dispatches') {
       counters.assignments++
-      return json({ persistence: 'alfresco', dispatches: records, sentDispatches: records, documents: [node], documentErrors: [] })
+      return json({ persistence: 'alfresco', dispatches: session.functionalRole === 'direccion' ? records : records.filter((record) => record.recipients.some((assignment) => assignment.userId === session.alfresco.id)),
+        sentDispatches: records.filter((record) => record.senderUserId === session.alfresco.id), documents: [node], documentErrors: [] })
     }
     if (url.pathname.endsWith('/children')) {
       counters.children++
       return json({ list: { entries: url.pathname.includes('dsa-attention') ? [{ entry: node }] : [], pagination: { hasMoreItems: false } } })
     }
     if (url.pathname.endsWith('/content')) { response.writeHead(200, { 'Content-Type': 'application/pdf' }); return response.end('%PDF-1.7\n%local browser fixture') }
+    if (url.pathname === '/api/documents/response-candidates') return json({ documents: [] })
+    if (url.pathname === '/api/documents/assignment-responses') return json({ responses: [], summary: { attended: counters.mockAttentions, pending: 3 - counters.mockAttentions, readyForClosureReview: false, formalClosureAllowed: false } })
+    if (url.pathname === '/api/documents/assignments/attend' && request.method === 'POST') {
+      let body = ''
+      for await (const chunk of request) body += chunk
+      const input = JSON.parse(body)
+      const dispatch = records.find((record) => record.recipients.some((entry) => entry.id === input.assignmentId))
+      const assignment = dispatch?.recipients.find((entry) => entry.id === input.assignmentId)
+      if (!assignment || assignment.userId !== session.alfresco.id) return json({ error: 'ATTENTION_ASSIGNMENT_NOT_OWNED' }, 403)
+      assignment.status = 'ATENDIDO'; assignment.attendedByUserId = assignment.userId; assignment.attendedAt = new Date().toISOString()
+      counters.mockAttentions++
+      return json({ dispatch, assignment, persistence: 'alfresco' })
+    }
     if (url.pathname === '/api/documents/dispatch' && request.method === 'POST') {
       let body = ''
       for await (const chunk of request) body += chunk
@@ -166,8 +181,42 @@ try {
       clip: { x: 0, y: 0, width, height: Math.max(height, Math.ceil(layout.cssContentSize.height)), scale: 1 } })
     fs.writeFileSync(path.join(artifacts, `${name}.png`), Buffer.from(shot.data, 'base64'))
   }
+  await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  await evaluate("document.querySelector('.received-inbox__subject').click()")
+  await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Responder con documento'))"), 'Dirección response action')
+  await clickText('Responder con documento')
+  await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Generar nueva emisión'))"), 'response selection')
+  await clickText('Generar nueva emisión')
+  await until(() => evaluate("document.body.textContent.includes('Respuesta al documento') && Boolean(document.querySelector('form'))"), 'existing emission form with original context')
+  assert.equal(counters.mockAttentions, 0, 'opening a response draft cannot complete an obligation')
+  for (const [userId, role, roleId, menu, capture] of [
+    ['JEFE_UNIDAD_DSA_1', 'jefe-unidad', 'jefe-unidad-dsa', 'Documentos recibidos', 'attention-head'],
+    ['021200931d@uandina.edu.pe', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
+  ]) {
+    Object.assign(session, { functionalRole: role, roleId, alfresco: { id: userId }, user: { id: userId, name: userId }, canIssueInstitutionalResponse: false,
+      dispatchRecipientRoles: role === 'jefe-unidad' ? ['especialista'] : [] })
+    await command('Page.reload', { ignoreCache: true })
+    await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'assignment user application')
+    await clickText(menu)
+    await until(() => evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), 'own assignment')
+    await evaluate("document.querySelector('.received-inbox__subject').click()")
+    await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Marcar como atendido'))"), 'attention action')
+    assert.equal(await evaluate("[...document.querySelectorAll('button')].some(x=>x.textContent==='Responder con documento')"), false)
+    assert.ok(await evaluate("document.body.textContent.includes('Emisor documental original: DTI') && document.body.textContent.includes('Despachado por: DSA_T')"))
+    await clickText('Marcar como atendido')
+    await until(() => evaluate("document.body.textContent.includes('Mi asignación: ATENDIDO')"), 'completed own obligation')
+    assert.ok(records.flatMap((record) => record.recipients).some((assignment) => assignment.userId !== userId && assignment.status === 'ASIGNADO'), 'other equivalent responsibilities remain pending')
+    await command('Page.reload', { ignoreCache: true })
+    await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'history after application reload')
+    await clickText(menu)
+    await until(() => evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), 'attended history retained')
+    assert.ok(await evaluate("document.body.textContent.includes('ATENDIDO')"))
+    const shot = await command('Page.captureScreenshot', { format: 'png' })
+    fs.writeFileSync(path.join(artifacts, `${capture}.png`), Buffer.from(shot.data, 'base64'))
+  }
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
-    checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture'],
+    checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
+      'Dirección reuses existing emission form', 'draft does not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI'],
     visual, counters }
   fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))

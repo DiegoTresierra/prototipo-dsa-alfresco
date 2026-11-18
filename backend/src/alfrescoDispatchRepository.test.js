@@ -103,7 +103,7 @@ test('chained dispatch preserves original obligation, IDs and individual trace',
   const parent = await create()
   const derived = { ...input('child'), senderUserId: 'head-a', senderRole: 'jefe-unidad', originAssignmentId: parent.recipients[0].id,
     recipients: [{ id: 'staff', dependency: 'dsa', functionalRole: 'especialista' }] }
-  const result = await create(derived, { ...director, alfresco: { id: 'head-a' } })
+  const result = await create(derived, { ...director, alfresco: { id: 'head-a' }, functionalRole: 'jefe-unidad' })
   const value = parseAssignments(state.node.properties[assignmentProperty], documentId)
   assert.equal(result.originAssignmentId, parent.recipients[0].id)
   assert.deepEqual(value.dispatches[0], parent)
@@ -111,7 +111,7 @@ test('chained dispatch preserves original obligation, IDs and individual trace',
   assert.equal(value.history[1].assignmentIds[0], result.recipients[0].id)
   assert.equal((await repo.listDispatchesForUser('director', 'direccion', 'DSA', director)).length, 2,
     'Direction must see equivalent responsibilities created by Jefatura too')
-  await assert.rejects(create({ ...derived, requestKey: 'wrong', originAssignmentId: 'unknown' }, { ...director, alfresco: { id: 'head-a' } }), /DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED/)
+  await assert.rejects(create({ ...derived, requestKey: 'wrong', originAssignmentId: 'unknown' }, { ...director, alfresco: { id: 'head-a' }, functionalRole: 'jefe-unidad' }), /DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED/)
 })
 
 test('missing model, disabled writing and missing institutional configuration fail before PUT', async () => {

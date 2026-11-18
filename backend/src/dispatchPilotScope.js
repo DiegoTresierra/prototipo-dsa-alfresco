@@ -1,12 +1,13 @@
 import { canDispatch } from './dispatchPolicy.js'
 import { validatePilotEnvironment } from './dispatchPilot.js'
+import { canAttendSession } from './attentionPolicy.js'
 
 const core = '/api/-default-/public/alfresco/versions/1'
 const fail = (code, status = 403) => { throw Object.assign(new Error(code), { status }) }
 
 // Positive membership proof from the configured folders, with ACTOR credentials.
 // This recognizes primary and secondary cm:contains associations without /parents.
-async function belongsToFolder(documentId, folders, authorization, request) {
+export async function belongsToFolder(documentId, folders, authorization, request) {
   let inspected = 0
   for (const folderId of folders) {
     let skipCount = 0
@@ -34,10 +35,12 @@ async function belongsToFolder(documentId, folders, authorization, request) {
   return false
 }
 
-export async function verifyPilotDocumentScope(settings, session, node, request) {
+async function verifyInstitutionalScope(settings, session, node, request, allowed) {
   const { institutionalFolders } = validatePilotEnvironment(settings)
-  if (!canDispatch(session) || !session.authorization || !session.capabilities?.includes('documents:read')) fail('HIERARCHICAL_DISPATCH_REQUIRED')
+  if (!allowed || !session.authorization || !session.capabilities?.includes('documents:read')) fail('HIERARCHICAL_DISPATCH_REQUIRED')
   if (!node?.isFile || node.nodeType !== 'cm:content' || node.content?.mimeType !== 'application/pdf') fail('DISPATCH_INVALID_DOCUMENT')
   const allowedFolders = institutionalFolders[String(session.dependency).toUpperCase()] || []
   if (!allowedFolders.length || !await belongsToFolder(node.id, allowedFolders, session.authorization, request)) fail('DISPATCH_DOCUMENT_NOT_ALLOWED')
 }
+export const verifyPilotDocumentScope = (settings, session, node, request) => verifyInstitutionalScope(settings, session, node, request, canDispatch(session))
+export const verifyAttentionDocumentScope = (settings, session, node, request) => verifyInstitutionalScope(settings, session, node, request, canAttendSession(session))
