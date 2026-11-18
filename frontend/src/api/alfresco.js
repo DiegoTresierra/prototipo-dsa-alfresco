@@ -33,6 +33,7 @@ export async function listDispatchRecipients() {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     const configurationMessages = {
+      ORGANIZATIONAL_HIERARCHY_PENDING: 'La relación organizativa entre Jefatura y Especialistas está pendiente de configuración institucional.',
       DISPATCH_DIRECTORY_CREDENTIALS_REQUIRED: 'Falta configurar la cuenta de consulta del directorio de despacho en el backend.',
       GROUP_MAPPINGS_REQUIRED: 'Falta configurar los grupos institucionales del despacho en el backend.',
       DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED: 'El directorio contiene subgrupos y requiere verificar su política de membresías antes de despachar.',
@@ -77,6 +78,7 @@ export async function reserveDocumentNumber(documentType, documentPeriod, csrfTo
     const messages = {
       UNIT_CODE_NOT_CONFIGURED: 'La cuenta no tiene un código institucional de unidad configurado.',
       NUMBERING_SCOPE_REQUIRED: 'No se pudo determinar el ámbito institucional del correlativo.',
+      NUMBERING_ATOMIC_RESERVATION_REQUIRED: 'La numeración oficial está suspendida hasta verificar en Alfresco todos los correlativos utilizados y la recuperación de emisiones inciertas.',
       NUMBERING_STORE_UNAVAILABLE: 'No se pudo guardar el correlativo institucional.',
     }
     throw new Error(messages[body.error] || 'No se pudo reservar el correlativo institucional.')
@@ -96,6 +98,7 @@ export async function dispatchDocument(documentId, recipientUserIds, instruction
     const messages = {
       HIERARCHICAL_DISPATCH_REQUIRED: 'Tu rol no permite realizar esta derivación interna.',
       DISPATCH_RECIPIENT_NOT_ALLOWED: 'Uno o más destinatarios no pertenecen a la dependencia autorizada.',
+      ORGANIZATIONAL_HIERARCHY_PENDING: 'La relación organizativa entre Jefatura y Especialistas está pendiente de configuración institucional.',
       DISPATCH_DOCUMENT_NOT_ALLOWED: 'No tienes autorización documental para derivar este PDF.',
       DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED: 'Debes tener una asignación propia y vigente de atención. Leer el documento o haberlo creado no basta para derivarlo.',
       INVALID_DISPATCH_ORIGIN: 'La referencia a la asignación de origen no es válida.',
@@ -166,17 +169,34 @@ function nodeToDocument(node) {
     description: properties['cm:description'] || '',
     sender: node.createdByUser?.displayName || node.createdByUser?.id || '',
     senderUserId: node.createdByUser?.id || '',
+    createdByUserId: node.createdByUser?.id || '',
+    createdByName: node.createdByUser?.displayName || node.createdByUser?.id || '',
+    formalSender: properties['gd:remitente'] || '',
     originatingDependency: '',
     documentIdentity: documentIdentity(node),
+    emittedOrigin: node.emittedOrigin || null,
+    contentWarning: node.contentWarning || null,
+    recipientName: properties['gd:destinatario'] || '',
+    recipientDependencyId: properties['gd:dependenciaDestino'] || '',
+    emissionDate: properties['gd:fechaDocumento'] || '',
     unitName: '',
     specialistName: '',
     attachmentName: node.name,
     createdAt: node.createdAt,
-    status: null,
+    status: properties['gd:estado'] || null,
     nodeType: node.nodeType,
     mimeType: content.mimeType || '',
     sizeInBytes: content.sizeInBytes || 0,
   }
+}
+
+export async function getEmittedDocuments() {
+  const response = await apiFetch('/api/documents/emitted', { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(response.status === 403 ? 'Tu sesión no tiene autorización para consultar Emitidos.' : 'No se pudo consultar Emitidos en Alfresco. Actualiza la bandeja para reintentar.')
+  if (!Array.isArray(body.documents) || body.source !== 'alfresco' || body.semantics !== 'institutional-originals') throw new Error('La respuesta de Emitidos no tiene un formato válido.')
+  return { ...body, documents: body.documents.map(nodeToDocument),
+    warning: body.documentErrors?.length ? `${body.documentErrors.length} documentos no pudieron verificarse por permisos u origen institucional. La lista es parcial.` : '' }
 }
 
 export async function listNodeChildren(nodeId, options = {}) {
@@ -380,4 +400,33 @@ export async function listGroupMembers(groupId) {
 export async function getNodePermissions(nodeId) {
   const response = await request(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}?include=permissions`)
   return response.entry?.permissions || null
+}
+
+export async function emitOfficialDocument(file, fields, csrfToken) {
+  const form = new FormData()
+  form.set('filedata', file, file.name)
+  for (const key of ['requestKey', 'title', 'description', 'documentType', 'documentPeriod', 'priority', 'recipientDependency', 'receiptCategory']) form.set(key, fields[key] || '')
+  let response
+  try { response = await apiFetch('/api/documents/official-emissions', { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-CSRF-Token': csrfToken }, body: form }) }
+  catch { const error = new Error('No se pudo confirmar la emision. Conserva la misma clave y PDF para conciliar antes de reintentar.'); error.uncertain = true; throw error }
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const messages = {
+      OFFICIAL_EMISSION_WRITES_DISABLED: 'La emision oficial esta deshabilitada hasta completar las validaciones del piloto.',
+      OFFICIAL_RECIPIENT_READ_CONFIGURATION_REQUIRED: 'La configuracion documental no permite compartir este PDF sin cambiar permisos. No se ha emitido.',
+      OFFICIAL_RECIPIENT_NODE_READ_REQUIRED: 'El PDF ya está registrado en Emitidos. Falta autorizar la lectura del destinatario sobre ese nodo; conserva el UUID y la misma clave para conciliar, sin volver a emitir.',
+      OFFICIAL_NUMBER_RECONCILIATION_REQUIRED: 'Existen documentos incompatibles pendientes de conciliacion administrativa.',
+      OFFICIAL_RECONCILIATION_CHANGED: 'Cambio un documento excluido; se requiere revisar la conciliacion administrativa.',
+      NUMBERING_RETRY_CONFLICT: 'La misma clave ya corresponde a otro contenido o parametros. No se ha creado otro PDF.',
+      NUMBERING_RESULT_UNCERTAIN: 'La emision quedo incierta. Reintenta con la misma clave, PDF y datos; no generes otra emision.',
+    }
+    const error = new Error(messages[body.error] || body.error || 'No se pudo confirmar la emision oficial.')
+    error.uncertain = body.uncertain === true
+    error.emittedNodeId = body.emittedNodeId || ''
+    throw error
+  }
+  if (!body.officialEmission || !body.emittedEntry?.id || body.receivedEntry?.id !== body.emittedEntry.id) {
+    const error = new Error('No se pudo verificar el resultado de la emision. Conserva la misma clave para conciliar.'); error.uncertain = true; throw error
+  }
+  return body
 }

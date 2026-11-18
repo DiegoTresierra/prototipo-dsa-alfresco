@@ -102,6 +102,14 @@ export const config = {
   dispatchStorePath: process.env.DISPATCH_STORE_PATH || path.join(backendRoot, 'data', 'dispatches.json'),
   dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'alfresco',
   dispatchPilot: dispatchPilotSettings(),
+  officialEmission: {
+    writesEnabled: process.env.OFFICIAL_EMISSION_WRITES_ENABLED === 'true',
+    expectedTarget: process.env.OFFICIAL_EMISSION_EXPECTED_TARGET || '',
+    acknowledgement: process.env.OFFICIAL_EMISSION_ACK || '',
+    leasePath: process.env.OFFICIAL_EMISSION_LEASE_PATH || path.join(backendRoot, 'data', 'official-emission.lock'),
+    reconciliationPath: process.env.OFFICIAL_EMISSION_RECONCILIATION_FILE || '',
+    reconciliationSha256: process.env.OFFICIAL_EMISSION_RECONCILIATION_SHA256 || '',
+  },
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',

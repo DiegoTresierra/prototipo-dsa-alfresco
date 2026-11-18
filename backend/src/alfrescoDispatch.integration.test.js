@@ -129,6 +129,13 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   assert.equal(additionalResponse.status, 201, 'any authorized institutional PDF is in scope without a separate test-folder association')
   assert.equal(JSON.parse(additionalNode.properties['gd:asignaciones']).documentId, additionalId)
   assert.equal((await post(director, { ...payload, documentId: foreignId, requestKey: 'foreign', dependency: 'DSA', folderId: 'dsa-folder' })).status, 403)
+  assert.equal((await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'hierarchy-unconfigured' })).status, 503)
+  config.organizationalHierarchyProvider = {
+    async resolveSpecialists() {
+      return { verified: true, members: [{ userId: 'staff', groupIds: ['GROUP_fixture_supervision'] }] }
+    },
+  }
+  t.after(() => { delete config.organizationalHierarchyProvider })
   assert.equal((await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'no-origin' })).status, 403)
   assert.equal((await post(staff, { ...payload, recipientUserIds: ['head'] })).status, 403)
   const derived = await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'child', originAssignmentId: parent.recipients[0].id })

@@ -3,11 +3,13 @@ import { getAssignmentInbox } from '../api/alfresco'
 
 const initialState = { documents: [], dispatchRecords: [], sentDispatches: [], documentErrors: [], loading: false, refreshing: false, error: '', lastUpdated: null }
 
-export function useAssignmentInbox({ active, allowed, refreshKey }) {
+export function useAssignmentInbox({ active, allowed, refreshKey, loadInbox = getAssignmentInbox, scopeKey = '' }) {
   const [state, setState] = useState(initialState)
   const refreshRef = useRef(null)
   const previousPage = useRef(refreshKey)
+  const previousScope = useRef(scopeKey)
   useEffect(() => {
+    if (previousScope.current !== scopeKey) { setState(initialState); previousScope.current = scopeKey }
     if (!active || !allowed) return undefined
     let cancelled = false
     let inFlight = false
@@ -17,7 +19,7 @@ export function useAssignmentInbox({ active, allowed, refreshKey }) {
       inFlight = true
       setState((current) => ({ ...current, loading: !current.lastUpdated, refreshing: Boolean(current.lastUpdated), error: '' }))
       try {
-        const snapshot = await getAssignmentInbox()
+        const snapshot = await loadInbox()
         if (!cancelled) setState({ ...snapshot, loading: false, refreshing: false, error: '', lastUpdated: new Date().toISOString() })
       } catch (error) {
         if (!cancelled) setState((current) => ({ ...current, loading: false, refreshing: false, error: error.message }))
@@ -42,11 +44,11 @@ export function useAssignmentInbox({ active, allowed, refreshKey }) {
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('uac:alfresco-document-created', afterWrite)
     }
-  }, [active, allowed])
+  }, [active, allowed, loadInbox, scopeKey])
   useEffect(() => {
     if (previousPage.current !== refreshKey) refreshRef.current?.(false)
     previousPage.current = refreshKey
   }, [refreshKey])
   const refresh = useCallback(() => refreshRef.current?.(), [])
-  return { ...state, refresh }
+  return { ...(previousScope.current === scopeKey ? state : initialState), refresh }
 }

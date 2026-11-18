@@ -1,0 +1,41 @@
+{
+  "name": "identificacion",
+  "properties": [
+    {
+      "name": "codigoDocumental",
+      "title": "Código documental completo",
+      "description": "Código institucional completo de la secuencia de emisión, resuelto por el backend desde la autoridad y el catálogo institucional verificados. No se deduce del nombre del archivo o usuario.",
+      "dataType": "d:text",
+      "multiValued": false,
+      "mandatory": false,
+      "mandatoryEnforced": false,
+      "indexed": false,
+      "facetable": "FALSE",
+      "indexTokenisationMode": "FALSE"
+    },
+    {
+      "name": "cicloDocumental",
+      "title": "Ciclo de numeración documental",
+      "description": "Año de inicio del ciclo institucional de numeración: desde el 2 de enero hasta el 1 de enero siguiente, ambos inclusive, según America/Lima. Independiente del período académico y del año calendario de carga.",
+      "dataType": "d:int",
+      "multiValued": false,
+      "mandatory": false,
+      "mandatoryEnforced": false,
+      "indexed": false,
+      "facetable": "FALSE",
+      "indexTokenisationMode": "FALSE"
+    },
+    {
+      "name": "identidadEmision",
+      "title": "Identidad idempotente de la emisión",
+      "description": "JSON versionado v1 con version, actorId, requestKey y payloadHash SHA-256 hexadecimal del contenido y parámetros formales canónicos. Registrado con el PDF en la misma creación para conciliar reintentos y resultados inciertos. No contiene credenciales ni funciona como contador.",
+      "dataType": "d:text",
+      "multiValued": false,
+      "mandatory": false,
+      "mandatoryEnforced": false,
+      "indexed": false,
+      "facetable": "FALSE",
+      "indexTokenisationMode": "FALSE"
+    }
+  ]
+}

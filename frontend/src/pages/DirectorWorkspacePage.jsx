@@ -6,7 +6,7 @@ import { HierarchyManagementPage } from './HierarchyManagementPage'
 import { formatDocumentDate } from '../utils/documentFormat'
 import { ownSentDocuments } from '../utils/documentViews'
 
-function DirectorHome({ office, sent, received }) {
+function DirectorHome({ office, sent, received, emittedError }) {
   const recent = [...sent, ...received]
     .filter((document, index, all) => all.findIndex((entry) => entry.id === document.id) === index)
     .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
@@ -14,9 +14,10 @@ function DirectorHome({ office, sent, received }) {
 
   return (
     <PanelPage description={`Resumen de actividad documental de ${office.office}.`} title="Inicio">
+      {emittedError && <p className="form-message form-message--error" role="alert">{emittedError}</p>}
       <div aria-label="Indicadores documentales de Alfresco" className="director-summary">
         {[
-          ['Documentos enviados', sent.length],
+          ['Emitidos', sent.length],
           ['Documentos recibidos', received.length],
           ['Pendientes', '—'],
           ['Atendidos', '—'],
@@ -45,18 +46,21 @@ function DirectorHome({ office, sent, received }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, alfrescoDocuments = [], office, localScopeId, allowAlfresco = false, inbox }) {
-  const sent = ownSentDocuments(alfrescoDocuments, office.userId)
+export function DirectorWorkspacePage({ title, description, activePanel, office, localScopeId, allowAlfresco = false, inbox, emittedInbox }) {
+  const sent = emittedInbox?.documents || []
   const received = inbox?.documents || []
 
-  if (activePanel === 'inicio') return <DirectorHome office={office} received={received} sent={sent} />
+  if (activePanel === 'inicio') return <DirectorHome office={office} received={received} sent={sent} emittedError={emittedInbox?.error || emittedInbox?.warning} />
   if (activePanel === 'gestion-jerarquia') return <HierarchyManagementPage localScopeId={localScopeId} office={office} />
   if (['documentos-recibidos', 'para-conocimiento', 'para-atencion'].includes(activePanel)) {
     return <DirectorPage allowAlfresco={allowAlfresco} description={description} inbox={inbox} title={title} />
   }
 
   if (activePanel === 'documentos-enviados' || activePanel === 'mis-documentos') {
-    return <DirectorPage key={activePanel} title={title} description={description} allowAlfresco={allowAlfresco} mode="sent" inbox={{ documents: sent, loading: false, refreshing: false, error: '' }} />
+    return <DirectorPage key={activePanel} title={title} description={description} allowAlfresco={allowAlfresco} mode="sent" inbox={{ ...emittedInbox,
+      documents: activePanel === 'mis-documentos' ? ownSentDocuments(sent, office.userId) : sent,
+      error: emittedInbox?.error || emittedInbox?.warning || '',
+    }} />
   }
 
   if (activePanel === 'seguimiento') {

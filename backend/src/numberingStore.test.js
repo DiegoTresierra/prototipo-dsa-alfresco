@@ -1,24 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { config } from './config.js'
-import { reserveDocumentNumber } from './numberingStore.js'
+import { numberingScope, reserveDocumentNumber } from './numberingStore.js'
 
-test('reserves persistent correlatives by dependency, unit, type and year', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uac-numbering-'))
-  const previousPath = config.numberingStorePath
-  config.numberingStorePath = path.join(directory, 'document-numbers.json')
-  try {
-    const first = reserveDocumentNumber({ dependency: 'DSA', unit: { code: 'DSA-01' }, documentType: 'OFICIO', period: '2026 - I' })
-    const second = reserveDocumentNumber({ dependency: 'DSA', unit: { code: 'DSA-01' }, documentType: 'OFICIO', period: '2026 - I' })
-    const otherUnit = reserveDocumentNumber({ dependency: 'DSA', unit: { code: 'DSA-02' }, documentType: 'OFICIO', period: '2026 - I' })
-    assert.equal(first.originalConsecutive, '0001')
-    assert.equal(second.originalConsecutive, '0002')
-    assert.equal(otherUnit.originalConsecutive, '0001')
-  } finally {
-    config.numberingStorePath = previousPath
-    fs.rmSync(directory, { recursive: true, force: true })
-  }
+test('Lima numbering cycle starts January 2 and ends January 1', () => {
+  assert.equal(numberingScope('DTI-UPSI', new Date('2027-01-02T04:59:59Z')).cycle, 2026)
+  assert.equal(numberingScope('DTI-UPSI', new Date('2027-01-02T05:00:00Z')).cycle, 2027)
+  assert.equal(numberingScope('DSA', new Date('2026-01-01T12:00:00Z')).cycle, 2025)
+  assert.deepEqual(numberingScope('DTI-UPSI-AMMR', new Date('2026-11-18T12:00:00Z')), {
+    documentCode: 'DTI-UPSI-AMMR', cycle: 2026, startsOn: '2026-01-02', endsOn: '2027-01-01',
+  })
+  assert.throws(() => numberingScope(''), /NUMBERING_SCOPE_REQUIRED/)
+})
+
+test('official allocation fails closed without writing the legacy JSON', () => {
+  assert.throws(() => reserveDocumentNumber({ documentCode: 'DTI', cycle: 2026 }),
+    { message: 'NUMBERING_ATOMIC_RESERVATION_REQUIRED', status: 503 })
 })

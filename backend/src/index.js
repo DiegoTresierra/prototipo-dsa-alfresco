@@ -11,13 +11,19 @@ import { createDispatchRepository } from './dispatchRepository.js'
 import { acquirePilotLease } from './dispatchPilot.js'
 import { allowedRecipientRoles, canDispatch, dispatchIdentity, validateDispatchRequest } from './dispatchPolicy.js'
 import { reserveDocumentNumber } from './numberingStore.js'
+import { isForbiddenRetentionMutation } from './emittedRetentionPolicy.js'
 import { createOidcTransaction, createSession, consumeOidcTransaction, deleteSession, getSession } from './sessionStore.js'
 import { resolveRole } from './roleResolver.js'
 import { loadDispatchDirectory } from './dispatchDirectory.js'
+import { resolveManagedRecipients } from './organizationalHierarchy.js'
 import { authorizeNodeRead, filterDocumentCollection, validateDocumentReadRequest } from './documentReadPolicy.js'
 import { canAttendSession, canIssueResponse, validateAttentionInput } from './attentionPolicy.js'
+import { createOfficialEmissionService } from './officialEmissionService.js'
+import { listInstitutionalEmitted } from './emittedDocuments.js'
 
 const app = express()
+const officialEmissionService = createOfficialEmissionService(config)
+process.once('exit', officialEmissionService.release)
 const dispatchRepository = createDispatchRepository(config)
 const releasePilotLease = acquirePilotLease(config)
 process.once('exit', releasePilotLease)
@@ -316,6 +322,13 @@ app.get('/api/directory/recipients', requireSession, async (request, response) =
   }
 })
 
+app.get('/api/documents/emitted', requireSession, async (request, response) => {
+  response.set('Cache-Control', 'no-store')
+  if (Object.keys(request.query).length) return response.status(400).json({ error: 'EMITTED_QUERY_NOT_ALLOWED' })
+  try { return response.json(await listInstitutionalEmitted(config, request.session)) }
+  catch (error) { return response.status(error.status || 502).json({ error: error.message || 'EMITTED_READ_FAILED' }) }
+})
+
 app.get('/api/directory/office-inboxes', requireSession, (request, response) => {
   const dependency = request.session.dependency
   if (request.session.authorizationStatus !== 'active' || !dependency || !request.session.capabilities?.includes('documents:read')) {
@@ -381,6 +394,7 @@ function requireDeliveryLock(request, response, next) {
     if (!canDispatch(request.session)) return response.status(403).json({ error: 'HIERARCHICAL_DISPATCH_REQUIRED' })
     try {
       const directory = await loadDispatchDirectory(config)
+      directory.recipients = await resolveManagedRecipients(request.session, directory.recipients, config.organizationalHierarchyProvider)
       const dependency = String(request.session.dependency || '').toLowerCase()
       return response.json({
         recipients: directory.recipients.filter((recipient) =>
@@ -595,7 +609,8 @@ function requireDeliveryLock(request, response, next) {
       const userId = request.session.alfresco?.id || request.session.user?.id
       if (!canDispatch(request.session)) return dispatchError(response, 403, 'HIERARCHICAL_DISPATCH_REQUIRED')
       if (!request.session.capabilities?.includes('documents:read')) return dispatchError(response, 403, 'DOCUMENT_READ_REQUIRED')
-      const { recipients } = await loadDispatchDirectory(config)
+      const directory = await loadDispatchDirectory(config)
+      const recipients = await resolveManagedRecipients(request.session, directory.recipients, config.organizationalHierarchyProvider)
       const input = validateDispatchRequest(request.body, request.session, recipients)
       return await dispatchRepository.withDocument(input.documentId, async () => {
       const identity = dispatchIdentity(request.session, input.requestKey)
@@ -667,8 +682,31 @@ function requireDeliveryLock(request, response, next) {
       request.deliveryRelease()
     }
   })
+app.post('/api/documents/official-emissions', requireSession, requireCsrf, async (request, response) => {
+  try {
+    if (request.session.functionalRole !== 'direccion') return response.status(403).json({ error: 'OFFICIAL_DIRECTION_REQUIRED' })
+    if (!config.officialEmission.writesEnabled) return response.status(503).json({ error: 'OFFICIAL_EMISSION_WRITES_DISABLED' })
+    const body = await requestBody(request)
+    let form
+    try { form = await new Response(body, { headers: { 'Content-Type': request.get('content-type') || '' } }).formData() }
+    catch { return response.status(400).json({ error: 'OFFICIAL_INVALID_REQUEST' }) }
+    const allowed = ['filedata', 'requestKey', 'title', 'description', 'documentType', 'documentPeriod', 'priority', 'recipientDependency', 'receiptCategory']
+    if ([...form.keys()].some((key) => !allowed.includes(key) || form.getAll(key).length !== 1)) return response.status(400).json({ error: 'OFFICIAL_INVALID_REQUEST' })
+    const file = form.get('filedata')
+    if (!file || typeof file.arrayBuffer !== 'function') return response.status(400).json({ error: 'PDF_UPLOAD_REQUIRED' })
+    const input = Object.fromEntries(allowed.filter((key) => key !== 'filedata').map((key) => [key, form.get(key)]))
+    const result = await officialEmissionService.issue(request.session, { ...input, file: Buffer.from(await file.arrayBuffer()) })
+    return response.status(201).json(result)
+  } catch (error) {
+    return response.status(error.status || 502).json({ error: error.message || 'OFFICIAL_EMISSION_FAILED', uncertain: Boolean(error.uncertain), ...(error.emittedNodeId ? { emittedNodeId: error.emittedNodeId } : {}) })
+  }
+})
 app.post(['/api/documents/send-to-director', '/api/documents/retry-director-delivery'], requireSession, requireCsrf, requireDeliveryLock, async (request, response) => {
   const retry = request.path.endsWith('/retry-director-delivery')
+  if (!retry && config.officialEmission.writesEnabled) {
+    request.deliveryRelease()
+    return response.status(403).json({ error: 'OFFICIAL_EMISSION_ENDPOINT_REQUIRED' })
+  }
   let createdNodeId = ''
   const session = request.session
   if (session.authorizationStatus !== 'active' || session.functionalRole !== 'direccion' || !session.capabilities?.includes('documents:write')) {
@@ -698,6 +736,7 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
     return response.status(error.status || 413).json({ error: 'PDF_UPLOAD_TOO_LARGE' })
   }
   if (!retry && !isPdfMultipart(request, body)) return response.status(415).json({ error: 'PDF_UPLOAD_REQUIRED' })
+  if (!retry && await containsOfficialMetadata(request, body)) return response.status(403).json({ error: 'OFFICIAL_EMISSION_ENDPOINT_REQUIRED' })
   if (retry && (typeof request.body?.nodeId !== 'string' || !/^[a-zA-Z0-9-]+$/.test(request.body.nodeId))) return response.status(400).json({ error: 'INVALID_DIRECTOR_DELIVERY' })
 
   try {
@@ -709,8 +748,9 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
     }
     let emittedEntry
     if (retry) {
-      const existing = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(request.body.nodeId)}`), { headers: upstreamHeaders })
+      const existing = await fetch(buildAlfrescoUrl(config.alfrescoTarget, `/api/-default-/public/alfresco/versions/1/nodes/${encodeURIComponent(request.body.nodeId)}`, '?include=properties'), { headers: upstreamHeaders })
       const payload = await existing.json().catch(() => null)
+      if (payload?.entry?.properties?.['gd:identidadEmision']) return response.status(403).json({ error: 'OFFICIAL_RETRY_ENDPOINT_REQUIRED' })
       emittedEntry = payload?.entry
       if (!existing.ok || !emittedEntry || emittedEntry.parentId !== emittedNodeId || emittedEntry.createdByUser?.id !== session.alfresco.id || emittedEntry.isFile !== true || emittedEntry.content?.mimeType !== 'application/pdf') return response.status(403).json({ error: 'DIRECTOR_RETRY_NOT_ALLOWED' })
     } else {
@@ -908,9 +948,17 @@ function isPdfMultipart(request, body) {
   return false
 }
 
+async function containsOfficialMetadata(request, body) {
+  try {
+    const form = await new Response(body, { headers: { 'Content-Type': request.get('content-type') || '' } }).formData()
+    return ['gd:numero', 'gd:codigoDocumental', 'gd:cicloDocumental', 'gd:identidadEmision'].some((key) => form.has(key))
+  } catch { return true }
+}
+
 app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) => {
   try {
     if (request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
+    if (isForbiddenRetentionMutation(request)) return response.status(403).json({ error: 'DOCUMENT_RETENTION_OPERATION_FORBIDDEN' })
     const readRequest = validateDocumentReadRequest(request, config)
     if (!isAllowedAlfrescoRequest(request)) {
       const isUpload = request.method === 'POST' && /\/nodes\/[^/]+\/children$/.test(request.path)
@@ -934,6 +982,11 @@ app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) 
     const contentType = request.get('content-type')
     if (request.method === 'POST' && /\/nodes\/[^/]+\/children$/.test(request.path) && !isPdfMultipart(request, body)) {
       return response.status(415).json({ error: 'PDF_UPLOAD_REQUIRED' })
+    }
+    if (request.method === 'POST' && /\/nodes\/[^/]+\/children$/.test(request.path)) {
+      const uploadFolder = decodeURIComponent(request.path.match(/\/nodes\/([^/]+)\/children$/)[1])
+      const emittedFolders = Object.values(config.officeInboxNodeIds || {}).map((folders) => folders.emitidos)
+      if (await containsOfficialMetadata(request, body) || config.officialEmission.writesEnabled && emittedFolders.includes(uploadFolder)) return response.status(403).json({ error: 'OFFICIAL_EMISSION_ENDPOINT_REQUIRED' })
     }
     const headers = { Accept: request.get('accept') || 'application/json', Authorization: request.session.authorization }
     if (contentType) headers['Content-Type'] = contentType
@@ -959,6 +1012,7 @@ export const server = app.listen(config.port, () => {
   console.log(`Authentication backend listening on port ${config.port}`)
 })
 server.once('close', releasePilotLease)
+server.once('close', officialEmissionService.release)
 if (config.dispatchPersistence === 'alfresco' && config.dispatchPilot.writesEnabled) {
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.close(() => process.exit(0)))
 }

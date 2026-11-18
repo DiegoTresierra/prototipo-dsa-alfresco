@@ -1,3 +1,4 @@
+import { emitOfficialDocument } from './api/alfresco'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import './components/Sidebar.css'
@@ -15,6 +16,7 @@ import { DirectorPage } from './pages/DirectorPage'
 import { JefeUnidadPage } from './pages/JefeUnidadPage'
 import { EspecialistaPage } from './pages/EspecialistaPage'
 import { useAssignmentInbox } from './hooks/useAssignmentInbox'
+import { useEmittedInbox } from './hooks/useEmittedInbox'
 import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
@@ -185,6 +187,7 @@ function ApplicationShell({ session, onLogout }) {
     refreshKey: activePanel,
   })
   const assignmentInbox = useAssignmentInbox({ active: isAssignmentUser, allowed: canReadAlfresco, refreshKey: activePanel })
+  const emittedInbox = useEmittedInbox({ active: isDirector, allowed: canReadAlfresco, refreshKey: activePanel, scopeKey: `${currentOffice.userId}:${session.dependency}` })
   const inbox = isAssignmentUser ? assignmentInbox : institutionalInbox
   const receivedDocuments = withKnownPriorities(inbox.documents, alfrescoDocuments)
   useEffect(() => {
@@ -297,12 +300,18 @@ function ApplicationShell({ session, onLogout }) {
       let entry
       let receivedNodeId = ''
       if (isDirector) {
-        const delivery = await uploadPdfToDirectorInbox(documentData.mainDocumentFile, {
+        const delivery = documentData.existingNodeId ? await uploadPdfToDirectorInbox(documentData.mainDocumentFile, {
           title: documentData.subject,
           description: documentData.description,
           recipientDependencyId: documentData.recipientDependencyId,
           receiptCategory: documentData.receiptCategory,
           existingNodeId: documentData.existingNodeId || '',
+        }, session.csrfToken) : await emitOfficialDocument(documentData.mainDocumentFile, {
+          requestKey: documentData.submissionToken,
+          title: documentData.subject, description: documentData.description,
+          documentType: documentData.documentType, documentPeriod: documentData.documentPeriod, priority: documentData.priority,
+          recipientDependency: documentData.recipientDependencyId,
+          receiptCategory: documentData.receiptCategory,
         }, session.csrfToken)
         entry = delivery.emittedEntry
         receivedNodeId = delivery.receivedEntry.id
@@ -346,6 +355,9 @@ function ApplicationShell({ session, onLogout }) {
           emissionDate: entry.createdAt || emissionDate,
           createdAt: entry.createdAt || emissionDate,
           priority: metadata.priority,
+          originalConsecutive: entry.properties?.['gd:numero'] || '',
+          issuerCode: entry.properties?.['gd:codigoDocumental'] || '',
+          documentYear: entry.properties?.['gd:cicloDocumental'] || '',
         }
         nextDocuments = [document, ...alfrescoDocuments]
         warning = 'Alfresco creó el documento, pero no se pudo guardar su resumen en este navegador.'
@@ -401,7 +413,7 @@ function ApplicationShell({ session, onLogout }) {
             ? <EspecialistaPage key={activePanel} activePanel={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} {...attentionProps} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
             ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} {...attentionProps} />
-          : <ActivePage activePanel={activePanel} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
+          : <ActivePage activePanel={activePanel} emittedInbox={emittedInbox} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>
   )

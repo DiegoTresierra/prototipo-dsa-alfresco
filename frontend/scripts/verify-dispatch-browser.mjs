@@ -31,7 +31,8 @@ const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'D
     dispatchId: key, status: 'ASIGNADO', createdAt: node.createdAt })) })
 // Same response shape and active recipient observed by GET in DEV; content is synthetic.
 const records = [record('initial-fixture', [people[0]])]
-const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0, mockAttentions: 0 }
+const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
+let officialFixture
 const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
   alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
   capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
@@ -42,6 +43,34 @@ const server = http.createServer(async (request, response) => {
   if (url.pathname.startsWith('/api/')) {
     if (url.pathname === '/api/auth/me') return json(session)
     if (url.pathname === '/api/auth/status') return json({ basicAuthEnabled: true })
+    if (url.pathname === '/api/documents/emitted') {
+      counters.emitted++
+      const dependency = session.dependency
+      const documents = dependency === 'DTI' ? [{ ...node, parentId: 'dti-emitted',
+        emittedOrigin: { dependency: 'DTI', evidence: 'gd:dependenciaOrigen', declared: true } }] : []
+      return json({ source: 'alfresco', semantics: 'institutional-originals', dependency,
+        folderId: dependency.toLowerCase() + '-emitted', documents, documentErrors: [] })
+    }
+    if (url.pathname === '/api/documents/official-emissions' && request.method === 'POST') {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      const form = await new Response(Buffer.concat(chunks), { headers: { 'Content-Type': request.headers['content-type'] } }).formData()
+      assert.equal(form.has('gd:numero'), false)
+      assert.equal(form.has('documentCode'), false)
+      const signature = JSON.stringify([form.get('title'), form.get('description'), form.get('priority'), await form.get('filedata').text()])
+      counters.officialRequests++
+      if (!officialFixture) {
+        officialFixture = { requestKey: form.get('requestKey'), signature }
+        counters.officialCreated++
+        return json({ error: 'NUMBERING_RESULT_UNCERTAIN', uncertain: true }, 502)
+      }
+      assert.equal(form.get('requestKey'), officialFixture.requestKey, 'uncertain browser retry preserves original key')
+      assert.equal(signature, officialFixture.signature)
+      const entry = { ...node, id: 'official-response', parentId: 'dsa-emitted', createdByUser: { id: 'DSA_T' },
+        properties: { 'cm:title': form.get('title'), 'gd:numero': '1', 'gd:codigoDocumental': 'DSA', 'gd:cicloDocumental': 2026 } }
+      return json({ officialEmission: true, emittedEntry: entry, receivedEntry: entry }, 201)
+    }
+    if (url.pathname === '/api/documents/assignments/response' && request.method === 'POST') return json({ persistence: 'alfresco', documentId: id, response: { documentId: 'official-response' } })
     if (url.pathname === '/api/directory/office-inboxes') return json({ folders: { porAtender: 'dsa-attention', porConocimiento: 'dsa-knowledge' } })
     if (url.pathname === '/api/directory/dispatch-recipients') { counters.directory++; return json({ recipients: people, allowedRecipientRoles: session.dispatchRecipientRoles }) }
     if (url.pathname === '/api/documents/dispatches') {
@@ -189,6 +218,23 @@ try {
   await clickText('Generar nueva emisión')
   await until(() => evaluate("document.body.textContent.includes('Respuesta al documento') && Boolean(document.querySelector('form'))"), 'existing emission form with original context')
   assert.equal(counters.mockAttentions, 0, 'opening a response draft cannot complete an obligation')
+  await evaluate("const combo=document.querySelector('[role=combobox]'); combo.focus(); combo.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))")
+  await until(() => evaluate("Boolean(document.querySelector('.searchable-select__option'))"), 'recipient dependency options')
+  await evaluate("document.querySelector('.searchable-select__option').click()")
+  const selectOption = async (selector) => evaluate(`(() => {const el=document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,el.options[1].value); el.dispatchEvent(new Event('change',{bubbles:true}));})()`)
+  await selectOption('.form-grid--recipient select')
+  await selectOption('.form-grid--recipient label:nth-of-type(2) select')
+  await selectOption('select[name=documentType]')
+  await selectOption('select[name=documentPeriod]')
+  await selectOption('select[name=priority]')
+  await evaluate("document.querySelector('[name=subject]').value='Respuesta oficial simulada'; document.querySelector('[name=description]').value='Prueba de emision sin atencion automatica'; const dt=new DataTransfer(); dt.items.add(new File(['%PDF-1.7\\nBrowser fixture'],'response.pdf',{type:'application/pdf'})); const file=document.querySelector('input[type=file]'); file.files=dt.files; file.dispatchEvent(new Event('change',{bubbles:true}))")
+  await until(() => evaluate("!document.querySelector('[type=submit]').disabled"), 'PDF validation complete')
+  await evaluate("document.querySelector('[type=submit]').click()")
+  await until(() => evaluate("document.body.textContent.includes('Emision pendiente de conciliacion')"), 'uncertain official emission visible')
+  await evaluate("document.querySelector('[type=submit]').click()")
+  await until(() => counters.officialRequests === 2 && evaluate("document.body.textContent.includes('Respuesta emitida y vinculada')"), 'same-key official replay and response link')
+  assert.equal(counters.officialCreated, 1)
+  assert.equal(counters.mockAttentions, 0, 'formal emission and link never attend assignments automatically')
   for (const [userId, role, roleId, menu, capture] of [
     ['JEFE_UNIDAD_DSA_1', 'jefe-unidad', 'jefe-unidad-dsa', 'Documentos recibidos', 'attention-head'],
     ['021200931d@uandina.edu.pe', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
@@ -214,9 +260,27 @@ try {
     const shot = await command('Page.captureScreenshot', { format: 'png' })
     fs.writeFileSync(path.join(artifacts, `${capture}.png`), Buffer.from(shot.data, 'base64'))
   }
+  Object.assign(session, { functionalRole: 'direccion', roleId: 'director-dti', dependency: 'DTI', alfresco: { id: 'DTI_T' }, user: { id: 'DTI_T', name: 'Direction DTI' },
+    canIssueInstitutionalResponse: true, dispatchRecipientRoles: ['jefe-unidad', 'especialista'] })
+  await evaluate("localStorage.removeItem('gestion-documental-dsa.alfresco-confirmed-documents.v1')")
+  await command('Page.reload', { ignoreCache: true })
+  await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'DTI workspace')
+  await clickText('Emitidos')
+  await until(() => evaluate("Boolean(document.querySelector('.received-inbox__subject')) && !document.querySelector('.received-inbox__refresh button').disabled"), 'repository emitted document without browser cache')
+  assert.ok(await evaluate("document.body.textContent.includes('Origen: DTI') && document.body.textContent.includes('Registro en Alfresco')"))
+  const beforeEmittedRefresh = counters.emitted
+  await clickText('Actualizar bandeja')
+  await until(() => counters.emitted > beforeEmittedRefresh && evaluate("!document.querySelector('.received-inbox__refresh button').disabled"), 'emitted refresh')
+  assert.equal(counters.emitted, beforeEmittedRefresh + 1)
+  Object.assign(session, { roleId: 'director-dsa', dependency: 'DSA', alfresco: { id: 'DSA_T' }, user: { id: 'DSA_T', name: 'Direction DSA' } })
+  await command('Page.reload', { ignoreCache: true })
+  await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'DSA workspace')
+  await clickText('Emitidos')
+  await until(() => evaluate("document.body.textContent.includes('No hay documentos emitidos') && !document.querySelector('.received-inbox__refresh button').disabled"), 'DSA emitted stays empty for received DTI original')
+  assert.equal(await evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), false)
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
     checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
-      'Dirección reuses existing emission form', 'draft does not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI'],
+      'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],
     visual, counters }
   fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))

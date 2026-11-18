@@ -101,6 +101,13 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     return json({ entry: { id, isFile: true, content: { mimeType: 'application/pdf' }, ...nodes[id] } })
   }
   const proxy = `${base}/api/alfresco/api/-default-/public/alfresco/versions/1`
+  for (const headers of [director, head, specialist]) {
+    for (const [method, suffix] of [['DELETE', ''], ['DELETE', '/secondary-children/child'], ['POST', '/move'], ['POST', '/copy'], ['PUT', '']]) {
+      const deniedMutation = await fetch(`${proxy}/nodes/pdf${suffix}`, { method, headers, body: JSON.stringify({ targetParentId: 'foreign' }) })
+      assert.equal(deniedMutation.status, 403)
+      assert.equal((await deniedMutation.json()).error, 'DOCUMENT_RETENTION_OPERATION_FORBIDDEN')
+    }
+  }
   const read = (id, suffix = '') => fetch(`${proxy}/nodes/${id}${suffix}`, { headers: head })
   for (const suffix of ['', '/content']) {
     assert.equal((await read('pdf', suffix)).status, 403)
@@ -143,6 +150,19 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(searchPayload.context, undefined)
   const getDirectory = async (headers) => fetch(`${base}/api/directory/dispatch-recipients`, { headers })
   assert.deepEqual((await (await getDirectory(director)).json()).recipients.map((recipient) => recipient.id), ['head-a', 'head-b', 'staff-a', 'staff-b'])
+  const pendingHierarchy = await getDirectory(head)
+  assert.equal(pendingHierarchy.status, 503)
+  assert.equal((await pendingHierarchy.json()).error, 'ORGANIZATIONAL_HIERARCHY_PENDING')
+  const blockedDispatch = await dispatch({ ...input, requestKey: 'pending-hierarchy' }, head)
+  assert.equal(blockedDispatch.status, 503, JSON.stringify(await blockedDispatch.json()))
+  // Test-only institutional provider: no production mappings or guessed supervisors.
+  config.organizationalHierarchyProvider = {
+    async resolveSpecialists({ dependency }) {
+      return { verified: true, members: (dependency === 'dsa' ? ['staff-a', 'staff-b'] : ['staff-dti'])
+        .map((userId) => ({ userId, groupIds: ['GROUP_test_supervision'] })) }
+    },
+  }
+  t.after(() => { delete config.organizationalHierarchyProvider })
   assert.deepEqual((await (await getDirectory(head)).json()).recipients.map((recipient) => recipient.id), ['staff-a', 'staff-b'])
   assert.equal((await getDirectory(specialist)).status, 403)
   assert.deepEqual((await (await getDirectory(directorDti)).json()).recipients.map((recipient) => recipient.id), ['head-dti', 'staff-dti'])
