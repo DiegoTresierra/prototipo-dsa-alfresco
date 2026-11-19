@@ -36,13 +36,13 @@ test('priority labels match real selections and unknown values are never display
   for (const value of [undefined, '', 'invalid', '__proto__', 'constructor']) assert.equal(documentPriority(value).className, 'unknown')
 })
 
-test('priority enrichment uses matching node and verified sender without adding unauthorized documents', () => {
+test('browser confirmations never supply documentary priority or add unauthorized documents', () => {
   const inbox = [{ id: 'pdf', senderUserId: 'sender' }, { id: 'other', senderUserId: 'another' }]
   const confirmations = [{ id: 'pdf', senderUserId: 'sender', priority: 'Urgente' }, { id: 'other', senderUserId: 'wrong-person', priority: 'Alta' }, { id: 'not-authorized', senderUserId: 'sender', priority: 'Normal' }]
   const result = withKnownPriorities(inbox, confirmations)
   assert.equal(result.length, 2)
-  assert.equal(result[0].priority, 'Urgente')
-  assert.equal(result[0].prioritySource, 'browser')
+  assert.equal(result[0].priority, undefined)
+  assert.equal(result[0].prioritySource, undefined)
   assert.equal(result[1].priority, undefined)
   assert.equal(inbox[0].priority, undefined, 'API results are not mutated')
   const repositoryNode = { id: 'pdf', senderUserId: 'sender', priority: 'Alta' }

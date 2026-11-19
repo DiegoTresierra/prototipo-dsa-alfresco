@@ -3,6 +3,15 @@ import assert from 'node:assert/strict'
 import { authorizeNodeRead, filterDocumentCollection, validateDocumentReadRequest } from './documentReadPolicy.js'
 
 const core = '/api/-default-/public/alfresco/versions/1'
+
+test('server-verified secondary knowledge membership permits reading only after actor ACL, without an assignment', async () => {
+  const { context } = fixture()
+  context.listDispatches = () => []
+  context.institutionalMemberships = new Map([['secondary', new Set(['dsa-knowledge'])], ['unassigned', new Set(['dsa-attention'])], ['denied', new Set(['dsa-knowledge'])]])
+  assert.equal(await authorizeNodeRead(context, 'secondary'), true)
+  assert.equal(await authorizeNodeRead(context, 'unassigned'), false)
+  assert.equal(await authorizeNodeRead(context, 'denied'), false)
+})
 function fixture() {
   const unit = { code: 'fixture', name: 'Unidad de prueba', dependency: 'DSA' }
   const nodes = {

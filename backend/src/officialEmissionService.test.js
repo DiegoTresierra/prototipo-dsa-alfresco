@@ -2,6 +2,54 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { officialFixture } from './testFixtures/officialEmission.js'
 import { legacyFingerprint, sha256 } from './emissionReconciliation.js'
+import { createOfficialEmissionService } from './officialEmissionService.js'
+import { numberingScope } from './numberingStore.js'
+
+test('January boundaries use one clock reference and idempotent replays never read the current clock', async (t) => {
+  const f = officialFixture(t)
+  f.service.release()
+  let reads = 0
+  let instant = new Date('2027-01-01T04:59:59.999Z') // December 31 in Lima.
+  const service = createOfficialEmissionService(f.settings, f.fetch, () => {
+    reads++
+    return reads % 2 === 1 ? instant : new Date('2030-01-02T05:00:00Z')
+  })
+  f.beforeCleanup(() => service.release())
+  for (const [key, at, date, cycle] of [
+    ['year-change', '2027-01-01T04:59:59.999Z', '2026-12-31', 2026],
+    ['january-first', '2027-01-02T04:59:59.999Z', '2027-01-01', 2026],
+    ['january-second', '2027-01-02T05:00:00.001Z', '2027-01-02', 2027],
+  ]) {
+    reads = 0; instant = new Date(at)
+    const first = await service.issue(f.session(), f.input(key))
+    const properties = first.emittedEntry.properties
+    assert.equal(reads, 1)
+    assert.equal(properties['gd:fechaDocumento'], date)
+    assert.equal(properties['gd:cicloDocumental'], cycle)
+    assert.equal(numberingScope('DSA', new Date(date + 'T12:00:00Z')).cycle, cycle)
+    const repeat = await service.issue(f.session(), f.input(key))
+    assert.equal(reads, 1, 'a replay must use its recorded temporal data')
+    assert.equal(repeat.emittedEntry.id, first.emittedEntry.id)
+    assert.equal(repeat.emittedEntry.properties['gd:fechaDocumento'], date)
+    assert.equal(repeat.emittedEntry.properties['gd:cicloDocumental'], cycle)
+  }
+})
+
+test('official creation persists verified descriptive fields and replays retain the original documentary date', async (t) => {
+  const f = officialFixture(t)
+  const input = f.input('descriptive')
+  const first = await f.service.issue(f.session(), input)
+  const p = first.emittedEntry.properties
+  assert.equal(p['gd:tipoDocumental'], input.documentType)
+  assert.equal(p['gd:dependenciaOrigen'], 'DSA')
+  assert.equal(p['gd:dependenciaDestino'], 'DTI')
+  assert.equal(p['gd:remitente'], f.session().alfresco.id)
+  assert.match(p['gd:fechaDocumento'], /^\d{4}-\d{2}-\d{2}$/)
+  const repeat = await f.service.issue(f.session(), input)
+  assert.equal(repeat.emittedEntry.id, first.emittedEntry.id)
+  assert.equal(repeat.emittedEntry.properties['gd:fechaDocumento'], p['gd:fechaDocumento'])
+  assert.deepEqual(first.metadataWarnings, ['DOCUMENT_PRIORITY_NOT_PERSISTED', 'ACADEMIC_PERIOD_NOT_PERSISTED'])
+})
 
 test('real REST adapter creates PDF and metadata atomically, serializes requests, verifies GET and secondary distribution', async (t) => {
   const f = officialFixture(t)

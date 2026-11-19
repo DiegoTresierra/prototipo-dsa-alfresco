@@ -285,3 +285,41 @@ test('secondary associations with out-of-order metadata keep the newest actor-re
   })
   assert.equal((await repository.loadInbox(director)).dispatches.length, 2)
 })
+
+test('an unreadable foreign folder produces a visible partial snapshot instead of destroying the institutional inbox', async () => {
+  const { settings, state, create, fetchImpl } = fixture()
+  await create()
+  settings.officeInboxNodeIds.DTI = { emitidos: 'foreign-folder' }
+  const repository = createAlfrescoDispatchRepository(settings, (url, options) => new URL(url).pathname.includes('/foreign-folder/')
+    ? Response.json({}, { status: 403 }) : fetchImpl(url, options))
+  const result = await repository.loadInbox(director)
+  assert.equal(result.dispatches.length, 1)
+  assert.equal(result.discoveryErrors[0].error, 'DISPATCH_DISCOVERY_PARTIAL')
+  assert.equal(result.actorNodes.get(documentId).id, documentId)
+  assert.equal(state.node.properties['gd:estado'], 'existing-state')
+})
+
+test('technical discovery never discloses node identity without actor ACL proof, including empty authorized snapshots', async () => {
+  for (const status of [403, 404, 500, 'network']) {
+    const { settings, state, fetchImpl } = fixture()
+    state.folderDenied = true
+    state.node.name = 'private-name.pdf'
+    state.node.properties['cm:title'] = 'private-title'
+    const repository = createAlfrescoDispatchRepository(settings, (url, options) => {
+      if (new URL(url).pathname.endsWith(`/nodes/${documentId}`) && options.headers.Authorization === director.authorization) {
+        if (status === 'network') throw new Error('private URL and context must not escape')
+        return Response.json({}, { status })
+      }
+      return fetchImpl(url, options)
+    })
+    const snapshot = await repository.loadInbox(director)
+    assert.equal(snapshot.actorNodes.size, 0)
+    assert.deepEqual(snapshot.dispatches, [])
+    const publicResult = JSON.stringify(snapshot)
+    for (const sensitive of [documentId, 'private-name', 'private-title', 'private URL']) assert.ok(!publicResult.includes(sensitive))
+    if (status === 500 || status === 'network') {
+      assert.equal(snapshot.discoveryErrors[0].error, 'DISPATCH_DISCOVERY_NODE_UNAVAILABLE')
+      assert.ok(snapshot.discoveryErrors[0].diagnosticId)
+    }
+  }
+})

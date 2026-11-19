@@ -26,3 +26,14 @@ test('ignores unrelated Alfresco groups and does not infer from usernames', () =
   assert.equal(result.dependency, 'DSA')
   assert.equal(result.roleId, 'especialista-dsa')
 })
+
+test('distinct authority IDs never become equivalent after stripping prefixes, punctuation, case or labels', () => {
+  for (const groups of [
+    ['GROUP_DSA', 'GROUP_DIRECCION'], ['GROUP_GD_DSA', 'GROUP_FUNCION_DIRECCION'],
+    ['GROUP_GD_D-SA', 'GROUP_GD_DIRECCION'], ['group_gd_dsa', 'GROUP_GD_DIRECCION'],
+    ['GROUP_GD_DSA ', 'GROUP_GD_DIRECCION'], ['Gestión Documental - DSA', 'GROUP_GD_DIRECCION'],
+  ]) assert.notEqual(resolve(groups).authorizationStatus, 'active')
+  assert.equal(resolveRole(['GROUP_CUSTOM_DSA', 'GROUP_CUSTOM_HEAD'], {
+    dependencies: { DSA: ['GROUP_CUSTOM_DSA'] }, functions: { 'jefe-unidad': ['GROUP_CUSTOM_HEAD'] },
+  }).roleId, 'jefe-unidad-dsa', 'explicit configured IDs remain supported')
+})

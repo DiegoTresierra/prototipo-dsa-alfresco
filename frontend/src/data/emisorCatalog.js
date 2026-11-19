@@ -3,59 +3,5 @@ export const recipientDependencies = [
   { id: 'dsa', name: 'Direccion de Servicios Academicos (DSA)', acronym: 'DSA', available: true },
 ]
 
-const provisionalFunctions = 'Funciones del MOF pendientes de incorporación. Esta descripción es provisional y no constituye una función oficial.'
-const position = (id, title, recipientName, options = {}) => ({
-  id,
-  title,
-  recipientName,
-  available: options.available ?? true,
-  reportsToPositionId: options.reportsToPositionId || null,
-  functionsDescription: provisionalFunctions,
-})
-
-export const organizationalUnits = [
-  {
-    id: 'dti-direccion',
-    name: 'Dirección',
-    dependencyId: 'dti',
-    parentId: null,
-    positions: [position('dti-puesto-direccion', 'Dirección', 'Dirección de Tecnologías de Información')],
-  },
-  {
-    id: 'dsa-direccion',
-    name: 'Dirección',
-    dependencyId: 'dsa',
-    parentId: null,
-    positions: [
-      position('dsa-puesto-direccion', 'Dirección', 'Dirección de Servicios Académicos (DSA)'),
-      position('dsa-secretaria-direccion', 'Secretaría', 'Bethzabet'),
-    ],
-  },
-  {
-    id: 'dsa-procesos-tecnicos',
-    name: 'Unidad de Procesos Técnicos',
-    dependencyId: 'dsa',
-    parentId: 'dsa-direccion',
-    positions: [
-      position('dsa-pt-jefatura', 'Jefatura', 'Erika'),
-      position('dsa-pt-soporte-academico', 'Técnico en Soporte Académico', 'Paul'),
-      position('dsa-pt-matriculas-especiales', 'Especialista en Soporte de Matrículas Especiales', 'Nicaise'),
-      position('dsa-pt-homologacion-convalidacion', 'Especialista en Homologación y Convalidación', 'Humberto'),
-      position('dsa-pt-emision-soporte-documentos', 'Especialista en Emisión y Soporte de Documentos Académicos', 'Alex'),
-      position('dsa-pt-tecnico-emision-documentos', 'Técnico en emisión de documentos académicos', 'Roy', { reportsToPositionId: 'dsa-pt-emision-soporte-documentos' }),
-    ],
-  },
-  {
-    id: 'dsa-registro-central-estadistica',
-    name: 'Unidad de Registro Central y Estadística Académica',
-    dependencyId: 'dsa',
-    parentId: 'dsa-direccion',
-    positions: [
-      position('dsa-rcea-registro-estadistica', 'Especialista en Registro y Estadística Académica', 'Giancarlo'),
-      position('dsa-rcea-tecnico-registro-central', 'Técnico de registro central', 'Plaza disponible', { available: false }),
-    ],
-  },
-]
-
 export const documentTypes = ['Oficio', 'Memorando', 'Informe', 'Solicitud', 'Carta']
 export const documentPriorities = ['Normal', 'Alta', 'Urgente']

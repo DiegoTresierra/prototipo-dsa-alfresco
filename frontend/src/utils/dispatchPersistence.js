@@ -20,7 +20,8 @@ export function withDispatchPersistence(records, persistence) {
 }
 
 export function requireDispatchPersistence(persistence) {
-  if (!['alfresco', 'local'].includes(persistence)) throw new Error('El backend no informa el origen de las asignaciones. Reinicia el backend actualizado y vuelve a consultar la bandeja.')
+  if (persistence === 'local') throw new Error('El backend usa persistencia local provisional. No se puede presentar como una bandeja institucional Alfresco; revisa la configuración sin migrar ni borrar los datos anteriores.')
+  if (persistence !== 'alfresco') throw new Error('El backend no informa el origen de las asignaciones. Reinicia el backend actualizado y vuelve a consultar la bandeja.')
 }
 
 export function documentResponsibilities(records, documentId, requireAlfresco = false) {

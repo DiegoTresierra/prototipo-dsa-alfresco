@@ -1,9 +1,10 @@
+import { assertDescriptiveModel, descriptiveMetadata, emissionDate, verifyDescriptiveMetadata } from './emissionDescriptiveMetadata.js'
 import fs from 'node:fs'
 import { createAlfrescoNumberedIssuer, createInstitutionalEmissionReader } from './alfrescoNumbering.js'
 import { decodeEmissionMetadata, encodeEmissionMetadata, assertEmissionModel } from './officialEmissionContract.js'
 import { createDocumentQueue } from './documentQueue.js'
 import { validatePilotEnvironment, acquirePilotLease } from './dispatchPilot.js'
-import { resolveRole } from './roleResolver.js'
+import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { stableJson, sha256, validateReconciliation } from './emissionReconciliation.js'
 
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
@@ -56,12 +57,12 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
       form.set('filedata', new Blob([payload.file], { type: 'application/pdf' }), c.name)
       form.set('name', c.name)
       form.set('nodeType', 'cm:content')
-      form.set('aspectnames', 'gd:identificacion')
+      form.set('aspectnames', JSON.stringify(['gd:identificacion', 'gd:clasificacion']))
       form.set('autoRename', 'false')
       form.set('overwrite', 'false')
       form.set('cm:title', payload.title)
       form.set('cm:description', payload.description)
-      for (const [key, value] of Object.entries(properties)) form.set(key, String(value))
+      for (const [key, value] of Object.entries({ ...properties, ...c.descriptive })) form.set(key, String(value))
       let entry
       try { entry = (await c.request(`/nodes/${encodeURIComponent(c.folder)}/children?autoRename=false`, c.authorization, { method: 'POST', body: form })).entry }
       catch (error) {
@@ -75,6 +76,8 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
     finalize: async (record, payload) => payload.context.distribute(record),
     verify: async (record, payload) => {
       await payload.context.reader.verify(record)
+      const node = (await payload.context.request(`/nodes/${encodeURIComponent(record.documentId)}?include=properties`, payload.context.authorization)).entry
+      verifyDescriptiveMetadata(node, payload.context.descriptive)
       await payload.context.verifyContent(record)
     },
   })
@@ -100,21 +103,9 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
       if (!result.ok) throw fail('OFFICIAL_ALFRESCO_REJECTED', result.status)
       try { return await result.json() } catch { throw fail('OFFICIAL_INVALID_RESPONSE', 502) }
     }
-    const me = (await request('/people/-me-', authorization)).entry
-    if (me?.id !== actorId || me.enabled !== true) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
+    const identity = await revalidateInstitutionalIdentity(settings, session, fetchImpl)
     const serviceMe = (await request('/people/-me-', serviceAuthorization)).entry
     if (serviceMe?.id !== service.username || serviceMe.enabled !== true || ['admin', 'administrator'].includes(service.username.toLowerCase())) throw fail('OFFICIAL_SERVICE_IDENTITY_REJECTED', 403)
-    const groupIds = []
-    let skip = 0
-    for (;;) {
-      const data = (await request(`/people/${encodeURIComponent(actorId)}/groups?maxItems=100&skipCount=${skip}`, authorization)).list
-      if (!Array.isArray(data?.entries) || !data.pagination || data.pagination.skipCount !== skip || typeof data.pagination.hasMoreItems !== 'boolean') throw fail('OFFICIAL_INVALID_RESPONSE', 502)
-      groupIds.push(...data.entries.map(({ entry }) => entry.id))
-      if (!data.pagination.hasMoreItems) break
-      if (!data.entries.length) throw fail('OFFICIAL_INVALID_RESPONSE', 502)
-      skip += data.entries.length
-    }
-    const identity = resolveRole(groupIds, settings.groupMappings, actorId)
     const dependency = String(session.dependency || '').toUpperCase()
     if (identity.authorizationStatus !== 'active' || identity.functionalRole !== 'direccion' || identity.dependency !== dependency || !['DTI', 'DSA'].includes(dependency)) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
     // Direction's institution code is the verified institutional dependency.
@@ -144,6 +135,9 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
           model = await result.json()
         } catch { throw fail('OFFICIAL_MODEL_REQUIRED') }
         assertEmissionModel(model.properties)
+        const classificationResponse = await fetchImpl(settings.alfrescoTarget + '/alfresco/service/api/classes/gd_clasificacion', { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { Accept: 'application/json', Authorization: serviceAuthorization } })
+        if (!classificationResponse.ok) throw fail('OFFICIAL_DESCRIPTIVE_MODEL_REQUIRED')
+        assertDescriptiveModel(model, await classificationResponse.json())
         const reader = createInstitutionalEmissionReader({ folderId: folder, get: (path) => request(path, serviceAuthorization), modelProperties: model.properties,
           decode: async (node) => await exclusion(node) ? null : decodeEmissionMetadata(node) })
         const lookup = async () => {
@@ -167,7 +161,11 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
           previous = decodeEmissionMetadata(existing)
           if (previous.actorId !== actorId || previous.requestKey !== input.requestKey || previous.payloadHash !== hash || previous.documentCode !== code) throw fail('NUMBERING_RETRY_CONFLICT', 409)
         }
+        // A single reference instant drives all temporal fields of a new issue.
+        // Replays use their persisted cycle/date, never the current clock.
+        const referenceTime = previous ? null : clock()
         const context = { actorId, code, folder, name, hash, authorization, request, reader, lookup,
+          descriptive: descriptiveMetadata(canonical, previous ? existing.properties?.['gd:fechaDocumento'] : emissionDate(referenceTime)),
           verifyContent: async (record) => {
             let response
             try { response = await fetchImpl(settings.alfrescoTarget + core + `/nodes/${encodeURIComponent(record.documentId)}/content`, {
@@ -199,10 +197,10 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
         const payload = { ...canonical, file: input.file, context }
         // Replays retain their recorded cycle even across the January 2 boundary.
         const result = await issuer({ documentCode: code, requestKey: input.requestKey, payload,
-          now: previous ? new Date(Date.UTC(previous.cycle, 6, 1)) : clock() })
+          now: previous ? new Date(Date.UTC(previous.cycle, 6, 1)) : referenceTime })
         const entry = (await request(`/nodes/${encodeURIComponent(result.documentId)}?include=properties`, authorization)).entry
         uncertain.delete(name)
-        return { emittedEntry: entry, receivedEntry: entry, officialEmission: true }
+        return { emittedEntry: entry, receivedEntry: entry, officialEmission: true, metadataWarnings: ['DOCUMENT_PRIORITY_NOT_PERSISTED', 'ACADEMIC_PERIOD_NOT_PERSISTED'] }
       } catch (error) {
         if (error.cause?.message === 'OFFICIAL_RECIPIENT_NODE_READ_REQUIRED') {
           error.message = error.cause.message

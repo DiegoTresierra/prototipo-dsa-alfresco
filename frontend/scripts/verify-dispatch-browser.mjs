@@ -41,7 +41,7 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const json = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)) }
   if (url.pathname.startsWith('/api/')) {
-    if (url.pathname === '/api/auth/me') return json(session)
+    if (url.pathname === '/api/auth/me') return json({ ...session, institutionalDocumentCode: session.functionalRole === 'direccion' ? session.dependency : '', unitVerified: false })
     if (url.pathname === '/api/auth/status') return json({ basicAuthEnabled: true })
     if (url.pathname === '/api/documents/emitted') {
       counters.emitted++
@@ -222,8 +222,6 @@ try {
   await until(() => evaluate("Boolean(document.querySelector('.searchable-select__option'))"), 'recipient dependency options')
   await evaluate("document.querySelector('.searchable-select__option').click()")
   const selectOption = async (selector) => evaluate(`(() => {const el=document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,el.options[1].value); el.dispatchEvent(new Event('change',{bubbles:true}));})()`)
-  await selectOption('.form-grid--recipient select')
-  await selectOption('.form-grid--recipient label:nth-of-type(2) select')
   await selectOption('select[name=documentType]')
   await selectOption('select[name=documentPeriod]')
   await selectOption('select[name=priority]')

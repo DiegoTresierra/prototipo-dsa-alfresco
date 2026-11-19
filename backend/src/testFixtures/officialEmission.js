@@ -47,8 +47,9 @@ export function officialFixture(t) {
     if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: dep ? actorUser : 'gd_distribucion', enabled: !conditions.rejectService || Boolean(dep) } })
     if (/\/people\/[^/]+\/groups$/.test(parsed.pathname)) return json({ list: { entries: [`GROUP_${dep}`, 'GROUP_DIRECTION'].map((id) => ({ entry: { id } })), pagination: { skipCount: 0, count: 2, totalItems: 2, hasMoreItems: false } } })
     if (parsed.pathname === '/alfresco/service/api/classes/gd_identificacion') return json({ properties: Object.fromEntries([
-      ['gd:numero', 'd:text'], ['gd:codigoDocumental', 'd:text'], ['gd:cicloDocumental', 'd:int'], ['gd:identidadEmision', 'd:text'],
+      ...['gd:dependenciaOrigen','gd:dependenciaDestino','gd:remitente','gd:destinatario','gd:fechaDocumento'].map((name) => [name, 'd:text']), ['gd:numero', 'd:text'], ['gd:codigoDocumental', 'd:text'], ['gd:cicloDocumental', 'd:int'], ['gd:identidadEmision', 'd:text'],
     ].map(([name, dataType]) => [name, { dataType, multiValued: false }])) })
+    if (parsed.pathname === '/alfresco/service/api/classes/gd_clasificacion') return json({ properties: { 'gd:tipoDocumental': { dataType: 'd:text', multiValued: false } } })
     const match = parsed.pathname.match(/\/nodes\/([^/]+)(?:\/(.*))?$/)
     if (!match) return json({}, 404)
     const id = decodeURIComponent(match[1]), action = match[2]
@@ -71,14 +72,14 @@ export function officialFixture(t) {
     if (method === 'POST' && action === 'children') {
       if (conditions.createDenied) return json({}, 403)
       const form = options.body
-      if (form.get('aspectnames') !== 'gd:identificacion' || form.get('autoRename') !== 'false' || form.get('overwrite') !== 'false') throw new Error('invalid multipart contract')
+      if (form.get('aspectnames') !== JSON.stringify(['gd:identificacion', 'gd:clasificacion']) || form.get('autoRename') !== 'false' || form.get('overwrite') !== 'false') throw new Error('invalid multipart contract')
       if ([...nodes.values()].some((n) => n.parentId === id && n.name === form.get('name'))) return json({}, 409)
       const nodeId = `pdf-${[...nodes.values()].filter((n) => n.isFile).length + 1}`
       const file = Buffer.from(await form.get('filedata').arrayBuffer())
       const entry = { id: nodeId, nodeType: 'cm:content', isFile: true, parentId: id, name: form.get('name'),
         createdByUser: { id: actorUser }, content: { mimeType: 'application/pdf', sizeInBytes: file.length }, file,
         permissions: conditions.noNodeRecipientRead ? { isInheritanceEnabled: true, inherited: [] } : nodes.get(id).permissions, properties: {
-          'gd:numero': form.get('gd:numero'), 'gd:codigoDocumental': form.get('gd:codigoDocumental'),
+          ...Object.fromEntries(['gd:dependenciaOrigen','gd:dependenciaDestino','gd:remitente','gd:destinatario','gd:fechaDocumento','gd:tipoDocumental'].map((name) => [name, form.get(name)])), 'gd:numero': form.get('gd:numero'), 'gd:codigoDocumental': form.get('gd:codigoDocumental'),
           'gd:cicloDocumental': Number(form.get('gd:cicloDocumental')), 'gd:identidadEmision': form.get('gd:identidadEmision'),
         } }
       nodes.set(nodeId, entry); children.get(id).push(nodeId)

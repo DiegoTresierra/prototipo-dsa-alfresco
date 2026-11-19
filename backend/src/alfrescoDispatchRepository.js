@@ -146,7 +146,9 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     } catch { fail(method === 'PUT' ? 'DISPATCH_WRITE_OUTCOME_UNKNOWN' : 'DISPATCH_ALFRESCO_UNAVAILABLE', 502) }
     if (!response.ok) {
       if (method === 'PUT') fail(response.status === 403 ? 'DISPATCH_NODE_UPDATE_DENIED' : 'DISPATCH_WRITE_OUTCOME_UNKNOWN', response.status === 403 ? 403 : 502)
-      fail(response.status === 403 ? 'DISPATCH_NODE_READ_DENIED' : 'DISPATCH_ALFRESCO_UNAVAILABLE', response.status === 403 ? 403 : 502)
+      throw Object.assign(new Error(response.status === 403 ? 'DISPATCH_NODE_READ_DENIED' : 'DISPATCH_ALFRESCO_UNAVAILABLE'), {
+        status: response.status === 403 ? 403 : 502, upstreamStatus: response.status,
+      })
     }
     try { return await response.json() } catch { fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502) }
   }
@@ -423,54 +425,82 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     const ids = new Set()
     // Request-scoped only: these nodes are proven readable by THIS actor.
     const actorNodes = new Map()
+    const institutionalMemberships = new Map()
+    const discoveryErrors = []
     let scanned = 0
     await mapConcurrent(folders, 4, async (folder) => {
-      let skip = 0
-      let more
-      let useServiceDiscovery = false
-      do {
-        let payload
-        const options = { authorization: useServiceDiscovery ? serviceAuthorization() : session.authorization,
-          query: `?include=properties,aspectNames,association&maxItems=100&skipCount=${skip}` }
-        try { payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, options) } catch (error) {
-          // Folder enumeration may be denied while individual documents remain readable.
-          // Technical discovery is never an actor ACL proof; each such node needs actor GET.
-          if (error.message !== 'DISPATCH_NODE_READ_DENIED' || useServiceDiscovery) throw error
-          useServiceDiscovery = true
-          payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, { ...options, authorization: serviceAuthorization() })
-        }
-        const list = payload.list
-        if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
-        for (const { entry } of list.entries) {
-          if (entry?.isFile && entry.content?.mimeType === 'application/pdf' && entry.association?.assocType === 'cm:contains') {
-            if (typeof entry.id !== 'string') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
-            ids.add(entry.id)
-            if (!useServiceDiscovery && Object.hasOwn(entry, 'properties') && Array.isArray(entry.aspectNames)) {
-              const previous = actorNodes.get(entry.id)
-              if (!previous || !(Date.parse(previous.modifiedAt) > Date.parse(entry.modifiedAt))) actorNodes.set(entry.id, entry)
+      try {
+        let skip = 0
+        let more
+        let useServiceDiscovery = false
+        do {
+          let payload
+          const options = { authorization: useServiceDiscovery ? serviceAuthorization() : session.authorization,
+            query: `?include=properties,aspectNames,association&maxItems=100&skipCount=${skip}` }
+          try { payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, options) } catch (error) {
+            // Folder enumeration may be denied while individual documents remain readable.
+            // Technical discovery is never an actor ACL proof; each such node needs actor GET.
+            if (error.message !== 'DISPATCH_NODE_READ_DENIED' || useServiceDiscovery) throw error
+            useServiceDiscovery = true
+            payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, { ...options, authorization: serviceAuthorization() })
+          }
+          const list = payload.list
+          if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
+          for (const { entry } of list.entries) {
+            if (entry?.isFile && entry.content?.mimeType === 'application/pdf' && entry.association?.assocType === 'cm:contains') {
+              if (typeof entry.id !== 'string') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
+              ids.add(entry.id)
+              if (!institutionalMemberships.has(entry.id)) institutionalMemberships.set(entry.id, new Set())
+              institutionalMemberships.get(entry.id).add(folder)
+              if (!useServiceDiscovery && Object.hasOwn(entry, 'properties') && Array.isArray(entry.aspectNames)) {
+                const previous = actorNodes.get(entry.id)
+                if (!previous || !(Date.parse(previous.modifiedAt) > Date.parse(entry.modifiedAt))) actorNodes.set(entry.id, entry)
+              }
             }
           }
-        }
-        more = list.pagination.hasMoreItems
-        skip += list.entries.length
-        scanned += list.entries.length
-        if (scanned > 10_000 || more && !list.entries.length) fail('DISPATCH_DISCOVERY_LIMIT_EXCEEDED')
-      } while (more)
+          more = list.pagination.hasMoreItems
+          skip += list.entries.length
+          scanned += list.entries.length
+          if (scanned > 10_000 || more && !list.entries.length) fail('DISPATCH_DISCOVERY_LIMIT_EXCEEDED')
+        } while (more)
+      } catch (error) {
+        const ownFolders = Object.values(settings.officeInboxNodeIds?.[String(session.dependency).toUpperCase()] || {})
+        if (ownFolders.includes(folder)) throw error
+        discoveryErrors.push({ error: 'DISPATCH_DISCOVERY_PARTIAL', scope: 'other-dependency' })
+      }
     })
     const batches = await mapConcurrent([...ids], 4, async (id) => {
       // Use actor credentials for authoritative reads: an assignment never bypasses Alfresco ACL.
       try {
-        const value = actorNodes.has(id) ? decodeNode(actorNodes.get(id), id) : await read(id, session.authorization)
+        if (!actorNodes.has(id)) {
+          const payload = await request(`${core}/nodes/${encodeURIComponent(id)}`, { authorization: session.authorization,
+            query: '?include=properties,aspectNames,allowableOperations' })
+          if (payload.entry?.id !== id) fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
+          actorNodes.set(id, payload.entry)
+        }
+        const value = decodeNode(actorNodes.get(id), id)
         actorNodes.set(id, value.node)
         return value.envelope.dispatches
       } catch (error) {
-        if (error.message === 'DISPATCH_NODE_READ_DENIED') return []
-        throw error
+        if (error.message === 'DISPATCH_NODE_READ_DENIED' || error.upstreamStatus === 404) return []
+        if (actorNodes.has(id)) {
+          discoveryErrors.push({ documentId: id, error: 'DISPATCH_DOCUMENT_UNAVAILABLE' })
+        } else {
+          const diagnosticId = randomUUID()
+          discoveryErrors.push({ error: 'DISPATCH_DISCOVERY_NODE_UNAVAILABLE', diagnosticId })
+          if (settings.alfrescoDiagnostics) console.warn('[dispatch-discovery]', JSON.stringify({ diagnosticId,
+            operation: 'actor-node-read', status: error.upstreamStatus || null, reason: 'READ_NOT_CONFIRMED' }))
+        }
+        return []
       }
     })
-    return { records: batches.flat().map((record) => ({ ...record, documentIdentity: documentIdentity(actorNodes.get(record.documentId), settings) })), actorNodes }
+    return { institutionalMemberships, discoveryErrors, records: batches.flat().map((record) => ({ ...record, documentIdentity: documentIdentity(actorNodes.get(record.documentId), settings) })), actorNodes }
   }
-  async function allRecords(session) { return (await readSnapshot(session)).records }
+  async function allRecords(session) {
+    const snapshot = await readSnapshot(session)
+    if (snapshot.discoveryErrors.length) fail('DISPATCH_DISCOVERY_PARTIAL', 503)
+    return snapshot.records
+  }
   const receivedRecords = (records, userId, role, dependency) => records.filter((record) => role === 'direccion'
     ? record.senderDependency === String(dependency).toLowerCase()
     : record.recipients.some((recipient) => recipient.userId === userId && recipient.functionalRole === role &&
@@ -483,7 +513,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     loadInbox: async (session) => {
       const snapshot = await readSnapshot(session)
       const userId = session.alfresco?.id || session.user?.id
-      return { dispatches: receivedRecords(snapshot.records, userId, session.functionalRole, session.dependency),
+      return { institutionalMemberships: snapshot.institutionalMemberships, discoveryErrors: snapshot.discoveryErrors, dispatches: receivedRecords(snapshot.records, userId, session.functionalRole, session.dependency),
         sentDispatches: sentRecords(snapshot.records, userId, session.dependency), actorNodes: snapshot.actorNodes }
     },
     findDispatch: async (userId, requestKey, documentId) => (await documentRecords(documentId)).find((record) => record.senderUserId === userId && record.requestKey === requestKey) || null,

@@ -1,3 +1,4 @@
+import { identityResponse } from './testFixtures/institutionalIdentity.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -36,7 +37,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
   })
   const base = `http://127.0.0.1:${server.address().port}`
+  const actors = new Map()
   const makeSession = (id, role, dependency = 'DSA') => {
+    actors.set(`Basic ${id}-ticket`, { id, functionalRole: role, dependency })
     const session = createSession({ alfresco: { id }, authorizationStatus: 'active', functionalRole: role, dependency, capabilities: ['documents:read', 'documents:write'], authorization: `Basic ${id}-ticket`, unit: units[id] })
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(session.id).digest('base64url')
     return { Cookie: `gd_session=${session.id}.${signature}`, 'X-CSRF-Token': session.csrfToken, 'Content-Type': 'application/json' }
@@ -64,6 +67,8 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     assert.equal(parsed.hostname, 'alfresco.invalid', 'all Alfresco requests must be mocked')
     const method = options.method || 'GET'
     calls.push({ path: parsed.pathname, method, authorization: options.headers.Authorization })
+    const identity = identityResponse(url, options, actors, config.groupMappings)
+    if (identity) return identity
     const isSearch = parsed.pathname.endsWith('/search')
     assert.equal(method, isSearch ? 'POST' : 'GET', 'dispatch never writes a node, ACL, PDF or association')
     const json = (value, status = 200) => Response.json(value, { status })
