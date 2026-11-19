@@ -1,11 +1,10 @@
-/* eslint-disable react/prop-types */
 import { PanelPage } from '../components/PanelPage'
-import { DocumentList } from '../components/DocumentList'
+import { AssignmentsPage } from './AssignmentsPage'
 
-export function EspecialistaPage({ title, description, activePanel, documents }) {
-  if (activePanel === 'mis-asignaciones') {
-    return <DocumentList description="Documentos asignados al responsable principal seleccionado al enviarlos." documents={documents} title={title} />
+/* eslint-disable react/prop-types */
+export function EspecialistaPage({ title, description, activePanel, ...props }) {
+  if (['mis-asignaciones', 'documentos-recibidos'].includes(activePanel)) {
+    return <AssignmentsPage title={title} description={description} {...props} recipientRoles={[]} />
   }
-
   return <PanelPage description={description} title={title} />
 }

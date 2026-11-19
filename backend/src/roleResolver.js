@@ -11,12 +11,25 @@ const DEFAULT_GROUP_MAPPINGS = {
 }
 
 function normalizeGroup(group) {
-  return String(group || '').trim().toUpperCase()
+  let normalized = String(group || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+  normalized = normalized
+    .replace(/^GROUP_/, '')
+    .replace(/^GESTION\s+DOCUMENTAL\s*-\s*/, '')
+    .replace(/^FUNCION[_\s-]*/, '')
+    .replace(/^GD_/, '')
+  return normalized.replace(/[^A-Z0-9]/g, '')
 }
 
 function matchingKeys(groups, mappings) {
   return Object.entries(mappings || {})
-    .filter(([, configuredGroup]) => groups.has(normalizeGroup(configuredGroup)))
+    .filter(([, configuredGroups]) => {
+      const groupIds = Array.isArray(configuredGroups) ? configuredGroups : [configuredGroups]
+      return groupIds.some((groupId) => groups.has(normalizeGroup(groupId)))
+    })
     .map(([key]) => key)
 }
 

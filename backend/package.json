@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
+    "test": "node --test src/*.test.js",
+    "dev": "node --watch-path=src src/index.js",
     "start": "node src/index.js",
     "test:resolver": "node --test src/roleResolver.test.js"
   },

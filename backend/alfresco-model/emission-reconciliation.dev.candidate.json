@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "fingerprintVersion": 2,
+  "target": "https://alfresco-dev.uandina.edu.pe",
+  "emitidos": {
+    "DTI": "69e39272-905e-426c-a392-72905ef26ca6",
+    "DSA": "0bbf2022-7bbb-40a9-bf20-227bbb00a929"
+  },
+  "approvedBy": "",
+  "approvedAt": "",
+  "decisionReference": "",
+  "exclusions": [
+    {
+      "documentId": "448b9a6f-af5e-4248-8b9a-6faf5e32484c",
+      "contentSha256": "0eeaab717280a6c7306b4c2a6fb7b0707903ed594157b28b41086c7498986aca",
+      "fingerprint": "c0888e3f5b2239dd3d6a00ceacf6d3e91fd9328f22238f8636a212b327dda92d",
+      "reason": ""
+    },
+    {
+      "documentId": "3215e8b9-ffcd-4f05-95e8-b9ffcd0f05ea",
+      "contentSha256": "0eeaab717280a6c7306b4c2a6fb7b0707903ed594157b28b41086c7498986aca",
+      "fingerprint": "4a81b2b6660d3b5da050420817d5f6a4d4622dd0037248596a5bdc7180858e5c",
+      "reason": ""
+    },
+    {
+      "documentId": "9d86827f-105b-4eab-8682-7f105baeab90",
+      "contentSha256": "90d5e49fda6e42b5d56cbd9257daaee5b42064ff8ebd2a0c959f20e05b3a1b7f",
+      "fingerprint": "df14e3682b62000878a7c65d91a1aa4a862ea1a6ffde171dfebe4bc4ae50851e",
+      "reason": ""
+    },
+    {
+      "documentId": "18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097",
+      "contentSha256": "90d5e49fda6e42b5d56cbd9257daaee5b42064ff8ebd2a0c959f20e05b3a1b7f",
+      "fingerprint": "bdda7485ddbdc4ba854750a293313bac07a594ebdc4f181780a99cca4cc9bbca",
+      "reason": ""
+    },
+    {
+      "documentId": "efa8b1e8-0814-42e4-a8b1-e8081472e43e",
+      "contentSha256": "0eeaab717280a6c7306b4c2a6fb7b0707903ed594157b28b41086c7498986aca",
+      "fingerprint": "6f0d490d1de2b76655b1654dfcd3e6e17094fcab425b3b154d7e238119c68b7a",
+      "reason": ""
+    },
+    {
+      "documentId": "ae23bcf0-ef2a-48c7-a3bc-f0ef2a98c7b1",
+      "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "fingerprint": "9a4fbcd6977b239ce0dfaa2fe5f6a38501d7ee8e24a593c505a2054b2686c615",
+      "reason": ""
+    },
+    {
+      "documentId": "dd778efd-6acd-48f1-b78e-fd6acd08f1e1",
+      "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "fingerprint": "dcca2dd38db38ebdc607f18939e7a5f6c311221889337b413b88a25a5ee3bc1e",
+      "reason": ""
+    },
+    {
+      "documentId": "fb0d45e5-4d7e-418a-8d45-e54d7eb18a07",
+      "contentSha256": "0eeaab717280a6c7306b4c2a6fb7b0707903ed594157b28b41086c7498986aca",
+      "fingerprint": "8a2307525687f456acd8126cf2eae07ba2ee8068bb589a3327047b3e1d4493ba",
+      "reason": ""
+    },
+    {
+      "documentId": "b6b5e0a2-7211-4720-b5e0-a27211e72004",
+      "contentSha256": "5eff17d773b325dc877567648bd2e1daa3088fd74ee34e979c8f0d3fbc5f46d7",
+      "fingerprint": "055bc95d0a3a7056e5a8a0e944da09a0433491324b57b0564757f49eed932bca",
+      "reason": ""
+    },
+    {
+      "documentId": "46f55d7e-79da-479b-b55d-7e79da779b90",
+      "contentSha256": "5eff17d773b325dc877567648bd2e1daa3088fd74ee34e979c8f0d3fbc5f46d7",
+      "fingerprint": "535eae1a66acca58f21663c7493dc1a2a7aafb15c992596ef3d53b4bc1235bb7",
+      "reason": ""
+    },
+    {
+      "documentId": "4b906bb6-93ee-40d9-906b-b693ee50d93e",
+      "contentSha256": "5eff17d773b325dc877567648bd2e1daa3088fd74ee34e979c8f0d3fbc5f46d7",
+      "fingerprint": "68e62066aaa9eedd1281bc1ba81ebb8faad7b68becb638087d18e82de6bc8445",
+      "reason": ""
+    },
+    {
+      "documentId": "5a227710-d872-4b51-a277-10d8729b51eb",
+      "contentSha256": "5eff17d773b325dc877567648bd2e1daa3088fd74ee34e979c8f0d3fbc5f46d7",
+      "fingerprint": "3b2bcd7436c8e9e1799b055ba8cb46c163d53bd45b4f4542b217730b5f11e565",
+      "reason": ""
+    }
+  ]
+}

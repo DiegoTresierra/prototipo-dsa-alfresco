@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listNodeChildren } from '../api/alfresco'
+import { refreshInboxSources } from '../utils/refreshInbox'
 
-const initialState = { documents: [], unclassifiedCount: 0, loading: false, refreshing: false, error: '', lastUpdated: null }
+const initialState = { documents: [], loading: false, refreshing: false, error: '', lastUpdated: null }
 
 function isPdfCandidate(document) {
   const mimeType = String(document.mimeType || '').toLowerCase()
@@ -12,23 +13,28 @@ function isPdfCandidate(document) {
 function getSafeLoadError(error) {
   const statusFromMessage = String(error?.message || '').match(/(?:HTTP_|estado\s+)(\d{3})/i)
   const status = error?.status || Number(statusFromMessage?.[1])
-  if (error?.message === 'ALFRESCO_FOLDER_NOT_CONFIGURED') return 'No está configurada la carpeta de pruebas de Alfresco.'
+  if (error?.message === 'ALFRESCO_FOLDER_NOT_CONFIGURED') return 'No está configurada la carpeta personal de recepción en Alfresco para esta cuenta.'
   if (error?.message === 'ALFRESCO_API_PREFIX_NOT_CONFIGURED') return 'No está configurada la ruta de la API Core de Alfresco.'
   if (error?.message === 'ALFRESCO_INVALID_LIST_RESPONSE') return 'Alfresco respondió, pero el formato de la lista de documentos no es válido.'
   if (status === 401) return 'Alfresco rechazó la autenticación configurada para el entorno DEV.'
-  if (status === 403) return 'La cuenta de conexión no tiene permiso de lectura en la carpeta de pruebas.'
-  if (status === 404) return 'Alfresco no encontró la carpeta de pruebas o la ruta de consulta.'
+  if (status === 403) return 'La cuenta autenticada no tiene permiso de lectura en su bandeja personal.'
+  if (status === 404) return 'Alfresco no encontró la bandeja personal configurada.'
   if (status >= 500) return 'Alfresco DEV presentó un error al consultar la carpeta.'
   return 'No se pudo conectar con Alfresco DEV. Revisa el proxy local y la configuración de la API.'
 }
 
-export function useAlfrescoInbox({ active, allowed, folderId, dependencyId, mode = 'dependency' }) {
+export function useAlfrescoInbox({ active, allowed, folderId, folderIds = folderId ? [folderId] : [], folderKinds = [], loadAssignments, refreshKey }) {
   const [state, setState] = useState(initialState)
   const refreshRef = useRef(null)
+  const folderKey = JSON.stringify(folderIds
+    .map((id, index) => ({ id, kind: folderKinds[index] || 'personal' }))
+    .filter((folder) => folder.id))
+  const previousPage = useRef({ refreshKey, folderKey })
 
   useEffect(() => {
     let cancelled = false
     let inFlight = false
+    let pending = false
     let timer
 
     if (!allowed) {
@@ -36,29 +42,42 @@ export function useAlfrescoInbox({ active, allowed, folderId, dependencyId, mode
       return undefined
     }
 
-    const load = async () => {
-      if (inFlight) return
+    const load = async (force = false) => {
+      if (inFlight) { if (force) pending = true; return }
       inFlight = true
       setState((current) => ({ ...current, loading: !current.lastUpdated, refreshing: Boolean(current.lastUpdated), error: '' }))
       try {
-        if (!folderId) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
-        const result = await listNodeChildren(folderId, { where: '(isFile=true)' })
+        const currentFolders = JSON.parse(folderKey)
+        if (currentFolders.length === 0) throw new Error('ALFRESCO_FOLDER_NOT_CONFIGURED')
+        const folderResults = await refreshInboxSources(() => Promise.all(currentFolders.map(async (folder) => ({
+          kind: folder.kind,
+          documents: await listNodeChildren(folder.id, { where: '(isFile=true)', allPages: true }),
+        }))), loadAssignments)
         if (cancelled) return
-        const documents = mode === 'test'
-          ? result.filter(isPdfCandidate)
-          : result.filter((document) => document.destinationId === dependencyId)
-        const unclassifiedCount = mode === 'test' ? 0 : result.filter((document) => !document.destinationId).length
-        setState({ documents, unclassifiedCount, loading: false, refreshing: false, error: '', lastUpdated: new Date().toISOString() })
+        const documentsById = new Map()
+        for (const result of folderResults) {
+          for (const document of result.documents.filter(isPdfCandidate)) {
+            const existing = documentsById.get(document.id)
+            if (existing) {
+              if (!existing.inboxKinds.includes(result.kind)) existing.inboxKinds.push(result.kind)
+            } else {
+              documentsById.set(document.id, { ...document, inboxKinds: [result.kind] })
+            }
+          }
+        }
+        const documents = [...documentsById.values()]
+        setState({ documents, loading: false, refreshing: false, error: '', lastUpdated: new Date().toISOString() })
       } catch (error) {
         if (!cancelled) {
           setState((current) => ({ ...current, loading: false, refreshing: false, error: getSafeLoadError(error) }))
         }
       } finally {
         inFlight = false
+        if (pending && !cancelled) { pending = false; load() }
       }
     }
 
-    refreshRef.current = load
+    refreshRef.current = (force = true) => load(force)
     if (active) load()
 
     const schedule = () => {
@@ -70,7 +89,7 @@ export function useAlfrescoInbox({ active, allowed, folderId, dependencyId, mode
     const refreshOnReturn = () => {
       if (active && document.visibilityState === 'visible') load()
     }
-    const refreshAfterSend = () => load()
+    const refreshAfterSend = () => load(true)
     if (active) schedule()
     window.addEventListener('focus', refreshOnReturn)
     document.addEventListener('visibilitychange', refreshOnReturn)
@@ -84,7 +103,11 @@ export function useAlfrescoInbox({ active, allowed, folderId, dependencyId, mode
       window.removeEventListener('uac:alfresco-document-created', refreshAfterSend)
       refreshRef.current = null
     }
-  }, [active, allowed, dependencyId, folderId, mode])
+  }, [active, allowed, folderKey, loadAssignments])
+  useEffect(() => {
+    if (previousPage.current.refreshKey !== refreshKey && previousPage.current.folderKey === folderKey) refreshRef.current?.(false)
+    previousPage.current = { refreshKey, folderKey }
+  }, [refreshKey, folderKey])
 
   const refresh = useCallback(() => refreshRef.current?.(), [])
   return { ...state, refresh }

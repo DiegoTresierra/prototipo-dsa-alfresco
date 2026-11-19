@@ -15,9 +15,11 @@ export function getIssuerCode({ roleId, dependencyAcronym, unitAcronym, personCo
   const dependencyCode = normalizeCodePart(dependencyAcronym)
   if (!dependencyCode) return ''
   if (['director', 'director-dti', 'director-dsa'].includes(roleId)) return dependencyCode
+
   const unitCode = normalizeCodePart(unitAcronym)
   if (!unitCode) return ''
-  if (roleId?.startsWith('jefe-unidad')) return `${dependencyCode}-${unitCode}`
+  if (roleId === 'jefe_unidad' || roleId?.startsWith('jefe-unidad-')) return `${dependencyCode}-${unitCode}`
+
   const issuerPersonCode = normalizeCodePart(personCode)
   return issuerPersonCode ? `${dependencyCode}-${unitCode}-${issuerPersonCode}` : ''
 }

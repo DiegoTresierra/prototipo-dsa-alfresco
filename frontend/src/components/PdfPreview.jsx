@@ -19,8 +19,8 @@ async function validatePdfContent(blob, fileName, declaredMimeType) {
 }
 
 /* eslint-disable react/prop-types */
-export function PdfPreview({ blob = null, nodeId = '', fileName = 'documento.pdf', declaredMimeType = '', emptyMessage = 'Selecciona un PDF para ver la vista previa.' }) {
-  const sourceKey = nodeId ? `node:${nodeId}` : blob
+export function PdfPreview({ blob = null, nodeId = '', fileName = 'documento.pdf', declaredMimeType = '', originalDocumentId = '', emptyMessage = 'Selecciona un PDF para ver la vista previa.' }) {
+  const sourceKey = nodeId ? `node:${originalDocumentId}:${nodeId}` : blob
   const [preview, setPreview] = useState({ sourceKey: null, url: '', loading: false, error: '' })
   const currentPreview = preview.sourceKey === sourceKey ? preview : { url: '', loading: Boolean(sourceKey), error: '' }
 
@@ -36,7 +36,7 @@ export function PdfPreview({ blob = null, nodeId = '', fileName = 'documento.pdf
     setPreview({ sourceKey, url: '', loading: true, error: '' })
 
     const preparePreview = async () => {
-      const content = nodeId ? await getNodeContent(nodeId) : blob
+      const content = nodeId ? await getNodeContent(nodeId, originalDocumentId) : blob
       const validationError = await validatePdfContent(content, fileName, declaredMimeType)
       if (cancelled) return
       if (validationError) {
@@ -57,7 +57,7 @@ export function PdfPreview({ blob = null, nodeId = '', fileName = 'documento.pdf
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [blob, declaredMimeType, fileName, nodeId, sourceKey])
+  }, [blob, declaredMimeType, fileName, nodeId, originalDocumentId, sourceKey])
 
   return (
     <div className="pdf-preview" aria-live="polite">
