@@ -10,25 +10,11 @@ const DEFAULT_GROUP_MAPPINGS = {
   },
 }
 
-function normalizeGroup(group) {
-  let normalized = String(group || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toUpperCase()
-  normalized = normalized
-    .replace(/^GROUP_/, '')
-    .replace(/^GESTION\s+DOCUMENTAL\s*-\s*/, '')
-    .replace(/^FUNCION[_\s-]*/, '')
-    .replace(/^GD_/, '')
-  return normalized.replace(/[^A-Z0-9]/g, '')
-}
-
 function matchingKeys(groups, mappings) {
   return Object.entries(mappings || {})
     .filter(([, configuredGroups]) => {
       const groupIds = Array.isArray(configuredGroups) ? configuredGroups : [configuredGroups]
-      return groupIds.some((groupId) => groups.has(normalizeGroup(groupId)))
+      return groupIds.some((groupId) => typeof groupId === 'string' && groups.has(groupId))
     })
     .map(([key]) => key)
 }
@@ -39,7 +25,7 @@ function roleIdFor(dependency, functionalRole) {
 }
 
 export function resolveRole(groups = [], groupMappings = DEFAULT_GROUP_MAPPINGS, userId = null) {
-  const normalizedGroups = new Set(groups.map(normalizeGroup).filter(Boolean))
+  const normalizedGroups = new Set(groups.filter((group) => typeof group === 'string'))
   const dependencies = matchingKeys(normalizedGroups, groupMappings.dependencies)
   const functions = matchingKeys(normalizedGroups, groupMappings.functions)
   const hasOneDependency = dependencies.length === 1

@@ -1,4 +1,4 @@
-import { emitOfficialDocument } from './api/alfresco'
+import { emitOfficialDocument, getAuthorizedDocument } from './api/alfresco'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import './components/Sidebar.css'
@@ -20,10 +20,9 @@ import { useEmittedInbox } from './hooks/useEmittedInbox'
 import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
-import { derivePersonCode, getIssuerCode } from './utils/issuerIdentifier'
-import { loadPersonalAttention, personalAttentionKey, personalAttentionDocuments, withKnownPriorities } from './utils/documentViews'
+import { loadPersonalAttention, personalAttentionKey, personalAttentionDocuments } from './utils/documentViews'
 import { NotificationsPage } from './pages/NotificationsPage'
-import { documentNotificationStorageKey, loadDocumentNotificationState, saveDocumentNotificationState } from './utils/documentNotifications'
+import { authorizedNotifications, documentNotificationStorageKey, loadDocumentNotificationState, saveDocumentNotificationState } from './utils/documentNotifications'
 
 /* eslint-disable react/prop-types */
 function getInitialAlfrescoDocuments() {
@@ -42,6 +41,8 @@ function dependencyProfile(dependency) {
 
 function clearLegacySimulationData() {
   try {
+    // Obsolete browser summaries are not operational repository records.
+    window.localStorage.removeItem(CONFIRMED_STORAGE_KEY)
     window.localStorage.removeItem('gestion-documental-dsa.simulated-documents.v1')
     window.localStorage.removeItem('uac-document-management-demo-notifications-v1')
     const organizationKeys = []
@@ -118,7 +119,7 @@ function ApplicationShell({ session, onLogout }) {
   const canReadAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:read')
   const canWriteAlfresco = session.authorizationStatus === 'active' && session.capabilities?.includes('documents:write')
   const dependency = dependencyProfile(session.dependency)
-  const unit = session.unit || session.user?.unit || session.functionalIdentity?.unit || null
+  const unit = session.unitVerified === true ? session.unit : null
   const currentUserName = session.user?.name || session.alfresco?.displayName || session.alfresco?.id
   const currentOffice = {
     acronym: dependency.acronym,
@@ -130,7 +131,7 @@ function ApplicationShell({ session, onLogout }) {
     roleId: session.roleId,
     unitAcronym: unit?.acronym || unit?.code || '',
     unitName: unit?.name || '',
-    issuerCode: getIssuerCode({ roleId: session.roleId, dependencyAcronym: dependency.acronym, unitAcronym: unit?.acronym || unit?.code || '', personCode: derivePersonCode(currentUserName) }),
+    issuerCode: session.institutionalDocumentCode || '',
   }
   const isDirector = String(session.functionalRole || '').toLowerCase() === 'direccion'
   const isUnitHead = session.functionalRole === 'jefe-unidad'
@@ -189,7 +190,9 @@ function ApplicationShell({ session, onLogout }) {
   const assignmentInbox = useAssignmentInbox({ active: isAssignmentUser, allowed: canReadAlfresco, refreshKey: activePanel })
   const emittedInbox = useEmittedInbox({ active: isDirector, allowed: canReadAlfresco, refreshKey: activePanel, scopeKey: `${currentOffice.userId}:${session.dependency}` })
   const inbox = isAssignmentUser ? assignmentInbox : institutionalInbox
-  const receivedDocuments = withKnownPriorities(inbox.documents, alfrescoDocuments)
+  const receivedDocuments = inbox.documents
+  const visibleNotifications = canReadAlfresco && !inbox.loading && !inbox.refreshing && !inbox.error && inbox.lastUpdated
+    ? authorizedNotifications(notificationData.notifications, inbox.documents) : []
   useEffect(() => {
     if (!canReadAlfresco) return
     if (inbox.loading || inbox.error || !inbox.lastUpdated || processedInboxUpdate.current === inbox.lastUpdated) return
@@ -252,7 +255,9 @@ function ApplicationShell({ session, onLogout }) {
     setIsSidebarOpen(false)
   }
 
-  const handleViewNotification = (notification) => {
+  const handleViewNotification = async (notification) => {
+    try { await getAuthorizedDocument(notification.documentId) }
+    catch { setResponseNotice('No se pudo verificar el acceso actual al documento. Actualiza la bandeja.'); return }
     setNotificationData((current) => ({
       ...current,
       notifications: current.notifications.map((entry) => entry.id === notification.id ? { ...entry, isRead: true } : entry),
@@ -295,10 +300,8 @@ function ApplicationShell({ session, onLogout }) {
     if (uploadInFlight.current) return { ok: false, error: 'Ya hay un envío en curso.' }
     uploadInFlight.current = true
     try {
-      const emissionDate = new Date().toISOString()
       if (isDirector ? !documentData.recipientDependencyId : !documentData.recipientUserId) return { ok: false, error: 'Completa el destinatario antes de enviar.' }
       let entry
-      let receivedNodeId = ''
       if (isDirector) {
         const delivery = documentData.existingNodeId ? await uploadPdfToDirectorInbox(documentData.mainDocumentFile, {
           title: documentData.subject,
@@ -314,55 +317,22 @@ function ApplicationShell({ session, onLogout }) {
           receiptCategory: documentData.receiptCategory,
         }, session.csrfToken)
         entry = delivery.emittedEntry
-        receivedNodeId = delivery.receivedEntry.id
       } else {
         entry = await uploadPdfToFolder(documentData.recipientInboxNodeId, documentData.mainDocumentFile, {
           title: documentData.subject,
           description: documentData.description,
+          documentType: documentData.documentType,
+          recipientDependency: documentData.recipientDependencyId,
+          recipientFunctionalRole: documentData.recipientRole,
         }, session.csrfToken, documentData.recipientUserId)
       }
       if (documentData.existingNodeId && !documentData.documentType) {
         window.dispatchEvent(new Event('uac:alfresco-document-created'))
-        return { ok: true, document: { id: entry.id, emissionDate: entry.createdAt }, warning: 'Distribución recuperada. El correlativo local no se ha reconstruido.' }
+        return { ok: true, document: { id: entry.id, emissionDate: entry.properties?.['gd:fechaDocumento'] || '' }, warning: 'Distribución recuperada. El correlativo local no se ha reconstruido.' }
       }
-      const metadata = { ...documentData }
-      delete metadata.mainDocumentFile
-      if (receivedNodeId) metadata.recipientNodeId = receivedNodeId
-      let document
-      let nextDocuments
-      let warning = ''
-      try {
-        const result = recordAlfrescoConfirmedDocument({ ...metadata, emissionDate }, entry)
-        document = result.document
-        nextDocuments = result.documents
-      } catch {
-        document = {
-          id: entry.id,
-          source: 'alfresco',
-          recipientUserId: metadata.recipientUserId,
-          recipientName: metadata.recipientName,
-          recipientInboxNodeId: metadata.recipientInboxNodeId,
-          recipientNodeId: metadata.recipientNodeId,
-          receiptCategory: metadata.receiptCategory,
-          senderUserId: entry.createdByUser?.id || '',
-          sender: entry.createdByUser?.displayName || entry.createdByUser?.id || '',
-          subject: entry.properties?.['cm:title'] || entry.name || '',
-          description: entry.properties?.['cm:description'] || '',
-          attachmentName: entry.name || metadata.attachmentName,
-          attachmentType: entry.content?.mimeType || 'application/pdf',
-          attachmentSize: entry.content?.sizeInBytes ?? metadata.attachmentSize,
-          status: 'Creado en Alfresco',
-          emissionDate: entry.createdAt || emissionDate,
-          createdAt: entry.createdAt || emissionDate,
-          priority: metadata.priority,
-          originalConsecutive: entry.properties?.['gd:numero'] || '',
-          issuerCode: entry.properties?.['gd:codigoDocumental'] || '',
-          documentYear: entry.properties?.['gd:cicloDocumental'] || '',
-        }
-        nextDocuments = [document, ...alfrescoDocuments]
-        warning = 'Alfresco creó el documento, pero no se pudo guardar su resumen en este navegador.'
-      }
-      setAlfrescoDocuments(nextDocuments)
+      const { document } = recordAlfrescoConfirmedDocument({}, entry)
+      const warning = isDirector ? 'Prioridad documental y periodo academico no tienen propiedades verificadas; no se registran como metadatos oficiales.' : ''
+      setAlfrescoDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)])
       if (responseContext) {
         try {
           const linked = await linkAssignmentResponse({ ...responseContext, responseDocumentId: entry.id }, session.csrfToken)
@@ -395,7 +365,7 @@ function ApplicationShell({ session, onLogout }) {
         <TopBar
           officeName={currentOffice.office}
           onMenuClick={() => setIsSidebarOpen(true)}
-          notifications={canReadAlfresco ? notificationData.notifications : []}
+          notifications={visibleNotifications}
           notificationLoading={inbox.loading || inbox.refreshing}
           notificationError={inbox.error || officeInboxError}
           onNotificationRefresh={inbox.refresh}
@@ -404,7 +374,7 @@ function ApplicationShell({ session, onLogout }) {
           pendingNotificationMessage={canReadAlfresco ? 'Las tareas pendientes requieren un estado verificable del BFF.' : ''}
         />
         <main className="main-content">{responseNotice && <p className="form-message" role="status">{responseNotice}</p>}{activePanel === 'notificaciones'
-          ? <NotificationsPage notifications={canReadAlfresco ? notificationData.notifications : []} onViewDocument={handleViewNotification} />
+          ? <NotificationsPage notifications={visibleNotifications} onViewDocument={handleViewNotification} />
           : activePanel === 'nuevo-documento'
           ? <>{responseContext && <p className="form-message">Respuesta al documento {responseContext.documentId}. Emitir no marca la asignación como atendida.</p>}<DocumentForm allowAlfrescoUpload={canWriteAlfresco} csrfToken={session.csrfToken} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} /></>
           : isUnitHead && ['documentos-recibidos', 'derivaciones-enviadas'].includes(activePanel)

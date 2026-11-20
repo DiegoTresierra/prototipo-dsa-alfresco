@@ -35,6 +35,15 @@ test('an individually addressed submission requires the configured recipient inb
   assert.equal(getDocumentSubmissionError(input), '')
 })
 
+test('generic creation requires type but never forces unsupported period or documentary priority', () => {
+  const input = complete('jefe-unidad-dsa')
+  input.recipient = { inboxNodeId: 'recipient-folder' }
+  input.fields.documentPeriod = ''; input.fields.priority = ''; input.issuer.issuerCode = ''
+  assert.equal(getDocumentSubmissionError(input), '')
+  input.fields.documentType = ''
+  assert.match(getDocumentSubmissionError(input), /tipo documental/)
+})
+
 test('missing content identifies the exact field or the pending PDF', () => {
   const input = complete()
   input.fields.description = '  '

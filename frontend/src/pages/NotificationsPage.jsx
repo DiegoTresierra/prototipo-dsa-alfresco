@@ -9,7 +9,7 @@ export function NotificationsPage({ notifications, onViewDocument }) {
     <PanelPage description="Documentos detectados desde la última consulta guardada en este navegador." title="Notificaciones">
       <div className="notifications-page">
         <div className="notifications-page__session-note" role="status">
-          Se conservan solo metadatos de notificación y lectura en este navegador, no los archivos PDF. La hora indica cuándo se detectó el documento; el BFF no proporciona la hora real de recepción ni sincroniza lecturas entre dispositivos.
+          Avisos locales de este navegador: se guardan identificadores, detección y preferencia de lectura. Los detalles se obtienen de la bandeja autorizada actual. La detección no acredita fecha de distribución institucional ni sincroniza lecturas entre dispositivos.
         </div>
         <section aria-labelledby="notifications-new-title" className="notifications-page__section">
           <div className="notifications-page__section-heading">
@@ -24,7 +24,7 @@ export function NotificationsPage({ notifications, onViewDocument }) {
         <section aria-labelledby="notifications-pending-title" className="notifications-page__section notifications-page__section--pending">
           <p className="breadcrumb">Seguimiento</p>
           <h2 id="notifications-pending-title">Pendientes de atención</h2>
-          <p className="notifications-page__unavailable">No se muestran tareas pendientes: el BFF y Alfresco no proporcionan actualmente un estado verificable de atención.</p>
+          <p className="notifications-page__unavailable">La atención individual se consulta en la bandeja de asignaciones; estos avisos locales no representan tareas ni estados de cierre global.</p>
         </section>
       </div>
     </PanelPage>

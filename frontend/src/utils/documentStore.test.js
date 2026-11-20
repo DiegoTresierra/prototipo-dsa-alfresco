@@ -9,7 +9,7 @@ test('local confirmation cache never allocates or changes a repository number, i
   try {
     const legacy = JSON.stringify({ documents: [{ id: 'legacy', originalConsecutive: '9999', documentNumber: 'invented' }] })
     storage.set(CONFIRMED_STORAGE_KEY, legacy)
-    assert.equal(loadAlfrescoConfirmedDocuments()[0].originalConsecutive, '')
+    assert.deepEqual(loadAlfrescoConfirmedDocuments(), [])
     assert.equal(storage.get(CONFIRMED_STORAGE_KEY), legacy, 'read does not destroy legacy cache evidence')
     const data = { issuerCode: 'fake-code', originalConsecutive: '555', documentYear: 2030 }
     const entry = { id: 'confirmed', properties: { 'gd:numero': '2', 'gd:codigoDocumental': 'DTI-UPSI', 'gd:cicloDocumental': 2026 } }
@@ -19,8 +19,12 @@ test('local confirmation cache never allocates or changes a repository number, i
     assert.equal(first.document.documentYear, 2026)
     assert.equal(first.document.documentNumber, '')
     const repeat = recordAlfrescoConfirmedDocument({ ...data, originalConsecutive: '888' }, entry)
-    assert.equal(repeat.duplicate, true)
+    assert.equal(repeat.duplicate, false)
     assert.equal(repeat.document.originalConsecutive, '2')
+    assert.equal(storage.get(CONFIRMED_STORAGE_KEY), legacy, 'confirmations never persist document data')
+    assert.equal(first.document.status, null)
+    assert.equal(first.document.emissionDate, '')
+    assert.equal(first.document.priority, '')
     const unnumbered = recordAlfrescoConfirmedDocument(data, { id: 'unnumbered', properties: {} })
     assert.equal(unnumbered.document.originalConsecutive, '')
     assert.equal(unnumbered.document.numberingSource, 'unregistered')

@@ -1,3 +1,4 @@
+import { identityResponse } from './testFixtures/institutionalIdentity.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -8,7 +9,7 @@ import { once } from 'node:events'
 
 test('HTTP Alfresco pilot authorizes secondary membership, persists all readers, and rejects forged scope/ACL/roles', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'alfresco-dispatch-http-'))
-  const documentId = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
+  const documentId = '11111111-2222-4333-8444-2a29efcb482b'
   const foreignId = '00000000-0000-0000-0000-000000000001'
   const secondId = '00000000-0000-0000-0000-000000000002'
   const additionalId = '00000000-0000-0000-0000-000000000003'
@@ -39,7 +40,9 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     await new Promise((resolve) => server.close(resolve))
     fs.rmSync(directory, { recursive: true, force: true })
   })
+  const actors = new Map()
   const session = (id, role, dependency = 'DSA') => {
+    actors.set(`Basic ${id}`, { id, functionalRole: role, dependency })
     const value = createSession({ alfresco: { id }, authorization: `Basic ${id}`, authorizationStatus: 'active', functionalRole: role,
       dependency, capabilities: ['documents:read', 'documents:write'] })
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(value.id).digest('base64url')
@@ -60,11 +63,14 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   let modelReady = true
   let originalInInstitutionalScope = true
   const puts = []
+  const readOnlyNodes = []
   const reads = []
   globalThis.fetch = async (url, options = {}) => {
     const parsed = new URL(url)
     if (parsed.origin === base) return originalFetch(url, options)
     assert.equal(parsed.hostname, 'alfresco.invalid', 'never call real DEV')
+    const identity = identityResponse(url, options, actors, config.groupMappings)
+    if (identity) return identity
     const p = parsed.pathname
     const method = options.method || 'GET'
     if (method === 'GET') reads.push(p)
@@ -83,8 +89,9 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
       'gd:dependenciasResponsablesActuales': { dataType: 'd:text', multiValued: true },
     } : {} })
     if (p.endsWith('/children')) {
-      assert.ok(['dsa-folder', 'dti-folder'].includes(p.split('/').at(-2)), 'no additional folder is consulted')
-      const entries = (originalInInstitutionalScope ? [node, secondNode, additionalNode] : [secondNode, additionalNode])
+      assert.ok(['dsa-folder', 'dti-folder', 'knowledge-folder'].includes(p.split('/').at(-2)), 'only institutional folders are consulted')
+      const entries = (p.includes('/knowledge-folder/') ? readOnlyNodes.filter((n) => n.id === 'knowledge-readonly') :
+        [...(originalInInstitutionalScope ? [node, secondNode, additionalNode] : [secondNode, additionalNode]), ...readOnlyNodes])
         .map((entry) => ({ entry: { ...entry, association: { assocType: 'cm:contains', isPrimary: false } } }))
       return Response.json({ list: { entries, pagination: { hasMoreItems: false } } })
     }
@@ -170,4 +177,24 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   assert.equal((await post(director, payload)).status, 403, 'retry must revalidate scope too')
   assert.equal(puts.length, completedPuts)
   assert.equal(fs.readFileSync(localPath, 'utf8'), 'legacy data must never be read or changed')
+  originalInInstitutionalScope = true
+  const current = node.properties['gd:asignaciones']
+  actors.get('Basic DSA_T').groups = ['GROUP_DSA', 'GROUP_STAFF']
+  const revoked = await post(director, { ...payload, requestKey: 'revoked-director' })
+  assert.equal(revoked.status, 403)
+  assert.equal((await revoked.json()).error, 'INSTITUTIONAL_IDENTITY_REJECTED')
+  assert.equal(node.properties['gd:asignaciones'], current)
+  assert.equal(puts.length, completedPuts, 'a stale Direction session never invokes the technical PUT')
+  config.officeInboxNodeIds.DSA.porConocimiento = 'knowledge-folder'
+  for (const [id, creator] of [['own-readonly', 'head'], ['knowledge-readonly', 'foreign'], ['unassigned-attention', 'foreign']]) {
+    const unassigned = { ...structuredClone(node), id, parentId: 'dti-folder', createdByUser: { id: creator }, properties: {}, aspectNames: [] }
+    readOnlyNodes.push(unassigned); nodes.set(id, unassigned)
+  }
+  const institutional = await (await fetch(`${base}/api/documents/dispatches?include=documents`, { headers: head })).json()
+  assert.ok(institutional.documents.some((n) => n.id === 'own-readonly'))
+  assert.ok(institutional.documents.some((n) => n.id === 'knowledge-readonly'))
+  assert.ok(!institutional.documents.some((n) => n.id === 'unassigned-attention'))
+  assert.ok(!institutional.dispatches.some((record) => record.documentId === 'knowledge-readonly'))
+  const knowledgeRead = await fetch(`${base}/api/alfresco/api/-default-/public/alfresco/versions/1/nodes/knowledge-readonly/content`, { headers: head })
+  assert.equal(knowledgeRead.status, 200, 'knowledge secondary membership remains verifiable even when /parents is forbidden')
 })

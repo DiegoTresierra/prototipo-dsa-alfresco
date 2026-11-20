@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { config } from './config.js'
+import { readInstitutionalGroups } from './institutionalIdentity.js'
 
 const corePath = '/alfresco/api/-default-/public/alfresco/versions/1'
 const authenticationPath = '/alfresco/api/-default-/public/authentication/versions/1'
@@ -94,14 +95,23 @@ export async function getAlfrescoIdentity(target, authorization) {
 }
 
 export async function getAlfrescoGroups(target, personId, authorization) {
-  const response = await getJson(target, `${corePath}/people/${encodeURIComponent(personId)}/groups`, authorization)
-  return (response?.list?.entries || []).map(({ entry }) => entry?.id || entry?.displayName).filter(Boolean)
+  return readInstitutionalGroups(target, personId, authorization)
 }
 
 export async function getAlfrescoGroupMembers(target, groupId, authorization) {
-  const query = new URLSearchParams({ where: "(memberType='PERSON')", maxItems: '1000' })
-  const response = await getJson(target, `${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`, authorization)
-  return (response?.list?.entries || []).map(({ entry }) => entry).filter((entry) => entry?.id)
+  const members = []
+  let skipCount = 0
+  for (;;) {
+    const query = new URLSearchParams({ where: "(memberType='PERSON')", maxItems: '100', skipCount: String(skipCount) })
+    const { list } = await getJson(target, `${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`, authorization) || {}
+    if (!Array.isArray(list?.entries) || list.pagination?.skipCount !== skipCount ||
+        typeof list.pagination.hasMoreItems !== 'boolean' || list.entries.some((item) => typeof item?.entry?.id !== 'string') ||
+        list.pagination.hasMoreItems && !list.entries.length) throw Object.assign(new Error('INSTITUTIONAL_DIRECTORY_INVALID_RESPONSE'), { status: 503 })
+    members.push(...list.entries.map(({ entry }) => entry))
+    if (!list.pagination.hasMoreItems) return members
+    skipCount += list.entries.length
+    if (skipCount > 10000) throw Object.assign(new Error('INSTITUTIONAL_DIRECTORY_LIMIT'), { status: 503 })
+  }
 }
 
 export async function authenticateBasic(target, username, password) {

@@ -1,19 +1,33 @@
+import { assertDescriptiveModel, descriptiveMetadata, emissionDate, verifyDescriptiveMetadata } from './emissionDescriptiveMetadata.js'
 import fs from 'node:fs'
 import { createAlfrescoNumberedIssuer, createInstitutionalEmissionReader } from './alfrescoNumbering.js'
 import { decodeEmissionMetadata, encodeEmissionMetadata, assertEmissionModel } from './officialEmissionContract.js'
 import { createDocumentQueue } from './documentQueue.js'
 import { validatePilotEnvironment, acquirePilotLease } from './dispatchPilot.js'
-import { resolveRole } from './roleResolver.js'
+import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { stableJson, sha256, validateReconciliation } from './emissionReconciliation.js'
+import { parseAssignments } from './alfrescoDispatchRepository.js'
 
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status = 503) => Object.assign(new Error(code), { status })
 export const officialEmissionAck = 'single-instance-exclusive-writer-official-emission-dev'
+export const officialEmissionMetadataWarnings = Object.freeze(['DOCUMENT_PRIORITY_NOT_PERSISTED', 'ACADEMIC_PERIOD_NOT_PERSISTED'])
+export const officialEmissionName = (actorId, requestKey) => `emission-${sha256(stableJson({ actorId, requestKey }))}.pdf`
+export const reviewedEmissionKey = (originalId, processId, approvalEventId) => `review-${sha256(stableJson([originalId, processId, approvalEventId]))}`
+export function officialEmissionPayload(actorId, code, input, review = null) {
+  return { version: 1, actorId, code, title: input.title.trim(), description: input.description.trim(), documentType: input.documentType.trim(),
+    documentPeriod: input.documentPeriod.trim(), priority: input.priority, recipientDependency: String(input.recipientDependency).toUpperCase(),
+    receiptCategory: input.receiptCategory, pdfSha256: sha256(input.file), ...(review ? { review } : {}) }
+}
+export const officialEmissionPayloadHash = (actorId, code, input, review = null) => sha256(stableJson(officialEmissionPayload(actorId, code, input, review)))
 
 export function createOfficialEmissionService(settings, fetchImpl = (...args) => globalThis.fetch(...args), clock = () => new Date()) {
   const pilot = settings.officialEmission || {}
   let active = 0
   const uncertain = new Set()
+  // Runtime liveness only, never numbering/authorization truth. After restart,
+  // unconfirmed journals are not considered active and block new allocations.
+  const reviewRequests = new Map()
   let releaseLease = () => {}
   let exclusion = async () => false
   if (pilot.writesEnabled) {
@@ -50,18 +64,19 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
     list: (scope, payload) => payload.context.reader.list(scope),
     emit: async (allocation, payload) => {
       const c = payload.context
+      await c.assertReview?.()
       uncertain.add(c.name)
       const properties = encodeEmissionMetadata({ ...allocation, actorId: c.actorId, payloadHash: c.hash })
       const form = new FormData()
       form.set('filedata', new Blob([payload.file], { type: 'application/pdf' }), c.name)
       form.set('name', c.name)
       form.set('nodeType', 'cm:content')
-      form.set('aspectnames', 'gd:identificacion')
+      form.set('aspectnames', JSON.stringify(['gd:identificacion', 'gd:clasificacion']))
       form.set('autoRename', 'false')
       form.set('overwrite', 'false')
       form.set('cm:title', payload.title)
       form.set('cm:description', payload.description)
-      for (const [key, value] of Object.entries(properties)) form.set(key, String(value))
+      for (const [key, value] of Object.entries({ ...properties, ...c.descriptive })) form.set(key, String(value))
       let entry
       try { entry = (await c.request(`/nodes/${encodeURIComponent(c.folder)}/children?autoRename=false`, c.authorization, { method: 'POST', body: form })).entry }
       catch (error) {
@@ -74,14 +89,19 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
     },
     finalize: async (record, payload) => payload.context.distribute(record),
     verify: async (record, payload) => {
+      await payload.context.assertReview?.()
       await payload.context.reader.verify(record)
+      const node = (await payload.context.request(`/nodes/${encodeURIComponent(record.documentId)}?include=properties`, payload.context.authorization)).entry
+      verifyDescriptiveMetadata(node, payload.context.descriptive)
       await payload.context.verifyContent(record)
     },
   })
-  async function issue(session, input) {
+  async function issue(session, input, reviewed = null) {
     if (session?.authorizationStatus !== 'active' || session.functionalRole !== 'direccion' ||
         !session.capabilities?.includes('documents:write') || !session.capabilities?.includes('documents:read')) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
     if (!pilot.writesEnabled) throw fail('OFFICIAL_EMISSION_WRITES_DISABLED')
+    if (!reviewed && Object.keys(input).some((k) => /review|approv|proposal|originalDocument|responseDocument/i.test(k))) throw fail('OFFICIAL_REVIEW_SERVICE_REQUIRED', 403)
+    if (Object.keys(input).some((k) => !['requestKey', 'title', 'description', 'documentType', 'documentPeriod', 'priority', 'recipientDependency', 'receiptCategory', 'file'].includes(k))) throw fail('OFFICIAL_INVALID_REQUEST', 400)
     const actorId = session.alfresco?.id
     if (!actorId || !session.authorization) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
     if (!Buffer.isBuffer(input.file) || input.file.length < 5 || input.file.length > 20 * 1024 * 1024 || input.file.subarray(0, 5).toString() !== '%PDF-') throw fail('PDF_UPLOAD_REQUIRED', 400)
@@ -100,21 +120,9 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
       if (!result.ok) throw fail('OFFICIAL_ALFRESCO_REJECTED', result.status)
       try { return await result.json() } catch { throw fail('OFFICIAL_INVALID_RESPONSE', 502) }
     }
-    const me = (await request('/people/-me-', authorization)).entry
-    if (me?.id !== actorId || me.enabled !== true) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
+    const identity = await revalidateInstitutionalIdentity(settings, session, fetchImpl)
     const serviceMe = (await request('/people/-me-', serviceAuthorization)).entry
     if (serviceMe?.id !== service.username || serviceMe.enabled !== true || ['admin', 'administrator'].includes(service.username.toLowerCase())) throw fail('OFFICIAL_SERVICE_IDENTITY_REJECTED', 403)
-    const groupIds = []
-    let skip = 0
-    for (;;) {
-      const data = (await request(`/people/${encodeURIComponent(actorId)}/groups?maxItems=100&skipCount=${skip}`, authorization)).list
-      if (!Array.isArray(data?.entries) || !data.pagination || data.pagination.skipCount !== skip || typeof data.pagination.hasMoreItems !== 'boolean') throw fail('OFFICIAL_INVALID_RESPONSE', 502)
-      groupIds.push(...data.entries.map(({ entry }) => entry.id))
-      if (!data.pagination.hasMoreItems) break
-      if (!data.entries.length) throw fail('OFFICIAL_INVALID_RESPONSE', 502)
-      skip += data.entries.length
-    }
-    const identity = resolveRole(groupIds, settings.groupMappings, actorId)
     const dependency = String(session.dependency || '').toUpperCase()
     if (identity.authorizationStatus !== 'active' || identity.functionalRole !== 'direccion' || identity.dependency !== dependency || !['DTI', 'DSA'].includes(dependency)) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
     // Direction's institution code is the verified institutional dependency.
@@ -126,10 +134,9 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
     const recipientFolder = settings.officeInboxNodeIds?.[recipientDependency]?.[category === 'por-atender' ? 'porAtender' : 'porConocimiento']
     const recipientGroup = settings.officeGroupIds?.[recipientDependency]
     if (!folder || !['DTI', 'DSA'].includes(recipientDependency) || recipientDependency === dependency || !['por-atender', 'por-conocimiento'].includes(category) || !recipientFolder || !recipientGroup) throw fail('DIRECTOR_RECIPIENT_NOT_ALLOWED', 403)
-    const canonical = { version: 1, actorId, code, title: input.title.trim(), description: input.description.trim(),
-      documentType: input.documentType.trim(), documentPeriod: input.documentPeriod.trim(), priority: input.priority, recipientDependency, receiptCategory: category, pdfSha256: sha256(input.file) }
+    const canonical = officialEmissionPayload(actorId, code, input, reviewed?.binding)
     const hash = sha256(stableJson(canonical))
-    const name = `emission-${sha256(stableJson({ actorId, requestKey: input.requestKey }))}.pdf`
+    const name = officialEmissionName(actorId, input.requestKey)
     return withRequest(name, async () => {
       active++
       try {
@@ -144,6 +151,9 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
           model = await result.json()
         } catch { throw fail('OFFICIAL_MODEL_REQUIRED') }
         assertEmissionModel(model.properties)
+        const classificationResponse = await fetchImpl(settings.alfrescoTarget + '/alfresco/service/api/classes/gd_clasificacion', { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { Accept: 'application/json', Authorization: serviceAuthorization } })
+        if (!classificationResponse.ok) throw fail('OFFICIAL_DESCRIPTIVE_MODEL_REQUIRED')
+        assertDescriptiveModel(model, await classificationResponse.json())
         const reader = createInstitutionalEmissionReader({ folderId: folder, get: (path) => request(path, serviceAuthorization), modelProperties: model.properties,
           decode: async (node) => await exclusion(node) ? null : decodeEmissionMetadata(node) })
         const lookup = async () => {
@@ -167,7 +177,63 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
           previous = decodeEmissionMetadata(existing)
           if (previous.actorId !== actorId || previous.requestKey !== input.requestKey || previous.payloadHash !== hash || previous.documentCode !== code) throw fail('NUMBERING_RETRY_CONFLICT', 409)
         }
+        if (reviewed?.existingOnly && !existing) throw fail('OFFICIAL_RECONCILIATION_REQUIRED', 409)
+        if (!existing) {
+          // Direct GETs, never the search index. Unknown/partial coverage fails closed.
+          const seen = new Set()
+          for (const root of new Set(Object.values(settings.officeInboxNodeIds[dependency]))) {
+            let skip = 0
+            let total
+            const rootSeen = new Set()
+            for (;;) {
+              const { list } = await request(`/nodes/${encodeURIComponent(root)}/children?include=association&maxItems=100&skipCount=${skip}`, serviceAuthorization)
+              const page = list?.pagination
+              if (!Array.isArray(list?.entries) || list.entries.length > 100 || typeof page?.hasMoreItems !== 'boolean' ||
+                  page.skipCount !== skip || page.count !== list.entries.length || !Number.isSafeInteger(page.totalItems) || page.totalItems < 0 ||
+                  total !== undefined && page.totalItems !== total) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+              total = page.totalItems
+              for (const { entry } of list.entries) {
+                if (!entry?.id || entry.association?.assocType !== 'cm:contains' || rootSeen.has(entry.id)) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+                rootSeen.add(entry.id)
+                if (seen.has(entry.id)) continue
+                seen.add(entry.id)
+                if (seen.size > 10000) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+                const n = (await request(`/nodes/${encodeURIComponent(entry.id)}?include=properties`, serviceAuthorization)).entry
+                if (n?.id !== entry.id) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+                if (!n.isFile) continue
+                const envelope = parseAssignments(n.properties?.['gd:asignaciones'], n.id)
+                for (const o of envelope.reviewOperations || []) {
+                  if (o.phase === 'COMMITTED') continue
+                  if (!reviewed) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+                  if (o.action !== 'EMIT') continue
+                  const current = n.id === reviewed.binding.originalDocumentId && o.processId === reviewed.binding.processId && o.actorUserId === actorId
+                  const p = envelope.reviewProcesses?.find((p) => p.id === o.processId)
+                  const liveKey = `${o.actorUserId}:${reviewedEmissionKey(n.id, o.processId, p?.approval?.eventId)}`
+                  if (!current && !(o.phase === 'PREPARED' && reviewRequests.has(liveKey))) throw fail('OFFICIAL_REVIEW_RECONCILIATION_REQUIRED', 409)
+                }
+                const snapshots = [...(envelope.reviewOperations || []).map((o) => o.snapshot), ...(envelope.reviewProcesses || []).flatMap((p) => [p.snapshot, ...p.events.map((e) => e.snapshot || e.review?.snapshot)])]
+                if (!reviewed && snapshots.some((s) => s?.contentSha256 === canonical.pdfSha256)) throw fail('OFFICIAL_REVIEW_SERVICE_REQUIRED', 403)
+                // A different hash is not evidence that an uploaded PDF is
+                // unrelated: changing one byte cannot exempt it from review.
+                // Existing emission retries were reconciled above and remain usable.
+                if (!reviewed && (envelope.reviewProcesses?.length || envelope.reviewOperations?.length)) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED', 409)
+              }
+              skip += list.entries.length
+              if (skip > total || page.hasMoreItems !== (skip < total)) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+              if (!list.pagination.hasMoreItems) break
+              if (!list.entries.length || skip > 10000) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
+            }
+          }
+        }
+        if (reviewed && stableJson(await reviewed.authorize()) !== stableJson(reviewed.binding)) throw fail('OFFICIAL_APPROVAL_CHANGED', 409)
+        // A single reference instant drives all temporal fields of a new issue.
+        // Replays use their persisted cycle/date, never the current clock.
+        const referenceTime = previous ? null : clock()
         const context = { actorId, code, folder, name, hash, authorization, request, reader, lookup,
+          assertReview: reviewed ? async () => {
+            if (stableJson(await reviewed.authorize()) !== stableJson(reviewed.binding)) throw fail('OFFICIAL_APPROVAL_CHANGED', 409)
+          } : null,
+          descriptive: descriptiveMetadata(canonical, previous ? existing.properties?.['gd:fechaDocumento'] : emissionDate(referenceTime)),
           verifyContent: async (record) => {
             let response
             try { response = await fetchImpl(settings.alfrescoTarget + core + `/nodes/${encodeURIComponent(record.documentId)}/content`, {
@@ -199,10 +265,10 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
         const payload = { ...canonical, file: input.file, context }
         // Replays retain their recorded cycle even across the January 2 boundary.
         const result = await issuer({ documentCode: code, requestKey: input.requestKey, payload,
-          now: previous ? new Date(Date.UTC(previous.cycle, 6, 1)) : clock() })
+          now: previous ? new Date(Date.UTC(previous.cycle, 6, 1)) : referenceTime })
         const entry = (await request(`/nodes/${encodeURIComponent(result.documentId)}?include=properties`, authorization)).entry
         uncertain.delete(name)
-        return { emittedEntry: entry, receivedEntry: entry, officialEmission: true }
+        return { emittedEntry: entry, receivedEntry: entry, officialEmission: true, metadataWarnings: [...officialEmissionMetadataWarnings] }
       } catch (error) {
         if (error.cause?.message === 'OFFICIAL_RECIPIENT_NODE_READ_REQUIRED') {
           error.message = error.cause.message
@@ -215,7 +281,22 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
       } finally { active-- }
     })
   }
-  return { issue, release: () => { if (!active && !uncertain.size) releaseLease() },
+  return { issue: (session, input) => issue(session, input),
+    // Internal function capability, never a JSON flag or HTTP argument.
+    issueReviewed: async (session, input, authorize, { existingOnly = false } = {}) => {
+      if (typeof authorize !== 'function') throw fail('OFFICIAL_REVIEW_SERVICE_REQUIRED', 403)
+      const key = `${session?.alfresco?.id}:${input.requestKey}`
+      reviewRequests.set(key, (reviewRequests.get(key) || 0) + 1)
+      try {
+        const binding = await authorize()
+        if (!binding || Object.keys(binding).sort().join(',') !== 'approvalEventId,contentSha256,metadataSha256,originalDocumentId,processId,proposalDocumentId,versionId' || binding.contentSha256 !== sha256(input.file) ||
+            input.requestKey !== reviewedEmissionKey(binding.originalDocumentId, binding.processId, binding.approvalEventId)) throw fail('OFFICIAL_APPROVAL_CHANGED', 409)
+        return await issue(session, input, { binding, authorize, existingOnly })
+      } finally {
+        const count = reviewRequests.get(key) - 1
+        if (count) reviewRequests.set(key, count); else reviewRequests.delete(key)
+      }
+    }, release: () => { if (!active && !uncertain.size) releaseLease() },
     status: () => ({ enabled: Boolean(pilot.writesEnabled), uncertain: uncertain.size, active }) }
 }
 

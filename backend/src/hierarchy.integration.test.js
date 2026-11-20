@@ -1,3 +1,4 @@
+import { identityResponse } from './testFixtures/institutionalIdentity.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -18,12 +19,24 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   })
   const groups = { DSA: ['director', 'head', 'staff'], DTI: ['foreign'], DIR: ['director'], HEAD: ['head'], STAFF: ['staff', 'foreign'] }
   const realFetch = globalThis.fetch
+  const actors = new Map()
   const calls = []
+  const creations = []
+  let identityUnavailable = false
   globalThis.fetch = async (url, options = {}) => {
     const parsed = new URL(url)
     if (parsed.hostname === '127.0.0.1') return realFetch(url, options)
     assert.equal(parsed.hostname, 'hierarchy.invalid')
+    if (identityUnavailable && parsed.pathname.endsWith('/people/-me-')) return Response.json({}, { status: 503 })
+    if (parsed.pathname.endsWith('/nodes/upload-folder/children') && options.method === 'POST') {
+      assert.ok(options.body instanceof FormData, 'the backend reconstructs the multipart body')
+      creations.push([...options.body.keys()])
+      return Response.json({ entry: { id: 'new-pdf' } }, { status: 201 })
+    }
     assert.equal(options.method || 'GET', 'GET', 'no Alfresco writes')
+    const identity = identityResponse(url, options, actors, config.groupMappings)
+    if (identity) return identity
+    if (parsed.pathname.endsWith('/nodes/upload-folder')) return Response.json({ entry: { id: 'upload-folder', isFolder: true, allowableOperations: ['create'] } })
     calls.push(parsed.pathname)
     const group = parsed.pathname.match(/\/groups\/([^/]+)\/children$/)?.[1]
     if (group) return Response.json({ data: groups[group].map((shortName) => ({ shortName, authorityType: 'USER' })), paging: { skipCount: 0, totalItems: groups[group].length } })
@@ -41,7 +54,8 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     fs.rmSync(temporary, { recursive: true, force: true })
   })
   const headers = (id, functionalRole, dependency = 'DSA') => {
-    const session = createSession({ alfresco: { id }, functionalRole, dependency, authorizationStatus: 'active', capabilities: ['documents:read', 'documents:write'] })
+    actors.set(`Basic ${id}-fixture`, { id, functionalRole, dependency })
+    const session = createSession({ authorization: `Basic ${id}-fixture`, alfresco: { id }, functionalRole, dependency, authorizationStatus: 'active', capabilities: ['documents:read', 'documents:write'] })
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(session.id).digest('base64url')
     return { Cookie: `gd_session=${session.id}.${signature}`, 'X-CSRF-Token': session.csrfToken, 'Content-Type': 'application/json' }
   }
@@ -69,4 +83,37 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal(dispatch.status, 503)
   assert.equal((await dispatch.json()).error, 'ORGANIZATIONAL_HIERARCHY_PENDING')
   assert.ok(calls.length > 0)
+
+  const original = fs.readFileSync(config.organizationStorePath, 'utf8')
+  const actor = actors.get('Basic director-fixture')
+  actor.groups = ['GROUP_DSA', 'GROUP_STAFF']
+  assert.equal((await put(director, assignments)).status, 403, 'role revoked after login')
+  actor.groups = undefined; actor.enabled = false
+  assert.equal((await put(director, assignments)).status, 403, 'disabled actor')
+  actor.enabled = true; identityUnavailable = true
+  assert.equal((await put(director, assignments)).status, 503, 'unavailable Alfresco fails closed')
+  assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), original, 'no rejected operation changes the organigram')
+  identityUnavailable = false
+  config.userInboxNodeIds = { staff: 'upload-folder', forbidden: 'dsa-emitted' }
+  config.officeInboxNodeIds = { DSA: { emitidos: 'dsa-emitted' } }
+  const form = (reserved) => {
+    const value = new FormData()
+    value.set('filedata', new Blob(['%PDF-1.7\nfixture'], { type: 'application/pdf' }), 'fixture.pdf')
+    value.set('cm:title', 'Legitimate title')
+    if (reserved) value.set(reserved, '{}')
+    return value
+  }
+  const uploadHeaders = { ...director, 'X-UAC-Recipient-User': 'staff', 'X-UAC-Recipient-Dependency': 'dsa', 'X-UAC-Recipient-Role': 'especialista' }
+  delete uploadHeaders['Content-Type']
+  const uploadUrl = `${base}/api/alfresco/api/-default-/public/alfresco/versions/1/nodes/upload-folder/children`
+  for (const reserved of ['gd:asignaciones', 'gd:responsablesActuales', 'aspectNames', 'permissions', 'properties', 'cm:author', 'gd:identidadEmision']) {
+    assert.equal((await realFetch(uploadUrl, { method: 'POST', headers: uploadHeaders, body: form(reserved) })).status, 403)
+  }
+  assert.equal(creations.length, 0)
+  actor.enabled = false
+  assert.equal((await realFetch(uploadUrl, { method: 'POST', headers: uploadHeaders, body: form() })).status, 403)
+  actor.enabled = true
+  assert.equal((await realFetch(uploadUrl, { method: 'POST', headers: uploadHeaders, body: form() })).status, 201)
+  assert.deepEqual(creations[0], ['filedata', 'name', 'nodeType', 'cm:title'])
+  assert.equal((await realFetch(uploadUrl.replace('upload-folder', 'dsa-emitted'), { method: 'POST', headers: { ...uploadHeaders, 'X-UAC-Recipient-User': 'forbidden' }, body: form() })).status, 403, 'generic upload never bypasses official Emitidos, even when the flag is disabled')
 })

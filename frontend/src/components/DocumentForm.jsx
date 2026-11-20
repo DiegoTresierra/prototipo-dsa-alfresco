@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { listEligibleDocumentRecipients } from '../api/alfresco'
-import { documentPriorities, documentTypes, organizationalUnits, recipientDependencies } from '../data/emisorCatalog'
+import { documentPriorities, documentTypes, recipientDependencies } from '../data/emisorCatalog'
 import { PdfPreview } from './PdfPreview'
 import { SearchableSelect } from './SearchableSelect'
 import { getDocumentSubmissionError, isDirectorRole } from '../utils/documentValidation'
@@ -9,7 +9,6 @@ const maxFileSize = 20 * 1024 * 1024
 const createToken = () => globalThis.crypto.randomUUID()
 function extensionOf(name) { return name.split('.').pop()?.toLowerCase() || '' }
 function sizeLabel(size) { return size < 1024 * 1024 ? Math.max(1, Math.round(size / 1024)) + ' KB' : (size / (1024 * 1024)).toFixed(2) + ' MB' }
-function normalizeName(value) { return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es') }
 
 async function validatePdf(file) {
   if (extensionOf(file.name) !== 'pdf') return 'Selecciona un archivo PDF.'
@@ -32,7 +31,6 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const isDirector = isDirectorRole(issuer.roleId)
   const restoredParameters = restoredDelivery?.officialParameters || {}
   const [dependencyId, setDependencyId] = useState(restoredParameters.recipientDependencyId || '')
-  const [selectedUnitId, setSelectedUnitId] = useState(restoredParameters.recipientUnitId || '')
   const [selectedPositionId, setSelectedPositionId] = useState(restoredParameters.recipientPositionId || '')
   const [documentType, setDocumentType] = useState(restoredParameters.documentType || '')
   const [documentPeriod, setDocumentPeriod] = useState(restoredParameters.documentPeriod || '')
@@ -80,18 +78,12 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const attachmentsInputRef = useRef(null)
   const documentYear = String(new Date().getFullYear())
   const academicPeriods = [...new Set([`${documentYear} - I`, `${documentYear} - II`, ...(restoredParameters.documentPeriod ? [restoredParameters.documentPeriod] : [])])]
-  const recipientUnits = organizationalUnits.filter((unit) => unit.dependencyId === dependencyId && (!isDirector || unit.parentId === null))
-  const recipientUnit = recipientUnits.find((unit) => unit.id === selectedUnitId)
-  const recipientPositions = (recipientUnit?.positions || []).filter((position) => !isDirector || position.id.endsWith('puesto-direccion'))
-  const directionPosition = recipientPositions.find((position) => position.id === selectedPositionId)
   const selectedDependency = recipientDependencies.find((dependency) => dependency.id === dependencyId)
   const dependencyRecipients = recipients.filter((recipient) => recipient.dependency === dependencyId)
-  const selectedRecipient = isDirector || !directionPosition
-    ? null
-    : dependencyRecipients.find((recipient) => {
-      const name = normalizeName(directionPosition.recipientName)
-      return (recipient.unit?.id === recipientUnit?.id || normalizeName(recipient.unit?.name) === normalizeName(recipientUnit?.name)) && normalizeName(recipient.displayName).includes(name)
-    })
+  const selectedRecipient = dependencyRecipients.find((recipient) => recipient.id === selectedPositionId) || null
+  const recipientUnit = selectedRecipient?.unit || null
+  const directionPosition = isDirector && selectedDependency ? { id: 'direccion', title: 'Dirección', recipientName: selectedDependency.name, available: true }
+    : selectedRecipient ? { id: selectedRecipient.id, title: selectedRecipient.functionalRole, recipientName: selectedRecipient.displayName, available: true } : null
 
   const counter = { last: '', next: reservedNumber }
   const counterError = ''
@@ -202,8 +194,8 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         recipientUserId: selectedRecipient?.id || '',
         recipientName: directionPosition.recipientName,
         recipientRole: directionPosition.title,
-        recipientUnit: recipientUnit.name,
-        recipientUnitId: selectedUnitId,
+        recipientUnit: recipientUnit?.name || '',
+        recipientUnitId: recipientUnit?.id || '',
         recipientPositionId: directionPosition.id,
         recipientInboxNodeId: selectedRecipient?.inboxNodeId || '',
         receiptCategory: isDirector ? 'por-atender' : '',
@@ -301,18 +293,16 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       <h1 id="document-form-title">Nuevo documento</h1>
       <form className="document-form" noValidate onChange={unlockAfterEdit} onSubmit={handleSubmit}>
         <fieldset className="form-section"><legend>I. Destinatario</legend><div className="form-grid form-grid--recipient">
-          <SearchableSelect label="Dependencia destinataria" onChange={(value) => { unlockAfterEdit(); setDependencyId(value); setSelectedUnitId(''); setSelectedPositionId('') }} options={options} placeholder="Buscar dependencia" required value={dependencyId} />
-          <label className="form-field"><span>Unidad organizacional <b aria-hidden="true">*</b></span><select disabled={!dependencyId} onChange={(event) => { unlockAfterEdit(); setSelectedUnitId(event.target.value); setSelectedPositionId('') }} required value={selectedUnitId}><option value="">Selecciona una unidad</option>{recipientUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
-          <label className="form-field"><span>Puesto destinatario <b aria-hidden="true">*</b></span><select disabled={!selectedUnitId} onChange={(event) => { unlockAfterEdit(); setSelectedPositionId(event.target.value) }} required value={selectedPositionId}><option value="">Selecciona un puesto</option>{recipientPositions.map((position) => <option disabled={!position.available} key={position.id} value={position.id}>{position.title}{!position.available ? ' (Plaza disponible)' : ''}</option>)}</select></label>
-          <aside className="position-description" aria-live="polite"><h2>Destinatario seleccionado</h2><p><strong>{directionPosition?.recipientName || selectedDependency?.name || 'Selecciona una dependencia'}</strong></p><p>{directionPosition?.title || ''}</p>{directionPosition && <div className="position-functions"><strong>Funciones del puesto</strong><p>{directionPosition.functionsDescription}</p></div>}</aside>
+          <SearchableSelect label="Dependencia destinataria" onChange={(value) => { unlockAfterEdit(); setDependencyId(value); setSelectedPositionId('') }} options={options} placeholder="Buscar dependencia" required value={dependencyId} />
+          {!isDirector && <label className="form-field"><span>Cuenta destinataria</span><select disabled={!dependencyId || recipientsLoading} onChange={(event) => { unlockAfterEdit(); setSelectedPositionId(event.target.value) }} required value={selectedPositionId}><option value="">Selecciona una cuenta verificada</option>{dependencyRecipients.map((recipient) => <option disabled={!recipient.inboxNodeId} key={recipient.id} value={recipient.id}>{recipient.displayName} · {recipient.id} · {recipient.functionalRole}</option>)}</select></label>}
+          <aside className="position-description" aria-live="polite"><h2>Destinatario seleccionado</h2><p><strong>{directionPosition?.recipientName || 'Selecciona una dependencia'}</strong></p><p>{directionPosition?.title || ''}</p>{!isDirector && <p>Unidad y código institucional pendientes de verificación. El organigrama provisional no acredita subordinación.</p>}</aside>
           {recipientsError && !isDirector && <p className="form-message form-message--error" role="alert">{recipientsError}</p>}
-          {!recipientsLoading && !recipientsError && !isDirector && recipients.length === 0 && <p className="form-message" role="status">No hay destinatarios con una bandeja individual configurada.</p>}
-          {!isDirector && directionPosition && !selectedRecipient && <p className="form-message" role="status">No hay una cuenta con bandeja configurada para este puesto.</p>}
+          {!recipientsLoading && !recipientsError && !isDirector && recipients.length === 0 && <p className="form-message" role="status">No hay destinatarios habilitados con bandeja configurada.</p>}
         </div></fieldset>
 
-        <fieldset className="form-section"><legend>II. Identificación documental</legend><div className="form-grid">
+        <fieldset className="form-section"><legend>II. Identificación documental</legend><p className="form-message">El tipo documental se registra en Alfresco. La prioridad documental y el período académico aún no tienen propiedades verificadas: no se conservan como metadatos documentales y son opcionales en la carga genérica. La prioridad del despacho se registra por separado en sus asignaciones.</p><div className="form-grid">
           <label className="form-field"><span>Tipo documental <b aria-hidden="true">*</b></span><select name="documentType" onChange={(event) => { unlockAfterEdit(); setDocumentType(event.target.value) }} required value={documentType}><option value="">Selecciona un tipo</option>{documentTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
-          <label className="form-field"><span>Periodo <b aria-hidden="true">*</b></span><select name="documentPeriod" onChange={(event) => { unlockAfterEdit(); setDocumentPeriod(event.target.value) }} required value={documentPeriod}><option value="">Selecciona un periodo</option>{academicPeriods.map((period) => <option key={period} value={period}>{period}</option>)}</select></label>
+          <label className="form-field"><span>Periodo {isDirector && <b aria-hidden="true">*</b>}</span><select name="documentPeriod" onChange={(event) => { unlockAfterEdit(); setDocumentPeriod(event.target.value) }} required={isDirector} value={documentPeriod}><option value="">Selecciona un periodo</option>{academicPeriods.map((period) => <option key={period} value={period}>{period}</option>)}</select></label>
           <label className="form-field"><span>Último correlativo institucional</span><input readOnly value={counter.last || 'Se consulta al confirmar'} /></label>
           <label className="form-field"><span>Correlativo a emitir</span><input readOnly value={counter.next} placeholder="Se asignará al confirmar" /></label>
           <label className="form-field"><span>Ciclo documental</span><input readOnly value={confirmedNumbering?.cycle || 'Se determina al emitir'} /></label>
@@ -331,7 +321,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         <fieldset className="form-section"><legend>IV. Información del documento</legend><div className="form-grid">
           <label className="form-field form-field--full"><span>Asunto <b aria-hidden="true">*</b></span><input autoComplete="off" defaultValue={restoredParameters.subject || ''} maxLength="180" name="subject" required /></label>
           <div className="form-field"><span>Fecha de emisión</span><output className="read-only-value">{emissionDate ? new Date(emissionDate).toLocaleString('es-PE') : 'Se asignará al confirmar el envío.'}</output></div>
-          <label className="form-field"><span>Prioridad <b aria-hidden="true">*</b></span><select defaultValue={restoredParameters.priority || ''} name="priority" required><option value="">Selecciona una prioridad</option>{documentPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></label>
+          <label className="form-field"><span>Prioridad {isDirector && <b aria-hidden="true">*</b>}</span><select defaultValue={restoredParameters.priority || ''} name="priority" required={isDirector}><option value="">Selecciona una prioridad</option>{documentPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></label>
           <label className="form-field form-field--full"><span>Descripción <b aria-hidden="true">*</b></span><textarea defaultValue={restoredParameters.description || ''} maxLength="2000" name="description" required rows="4" /></label>
         </div></fieldset>
 
@@ -350,11 +340,12 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         {formError && <p className="form-message form-message--error" role="alert">{formError}</p>}
         {submitted && <p className="form-message" role="status">Documento enviado correctamente. ID Alfresco: {resultDocumentId}</p>}
         {successWarning && <p className="form-message form-message--error" role="status">{successWarning}</p>}
-        {uncertainSubmission && !officialPending && <p className="form-message" role="status">Hay un envío anterior pendiente. Puedes reintentar su distribución usando el mismo PDF de Emitidos, sin completar nuevamente el formulario.</p>}
+        {uncertainSubmission && !officialPending && isDirector && <p className="form-message" role="status">Hay un envío anterior pendiente. Puedes reintentar su distribución usando el mismo PDF de Emitidos, sin completar nuevamente el formulario.</p>}
+        {uncertainSubmission && !isDirector && <p className="form-message" role="alert">Carga genérica pendiente de verificación en la carpeta destinataria. No vuelvas a cargar el PDF antes de revisar el resultado. ID Alfresco: {pendingNodeId || 'no confirmado'}</p>}
         {uncertainSubmission && !officialPending && !pendingNodeId && isDirector && <label className="form-field"><span>ID del PDF que ya está en Emitidos</span><input autoComplete="off" onChange={(event) => setRecoveryNodeId(event.target.value)} placeholder="Pega el ID Alfresco del documento existente" value={recoveryNodeId} /></label>}
         {uncertainSubmission && officialPending && <p className="form-message" role="alert">Emision pendiente de conciliacion. Conserva la misma clave y vuelve a seleccionar el mismo PDF y los mismos datos. No crees otra emision. Clave: {token.current}</p>}
-        {pendingNodeId && <p className="form-message" role="status">PDF almacenado en Emitidos. Distribución pendiente. ID Alfresco: {pendingNodeId}</p>}
-        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || validatingPdf || submitting || submitted} type="submit">{validatingPdf ? 'Validando PDF...' : submitting ? 'Procesando envío...' : submitted ? 'Envío confirmado' : uncertainSubmission ? officialPending ? 'Conciliar emisión pendiente' : 'Reintentar solo la distribución' : 'Enviar documento'}</button></div>
+        {pendingNodeId && isDirector && <p className="form-message" role="status">PDF almacenado en Emitidos. Distribución pendiente. ID Alfresco: {pendingNodeId}</p>}
+        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || validatingPdf || submitting || submitted || uncertainSubmission && !isDirector} type="submit">{validatingPdf ? 'Validando PDF...' : submitting ? 'Procesando envío...' : submitted ? 'Envío confirmado' : uncertainSubmission ? !isDirector ? 'Carga pendiente de verificación' : officialPending ? 'Conciliar emisión pendiente' : 'Reintentar solo la distribución' : 'Enviar documento'}</button></div>
       </form>
     </section>
   )

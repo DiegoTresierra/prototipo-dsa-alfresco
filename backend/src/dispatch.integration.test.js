@@ -1,3 +1,4 @@
+import { identityResponse } from './testFixtures/institutionalIdentity.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -36,7 +37,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
   })
   const base = `http://127.0.0.1:${server.address().port}`
+  const actors = new Map()
   const makeSession = (id, role, dependency = 'DSA') => {
+    actors.set(`Basic ${id}-ticket`, { id, functionalRole: role, dependency })
     const session = createSession({ alfresco: { id }, authorizationStatus: 'active', functionalRole: role, dependency, capabilities: ['documents:read', 'documents:write'], authorization: `Basic ${id}-ticket`, unit: units[id] })
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(session.id).digest('base64url')
     return { Cookie: `gd_session=${session.id}.${signature}`, 'X-CSRF-Token': session.csrfToken, 'Content-Type': 'application/json' }
@@ -64,6 +67,8 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     assert.equal(parsed.hostname, 'alfresco.invalid', 'all Alfresco requests must be mocked')
     const method = options.method || 'GET'
     calls.push({ path: parsed.pathname, method, authorization: options.headers.Authorization })
+    const identity = identityResponse(url, options, actors, config.groupMappings)
+    if (identity) return identity
     const isSearch = parsed.pathname.endsWith('/search')
     assert.equal(method, isSearch ? 'POST' : 'GET', 'dispatch never writes a node, ACL, PDF or association')
     const json = (value, status = 200) => Response.json(value, { status })
@@ -238,9 +243,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal((await forgedScope.json()).diagnostic.reason, 'DOCUMENT_OUTSIDE_DEPENDENCY')
 
   // Exact UUID and folder IDs verified by GET in DEV. Identity and writes here are mocks.
-  const actualId = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
-  const actualAttention = '701049e5-a6a9-48c0-9049-e5a6a998c02b'
-  nodes[actualId] = { parentId: '69e39272-905e-426c-a392-72905ef26ca6' }
+  const actualId = '11111111-2222-4333-8444-2a29efcb482b'
+  const actualAttention = '11111111-2222-4333-8444-18f26647e882'
+  nodes[actualId] = { parentId: '11111111-2222-4333-8444-be4a24fc1dbc' }
   config.officeInboxNodeIds.DSA.porAtender = actualAttention
   groups.DSA.push('DSA_T', 'JEFE_UNIDAD_DSA_1')
   groups.DIRECTORS.push('DSA_T')

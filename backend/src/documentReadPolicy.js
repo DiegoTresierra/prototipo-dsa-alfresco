@@ -86,7 +86,7 @@ export async function authorizeNodeRead(context, nodeId) {
     // These are independent reading rights. Neither makes the user responsible.
     let assignmentError
     const knowledgeFolder = context.session.functionalRole === 'jefe-unidad' ? folders.porConocimiento : null
-    allowed = Boolean(knowledgeFolder && node.parentId === knowledgeFolder)
+    allowed = Boolean(knowledgeFolder && (node.parentId === knowledgeFolder || context.institutionalMemberships?.get(node.id)?.has(knowledgeFolder)))
     if (!allowed) {
       try { allowed = (await assignedIds(context)).has(node.id) } catch (error) { assignmentError = error }
     }
@@ -103,6 +103,10 @@ export async function authorizeNodeRead(context, nodeId) {
         skipCount += list.entries.length
         if ((!list.entries.length && more) || skipCount > 10_000) fail('ALFRESCO_INVALID_LIST_RESPONSE', 502)
       } while (!allowed && more)
+    }
+    if (!allowed && knowledgeFolder && context.resolveMemberships) {
+      const memberships = await context.resolveMemberships()
+      allowed = memberships?.get(node.id)?.has(knowledgeFolder) === true
     }
     if (!allowed && assignmentError) throw assignmentError
   }

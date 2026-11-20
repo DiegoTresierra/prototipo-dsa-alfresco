@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { getLinkedResponses } from '../api/alfresco'
 import { PdfPreview } from './PdfPreview'
 import { ResponseComposer } from './ResponseComposer'
+import { ResponseProposals } from './ResponseProposals'
 
 /* eslint-disable react/prop-types */
 export function RelatedResponses({ documentId, canIssue = false, csrfToken, onChanged, onEmit }) {
@@ -14,6 +15,7 @@ export function RelatedResponses({ documentId, canIssue = false, csrfToken, onCh
     try { setResult(await getLinkedResponses(documentId)) } catch (error) { setMessage(error.message) } finally { setBusy(false) }
   }
   return <section className="dispatch-summary">
+    <ResponseProposals key={documentId} documentId={documentId} />
     {canIssue && <ResponseComposer documentId={documentId} csrfToken={csrfToken} onEmit={onEmit} onLinked={(result) => { onChanged?.(result); load() }} />}
     <button type="button" className="button-secondary" disabled={busy} onClick={load}>Consultar respuestas relacionadas</button>
     {message && <p role="alert">{message}</p>}
