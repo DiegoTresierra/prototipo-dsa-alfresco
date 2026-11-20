@@ -242,7 +242,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(forgedScope.status, 403)
   assert.equal((await forgedScope.json()).diagnostic.reason, 'DOCUMENT_OUTSIDE_DEPENDENCY')
 
-  // Exact UUID and folder IDs verified by GET in DEV. Identity and writes here are mocks.
+  // Synthetic UUIDs reproduce the secondary-membership regression contract. All identities and I/O are mocked.
   const actualId = '11111111-2222-4333-8444-2a29efcb482b'
   const actualAttention = '11111111-2222-4333-8444-18f26647e882'
   nodes[actualId] = { parentId: '11111111-2222-4333-8444-be4a24fc1dbc' }
@@ -257,8 +257,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   scopedChildren.set('dsa-emitted', null)
   scopedChildren.set(actualAttention, [{ entry: { id: 'another-document', association: { assocType: 'cm:contains', isPrimary: true } } }, { entry: { id: actualId, association: { assocType: 'cm:contains', isPrimary: true } } }])
   const parentFailure = await dispatch(realShapeRequest, realShapeActor)
-  assert.equal(parentFailure.status, 201, 'the real DSA_T rejection must be fixed: node is readable and scoped folder proves membership despite parents 403')
-  assert.equal((await parentFailure.json()).dispatch.documentId, actualId)
+  const parentFailureBody = await parentFailure.json()
+  assert.equal(parentFailure.status, 201, `node is readable and scoped folder proves membership despite parents 403; backend error: ${parentFailureBody.error || 'none'}`)
+  assert.equal(parentFailureBody.dispatch.documentId, actualId)
   const unverifiedId = 'unverified-foreign-document'
   nodes[unverifiedId] = { parentId: nodes[actualId].parentId }
   parentsDenied.add(unverifiedId)

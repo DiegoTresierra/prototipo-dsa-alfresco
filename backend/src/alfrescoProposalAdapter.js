@@ -7,6 +7,7 @@ import { decodeEmissionMetadata } from './officialEmissionContract.js'
 import { officialEmissionName } from './officialEmissionService.js'
 import { belongsToFolder } from './dispatchPilotScope.js'
 import { canAttendSession, ownsAssignment, assignmentIsActive } from './attentionPolicy.js'
+import { assertEnvelopeExtensionsPreserved } from './envelopeExtensions.js'
 
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status = 409) => { throw Object.assign(new Error(code), { status }) }
@@ -57,6 +58,7 @@ export function createAlfrescoProposalAdapter(settings, { fetchImpl = globalThis
     parseAssignments(serialized, id)
     const current = await readOriginal(id, session)
     if (current.raw !== raw) fail('PROPOSAL_EXTERNAL_MODIFICATION')
+    assertEnvelopeExtensionsPreserved(current.envelope, envelope)
     await request(`/nodes/${e(id)}`, session, { method: 'PUT', body: {
       aspectNames: [...new Set([...(current.node.aspectNames || []), 'gd:tramite'])], properties: { 'gd:asignaciones': serialized },
     } })

@@ -8,6 +8,7 @@ import { documentIdentity } from './documentIdentity.js'
 import { allowedRecipientRoles } from './dispatchPolicy.js'
 import { validateReviewProcesses, assertReviewResponseLink } from './responseReview.js'
 import { validateProposalJournal } from './responseProposalJournal.js'
+import { assertEnvelopeExtensionsPreserved, validateEnvelopeExtensions } from './envelopeExtensions.js'
 
 export const assignmentProperty = 'gd:asignaciones'
 export const responsibleProperty = 'gd:responsablesActuales'
@@ -110,6 +111,7 @@ export function parseAssignments(raw, documentId) {
   }
   validateReviewProcesses(value.reviewProcesses, documentId, assignments)
   validateProposalJournal(value.reviewOperations, documentId)
+  validateEnvelopeExtensions(value)
   return value
 }
 
@@ -232,6 +234,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     // Best-effort external-change detection, NOT compare-and-swap: a writer can still race after this GET.
     const current = await read(documentId)
     if (current.raw !== raw) fail('DISPATCH_EXTERNAL_MODIFICATION', 409)
+    assertEnvelopeExtensionsPreserved(current.envelope, next)
     if (!current.node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
     const expected = { [assignmentProperty]: serialized, ...projections(next) }
     await request(`${core}/nodes/${encodeURIComponent(documentId)}`, { method: 'PUT', body: {
