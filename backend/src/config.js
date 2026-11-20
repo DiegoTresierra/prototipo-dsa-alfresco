@@ -98,6 +98,12 @@ export const config = {
   groupMappings: parseGroupMappings(),
   userInboxNodeIds: parseJson('ALFRESCO_USER_INBOX_NODE_IDS_JSON', {}),
   officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
+  documentClosure: {
+    writesEnabled: process.env.DOCUMENT_CLOSURE_WRITES_ENABLED === 'true',
+    environment: process.env.DOCUMENT_CLOSURE_ENVIRONMENT || '',
+    expectedTarget: process.env.DOCUMENT_CLOSURE_EXPECTED_TARGET || '',
+    acknowledgement: process.env.DOCUMENT_CLOSURE_ACKNOWLEDGEMENT || '',
+  },
   officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
   dispatchStorePath: process.env.DISPATCH_STORE_PATH || path.join(backendRoot, 'data', 'dispatches.json'),
   dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'alfresco',

@@ -24,6 +24,9 @@ import { buildGenericPdfForm } from './pdfCreation.js'
 import { genericActorGet, verifyGenericRecipient } from './genericCreation.js'
 import { createOfficialEmissionService, hasInstitutionalRead } from './officialEmissionService.js'
 import { listInstitutionalEmitted } from './emittedDocuments.js'
+import { installClosureRoutes } from './closureRoutes.js'
+import { assertInterventionMutable } from './closedInterventionPolicy.js'
+import { parseAssignments } from './alfrescoDispatchRepository.js'
 
 const app = express()
 const officialEmissionService = createOfficialEmissionService(config)
@@ -195,6 +198,8 @@ async function requireInstitutionalIdentity(request, response, next) {
     return response.status(error.status || 503).json({ error: error.message })
   }
 }
+
+installClosureRoutes(app, config, { repository: dispatchRepository, requireSession, requireCsrf })
 
 app.get('/api/auth/login', async (request, response) => {
   try {
@@ -804,6 +809,7 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
 
   try {
     // Fail before creating a PDF if the configured distribution account cannot authenticate.
+    return await dispatchRepository.withDocument(request.body.nodeId, async () => {
     const distributionHeaders = { Accept: 'application/json', Authorization: await getDistributionAuthorization() }
     const upstreamHeaders = {
       Accept: 'application/json',
@@ -814,6 +820,7 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
     if (payload?.entry?.properties?.['gd:identidadEmision']) return response.status(403).json({ error: 'OFFICIAL_RETRY_ENDPOINT_REQUIRED' })
     const emittedEntry = payload?.entry
     if (!existing.ok || !emittedEntry || emittedEntry.parentId !== emittedNodeId || emittedEntry.createdByUser?.id !== session.alfresco.id || emittedEntry.nodeType !== 'cm:content' || emittedEntry.isFile !== true || emittedEntry.content?.mimeType !== 'application/pdf') return response.status(403).json({ error: 'DIRECTOR_RETRY_NOT_ALLOWED' })
+    assertInterventionMutable(parseAssignments(emittedEntry.properties?.['gd:asignaciones'], emittedEntry.id), recipientDependency.toLowerCase())
     createdNodeId = emittedEntry.id
     const nodeUrl = buildAlfrescoUrl(
       config.alfrescoTarget,
@@ -893,7 +900,9 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
     // Alfresco returns the same node from both folders; the receiver must be able to read it
     // through an explicit node ACL because secondary parents do not confer permissions.
     return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
+    })
   } catch (error) {
+    if (['DOCUMENT_INTERVENTION_CLOSED', 'DOCUMENT_INTERVENTION_CLOSURE_PENDING'].includes(error.message)) return response.status(409).json({ error: error.message })
     if (['DISTRIBUTION_SERVICE_NOT_CONFIGURED', 'DISTRIBUTION_SERVICE_AUTH_FAILED'].includes(error.code)) return response.status(503).json({ error: error.code })
     return response.status(502).json({ error: createdNodeId ? 'DIRECTOR_NODE_PERMISSION_PARTIAL' : 'ALFRESCO_PROXY_ERROR', ...(createdNodeId ? { emittedNodeId: createdNodeId } : {}) })
   } finally {

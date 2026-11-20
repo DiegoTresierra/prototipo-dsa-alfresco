@@ -7,6 +7,22 @@ import { nodeToDocument } from '../utils/documentMapping.js'
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
 
+export async function getClosureEvaluation(documentId) {
+  const r = await apiFetch(`/api/documents/closure?documentId=${encodeURIComponent(documentId)}`, { credentials: 'include', headers: { Accept: 'application/json' } })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || 'No se pudo evaluar el cierre.')
+  if (body.evaluation?.documentId !== documentId || !Array.isArray(body.evaluation?.blockingReasons) || typeof body.canClose !== 'boolean' || typeof body.writesEnabled !== 'boolean') throw new Error('Evaluación incompleta. Consulta nuevamente.')
+  return body
+}
+export async function confirmDocumentClosure(input, csrfToken, reconcile = false) {
+  const r = await apiFetch(`/api/documents/closure${reconcile ? '/reconcile' : ''}`, { method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(input) })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || 'Resultado no confirmado; consulta y concilia sin crear otra operación.')
+  if (body.process?.documentId !== input.documentId || body.process?.executionMode !== 'ALFRESCO' || body.process?.state !== 'CERRADA') throw new Error('Resultado de cierre incompleto. Consulta y concilia antes de continuar.')
+  return body
+}
+
 export async function listEligibleDocumentRecipients() {
   const response = await apiFetch('/api/directory/recipients', { credentials: 'include', headers: { Accept: 'application/json' } })
   if (!response.ok) {

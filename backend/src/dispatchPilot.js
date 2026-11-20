@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const fail = (code) => { throw Object.assign(new Error(code), { status: 503 }) }
+const activeLeases = new Set()
+export const pilotLeaseIsHeld = settings => activeLeases.has(settings.dispatchPilot?.leasePath)
 
 export const pilotAcknowledgements = {
   dev: 'single-instance-exclusive-writer-dev-institutional-documents',
@@ -48,9 +50,11 @@ export function acquirePilotLease(settings) {
   console.info('[dispatch-pilot]', JSON.stringify({ ...scope,
     scope: 'institutional-inboxes', concurrency: 'single-process-only' }))
   let released = false
+  activeLeases.add(pilot.leasePath)
   return () => {
     if (released) return
     released = true
+    activeLeases.delete(pilot.leasePath)
     fs.closeSync(descriptor)
     fs.unlinkSync(pilot.leasePath)
   }

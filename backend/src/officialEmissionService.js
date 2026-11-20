@@ -7,6 +7,7 @@ import { validatePilotEnvironment, acquirePilotLease } from './dispatchPilot.js'
 import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { stableJson, sha256, validateReconciliation } from './emissionReconciliation.js'
 import { parseAssignments } from './alfrescoDispatchRepository.js'
+import { assertInterventionMutable } from './closedInterventionPolicy.js'
 
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status = 503) => Object.assign(new Error(code), { status })
@@ -202,6 +203,7 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
                 if (n?.id !== entry.id) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')
                 if (!n.isFile) continue
                 const envelope = parseAssignments(n.properties?.['gd:asignaciones'], n.id)
+                if (reviewed?.binding.originalDocumentId === n.id) assertInterventionMutable(envelope, dependency.toLowerCase())
                 for (const o of envelope.reviewOperations || []) {
                   if (o.phase === 'COMMITTED') continue
                   if (!reviewed) throw fail('OFFICIAL_REVIEW_CLASSIFICATION_REQUIRED')

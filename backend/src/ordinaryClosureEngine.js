@@ -3,6 +3,7 @@ import { createClosurePreflight } from './closurePreflight.js'
 import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { evidenceHash } from './closureEvidenceContract.js'
 import { closureOperationId, closureProcessId, closureIntentHash, closureSourceHash } from './ordinaryClosureContract.js'
+import { isAlfrescoClosureStore, assertClosureWritesEnabled } from './alfrescoClosureStore.js'
 
 const fail = (code, status = 409) => { throw Object.assign(new Error(code), { status }) }
 const text = v => typeof v === 'string' && v.trim().length > 0 && v.length <= 250
@@ -11,6 +12,18 @@ const evaluationHash = r => { const { evaluatedAt, envelopeRevision, ...data } =
 export function createOrdinaryClosureEngine(settings, { store, fetchImpl, institutionalProvider, clock = () => new Date() } = {}) {
   if (!isClosureSimulationStore(store) || typeof fetchImpl !== 'function' || fetchImpl === globalThis.fetch ||
       !new URL(settings.alfrescoTarget).hostname.endsWith('.invalid')) fail('CLOSURE_REAL_WRITES_DISABLED', 503)
+  return buildEngine(settings, { store, fetchImpl, institutionalProvider, clock }, 'SIMULATED')
+}
+export function createAlfrescoOrdinaryClosureEngine(settings, options) {
+  if (!isAlfrescoClosureStore(options.store)) fail('CLOSURE_STORE_REQUIRED', 503)
+  const invoke = (method, input, session) => {
+    assertClosureWritesEnabled(settings)
+    return buildEngine(settings, { ...options, store: options.store.forSession(session) }, 'ALFRESCO')[method](input, session)
+  }
+  return { decide: (input, session) => invoke('decide', input, session), reconcile: (input, session) => invoke('reconcile', input, session) }
+}
+function buildEngine(settings, { store, fetchImpl, institutionalProvider, clock = () => new Date() }, executionMode) {
+  const schemaVersion = executionMode === 'SIMULATED' ? 1 : 2
   const preflight = createClosurePreflight(settings, { fetchImpl, institutionalProvider, clock })
   async function execute(input, session, reconcile) {
     if (!input || Object.keys(input).sort().join(',') !== 'documentId,expectedEnvelopeRevision,reason,requestKey,scope' ||
@@ -43,7 +56,7 @@ export function createOrdinaryClosureEngine(settings, { store, fetchImpl, instit
       if (evaluated.envelopeRevision !== current.envelope.revision) fail('CLOSURE_STALE_EVALUATION')
       if (op?.phase === 'COMMITTED') {
         const process = current.envelope.closureProcesses.find(p => p.id === op.processId)
-        return { process, repeated: true, simulationOnly: true, writesEnabled: false }
+        return { process, repeated: true, simulationOnly: executionMode === 'SIMULATED', writesEnabled: executionMode === 'ALFRESCO' }
       }
       if (op && !reconcile) fail('CLOSURE_RECONCILIATION_REQUIRED')
       if (reconcile && !op) fail('CLOSURE_OPERATION_NOT_FOUND')
@@ -53,7 +66,7 @@ export function createOrdinaryClosureEngine(settings, { store, fetchImpl, instit
       if (!op && current.envelope.revision !== input.expectedEnvelopeRevision) fail('CLOSURE_STALE_REVISION')
       if (op && (current.envelope.revision !== op.expectedEnvelopeRevision + 1 || closureSourceHash(current.envelope) !== op.sourceHash || evaluationHash(evaluated) !== op.evaluationHash)) fail('CLOSURE_RECONCILIATION_CONFLICT')
       if (!op) {
-        op = { schemaVersion: 1, executionMode: 'SIMULATED', id, processId: closureProcessId(input.documentId, dependency), ...intent, phase: 'PREPARED', at: clock().toISOString(),
+        op = { schemaVersion, executionMode, id, processId: closureProcessId(input.documentId, dependency), ...intent, phase: 'PREPARED', at: clock().toISOString(),
           payloadHash: closureIntentHash(intent), sourceHash: closureSourceHash(current.envelope), evaluationHash: evaluationHash(evaluated) }
         current = await store.save(input.documentId, { ...current.envelope, revision: current.envelope.revision + 1,
           closureProcesses: current.envelope.closureProcesses || [], closureOperations: [...(current.envelope.closureOperations || []), op] }, current.raw)
@@ -64,7 +77,7 @@ export function createOrdinaryClosureEngine(settings, { store, fetchImpl, instit
       const fresh = await store.read(input.documentId)
       if (fresh.raw !== current.raw || evaluated.envelopeRevision !== current.envelope.revision || closureSourceHash(fresh.envelope) !== op.sourceHash ||
           evaluated.preliminaryCompliance !== 'MET' || evaluated.blockingReasons.length || evaluationHash(evaluated) !== op.evaluationHash) fail('CLOSURE_STALE_EVALUATION')
-      const process = { schemaVersion: 1, executionMode: 'SIMULATED', id: op.processId, documentId: input.documentId, dependency, state: 'CERRADA', authority,
+      const process = { schemaVersion, executionMode, id: op.processId, documentId: input.documentId, dependency, state: 'CERRADA', authority,
         at: op.at, reason: op.reason, sourceEnvelopeRevision: op.expectedEnvelopeRevision, committedEnvelopeRevision: current.envelope.revision + 1,
         evidence: { sourceHash: op.sourceHash, evaluationHash: op.evaluationHash,
           assignmentIds: current.envelope.dispatches.flatMap(d => d.recipients).filter(a => a.dependency === dependency).map(a => a.id) },
@@ -74,7 +87,7 @@ export function createOrdinaryClosureEngine(settings, { store, fetchImpl, instit
       await store.save(input.documentId, next, current.raw)
       const verified = await store.read(input.documentId)
       if (verified.raw !== JSON.stringify(next)) fail('CLOSURE_RESULT_UNCERTAIN', 502)
-      return { process: verified.envelope.closureProcesses.find(p => p.id === process.id), repeated: false, simulationOnly: true, writesEnabled: false }
+      return { process: verified.envelope.closureProcesses.find(p => p.id === process.id), repeated: false, simulationOnly: executionMode === 'SIMULATED', writesEnabled: executionMode === 'ALFRESCO' }
     })
   }
   return { decide: (input, session) => execute(input, session, false), reconcile: (input, session) => execute(input, session, true) }
