@@ -6,7 +6,7 @@ import path from 'node:path'
 import { createAlfrescoDispatchRepository, assignmentProperty, responsibleProperty, dependencyProperty, parseAssignments, maxAssignmentBytes } from './alfrescoDispatchRepository.js'
 import { acquirePilotLease, pilotAcknowledgements } from './dispatchPilot.js'
 
-const documentId = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
+const documentId = '11111111-2222-4333-8444-2a29efcb482b'
 const director = { alfresco: { id: 'director' }, authorization: 'Basic actor', functionalRole: 'direccion', dependency: 'DSA',
   authorizationStatus: 'active', capabilities: ['documents:read', 'documents:write'] }
 const input = (key = 'one', recipients = ['head-a']) => ({ documentId, requestKey: key, senderUserId: 'director',

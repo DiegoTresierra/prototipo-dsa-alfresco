@@ -9,7 +9,7 @@ import { once } from 'node:events'
 
 test('HTTP Alfresco pilot authorizes secondary membership, persists all readers, and rejects forged scope/ACL/roles', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'alfresco-dispatch-http-'))
-  const documentId = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
+  const documentId = '11111111-2222-4333-8444-2a29efcb482b'
   const foreignId = '00000000-0000-0000-0000-000000000001'
   const secondId = '00000000-0000-0000-0000-000000000002'
   const additionalId = '00000000-0000-0000-0000-000000000003'

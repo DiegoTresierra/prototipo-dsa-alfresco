@@ -20,6 +20,14 @@ backend/data/organization.json
 backend/data/dispatch-pilot.lock
 backend/data/model-backups/
 frontend/artifacts/
+# Private operational evidence belongs outside the repository. These are safeguards.
+/private-evidence/
+/docs/private/
+/docs/Informe_*.docx
+/backend/data/*.lock
+/backend/alfresco-model/backups/
+/backend/alfresco-model/emission-reconciliation.*.candidate.json
+/backend/alfresco-model/emission-reconciliation.*.approved.json
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

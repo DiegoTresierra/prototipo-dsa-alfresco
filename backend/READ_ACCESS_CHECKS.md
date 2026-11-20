@@ -1,71 +1,34 @@
-# Comprobaciones GET con sesiones reales de prueba
+# Verificación de lectura con sesiones finales
 
-Mantener `OFFICIAL_EMISSION_WRITES_ENABLED=false`. Esta prueba no emite documentos, no concede permisos ni llama al endpoint de login. Requiere una sesión ya iniciada en la aplicación y el backend local disponible. Si falta sesión, dejar la prueba pendiente; no compartir tokens, cookies, contraseñas ni el JSON completo de `/api/auth/me`.
+Este procedimiento no concede permisos ni realiza escrituras. Se ejecuta con sesiones reales autorizadas; no se infieren derechos de Dirección o Jefatura a partir de la cuenta técnica.
 
-Las sesiones DSA_T/DTI_T no están accesibles al agente: no hay sesión de navegador conectada ni backend local disponible en la comprobación. La cuenta `gd_distribucion` sirve para inventario y ACL, pero NO sustituye la lectura efectiva de un destinatario. Por ello no se registran resultados HTTP ficticios para esas dos identidades.
+## Casos
 
-## Pasos desde el navegador
+1. Emisor consulta un PDF propio.
+2. Destinatario consulta un PDF distribuido por asociación secundaria.
+3. Usuario ajeno intenta leer un documento no compartido.
+4. Revisor institucional intenta consultar original, propuesta y versión histórica.
 
-1. Con la aplicación abierta y una sesión real DSA_T, abrir DevTools → Console. Confirmar que es el entorno DEV acordado. No pulsar emitir, derivar, atender o modificar permisos.
-2. Revisar y ejecutar el siguiente bloque GET-only. Examina el usuario efectivo del backend y luego los dos UUID concretos. No lee ni imprime credenciales. Una denegación esperada debe ser 403/404, no 401 ni fallo de red.
-3. Repetir en una ventana/perfil con sesión DTI_T. No sustituir su identidad por un parámetro ni utilizar la cuenta técnica para simularla.
-4. Conservar únicamente las filas de resultados y la identidad resumida. Comparar metadatos y contenido por separado: listar un nodo en una bandeja no prueba que pueda descargarse.
+Obtener los identificadores desde la bandeja autorizada de esa sesión; no incluirlos en informes compartidos.
 
-```javascript
-await (async () => {
-  const options = { method: 'GET', credentials: 'include', redirect: 'error', cache: 'no-store' };
-  const response = await fetch('/api/auth/me', options);
-  if (response.status !== 200) throw new Error('PENDIENTE: falta sesión real activa');
-  const session = await response.json();
-  const userId = session.alfresco?.id;
-  if (session.authorizationStatus !== 'active' || !['DSA_T', 'DTI_T'].includes(userId)) {
-    throw new Error('PENDIENTE: utilizar la sesión de prueba acordada');
-  }
-  console.log({ userId, functionalRole: session.functionalRole, dependency: session.dependency });
-  const shared = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097';
-  const privateDTI = 'efa8b1e8-0814-42e4-a8b1-e8081472e43e';
-  const cases = [
-    { documentId: shared, expectedRead: true, case: 'DTI compartido con DSA' },
-    { documentId: privateDTI, expectedRead: userId === 'DTI_T', case: 'DTI no compartido' }
-  ];
-  const rows = [];
-  for (const item of cases) {
-    try {
-      const base = '/api/alfresco/api/-default-/public/alfresco/versions/1/nodes/' + encodeURIComponent(item.documentId);
-      const metadata = await fetch(base + '?include=properties', options);
-      const content = await fetch(base + '/content', options);
-      const bytes = new Uint8Array(await content.arrayBuffer());
-      const mime = (content.headers.get('content-type') || '').split(';')[0].trim();
-      const pdfSignature = new TextDecoder().decode(bytes.slice(0, 5)) === '%PDF-';
-      const readable = metadata.status === 200 && content.status === 200;
-      const validPdf = content.status === 200 && bytes.length > 0 && mime === 'application/pdf' && pdfSignature;
-      const denied = [403, 404].includes(metadata.status) && [403, 404].includes(content.status);
-      let sha256;
-      if (content.status === 200) {
-        const digest = await crypto.subtle.digest('SHA-256', bytes);
-        sha256 = [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('');
-      }
-      rows.push({ userId, ...item, metadataHTTP: metadata.status, contentHTTP: content.status,
-        bytes: bytes.length, mime, pdfSignature, sha256,
-        result: item.expectedRead ? readable && validPdf ? 'OK' : 'REVISAR' : denied ? 'OK_DENEGADO' : 'REVISAR' });
-    } catch (error) { rows.push({ userId, ...item, result: 'PENDIENTE_ERROR_GET', error: error.name }); }
-  }
-  console.table(rows);
-  return rows;
-})();
-```
+## Comprobaciones GET
 
-La comprobación de permisos no requiere `include=permissions`: Consumer puede consultar metadatos/contenido sin que debamos exigir facultades de administración de ACL. La firma `%PDF-` comprueba el tipo inicial y no es una validación estructural completa del PDF. Comparar el SHA-256 del documento compartido obtenido desde ambas sesiones.
+En Network, registrar en privado estado HTTP, identificador de caso, identidad efectiva y resultado, sin cookies, Authorization ni contraseñas.
 
-## Matriz y registro pendiente
+- GET /api/auth/me confirma el contexto de la sesión.
+- GET del nodo mediante /api/alfresco/api/-default-/public/alfresco/versions/1/nodes/{documentId} comprueba metadatos autorizados.
+- GET del contenido mediante el mismo prefijo y /content comprueba PDF no vacío.
+- La asociación cm:contains debe confirmarse mediante Alfresco, incluyendo ubicaciones secundarias; la visibilidad en una bandeja no demuestra ACL del nodo.
+- Las propuestas se consultan mediante /api/documents/response-proposals?documentId=... y sus versiones mediante /api/documents/proposal-version-content. No se usa una ruta arbitraria de UUID para eludir el original o su vínculo.
 
-| Sesión real | Documento | Resultado esperado | Resultado real actual |
-|---|---|---|---|
-| DSA_T | `18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097` | Metadatos 200, contenido 200, PDF no vacío | PENDIENTE: sesión no accesible |
-| DTI_T | `18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097` | Metadatos 200, contenido 200, mismo hash | PENDIENTE: sesión no accesible |
-| DSA_T | `efa8b1e8-0814-42e4-a8b1-e8081472e43e` | Metadatos y contenido 403/404 | PENDIENTE: sesión no accesible |
-| DTI_T | `efa8b1e8-0814-42e4-a8b1-e8081472e43e` | Metadatos y contenido 200, PDF no vacío | PENDIENTE: sesión no accesible |
+Las versiones estándar se consultan en Alfresco con GET /nodes/{id}/versions, detalle /versions/{versionId} y /content de esa versión. La ausencia de una ruta proxy genérica para versiones no significa que Alfresco no las soporte: usar el servicio autorizado de propuestas o una sesión de API ya autorizada.
 
-No usar los UUID `ae23bcf0-ef2a-48c7-a3bc-f0ef2a98c7b1` y `dd778efd-6acd-48f1-b78e-fd6acd08f1e1` como controles positivos de PDF: el GET técnico devolvió 200 pero contenido de cero bytes. No repararlos automáticamente.
+Para verificar firma y SHA-256 sin publicar contenido, usar herramientas locales sobre el PDF obtenido con la sesión. Un HTTP 200 con cero bytes no acredita una versión válida. No pegar un token en consola o en un archivo compartido.
 
-El código del proxy sigue enviando la autorización de la sesión real; no hay un fallback a la cuenta técnica para estas descargas. Si un GET propio falla, registrar su estado y revisar identidad/ACL. Si el control negativo permite acceso, detener el piloto y auditar la concesión antes de modificar permisos.
+## Interpretación y evidencia privada
+
+Una asociación secundaria no concede lectura. Un 403 de /parents puede impedir enumerar padres sin negar el PDF; usar comprobación positiva de cm:contains cuando la política lo permita.
+
+Jefatura conserva la política de propios/Por conocimiento y asignaciones Por atender; leer no concede responsabilidad, derivación ni aprobación. Para revisores futuros, integrar autoridad institucional específica sin acceso global por UUID.
+
+Conservar evidencia fuera del repositorio: caso, fecha, actor, estados HTTP, tamaño, tipo y hash cuando proceda. No almacenar tokens ni PDF institucional en Git, capturas públicas o reportes de CI. Las ACL faltantes requieren decisión humana independiente.

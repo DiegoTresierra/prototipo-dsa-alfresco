@@ -15,11 +15,11 @@ assert.ok(fs.existsSync(edge), 'Edge executable required (or set DISPATCH_TEST_E
 assert.ok(fs.existsSync(path.join(dist, 'index.html')), 'Run npm run build first')
 fs.mkdirSync(artifacts, { recursive: true })
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-browser-'))
-const id = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
+const id = '11111111-2222-4333-8444-2a29efcb482b'
 const people = [
   { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
   { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
-  { id: '021200931d@uandina.edu.pe', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: null },
+  { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: null },
 ]
 const node = { id, name: 'oficio-prueba.pdf', isFile: true, nodeType: 'cm:content', parentId: 'dsa-attention',
   content: { mimeType: 'application/pdf', sizeInBytes: 500 }, aspectNames: ['gd:tramite'],
@@ -246,7 +246,7 @@ try {
   assert.equal(counters.mockAttentions, 0, 'formal emission and link never attend assignments automatically')
   for (const [userId, role, roleId, menu, capture] of [
     ['JEFE_UNIDAD_DSA_1', 'jefe-unidad', 'jefe-unidad-dsa', 'Documentos recibidos', 'attention-head'],
-    ['021200931d@uandina.edu.pe', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
+    ['specialist.fixture.1@example.invalid', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
   ]) {
     Object.assign(session, { functionalRole: role, roleId, alfresco: { id: userId }, user: { id: userId, name: userId }, canIssueInstitutionalResponse: false,
       dispatchRecipientRoles: role === 'jefe-unidad' ? ['especialista'] : [] })

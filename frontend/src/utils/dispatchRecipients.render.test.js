@@ -9,7 +9,7 @@ import react from '@vitejs/plugin-react'
 // Exact response reported in Network by Dirección DSA, including unit: null.
 const response = {
   recipients: [
-    { id: '021200931d@uandina.edu.pe', displayName: 'DIEGO ANDRES TRESIERRA ZAMORA', dependency: 'dsa', functionalRole: 'especialista', unit: null },
+    { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista de prueba', dependency: 'dsa', functionalRole: 'especialista', unit: null },
     { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null },
     { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null },
   ],
@@ -117,7 +117,7 @@ test('Jefatura only renders specialists even when passed the complete Dirección
     document, recipients: response.recipients, allowedRecipientRoles: ['especialista'],
     originAssignmentId: 'own-assignment', onDispatch: () => {},
   })
-  assert.ok(html.includes('DIEGO ANDRES TRESIERRA ZAMORA'))
+  assert.ok(html.includes('Especialista de prueba'))
   assert.ok(!html.includes('JEFE_UNIDAD_DSA_1'))
   assert.ok(!html.includes('JEFE_UNIDAD_DSA_2'))
   assert.equal((html.match(/type="checkbox"/g) || []).length, 1)

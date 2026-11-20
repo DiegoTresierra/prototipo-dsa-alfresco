@@ -243,9 +243,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal((await forgedScope.json()).diagnostic.reason, 'DOCUMENT_OUTSIDE_DEPENDENCY')
 
   // Exact UUID and folder IDs verified by GET in DEV. Identity and writes here are mocks.
-  const actualId = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
-  const actualAttention = '701049e5-a6a9-48c0-9049-e5a6a998c02b'
-  nodes[actualId] = { parentId: '69e39272-905e-426c-a392-72905ef26ca6' }
+  const actualId = '11111111-2222-4333-8444-2a29efcb482b'
+  const actualAttention = '11111111-2222-4333-8444-18f26647e882'
+  nodes[actualId] = { parentId: '11111111-2222-4333-8444-be4a24fc1dbc' }
   config.officeInboxNodeIds.DSA.porAtender = actualAttention
   groups.DSA.push('DSA_T', 'JEFE_UNIDAD_DSA_1')
   groups.DIRECTORS.push('DSA_T')
