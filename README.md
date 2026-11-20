@@ -51,6 +51,7 @@ Nunca colocar credenciales en variables VITE: se incluyen en el cliente. Ningún
 | Propuestas, versiones y recuperación | [Propuestas](backend/RESPONSE_PROPOSALS.md) |
 | Presentación, observaciones y aprobación | [Decisiones](backend/REVIEW_DECISIONS.md) |
 | Emisión desde una aprobación | [Integración aprobada](backend/APPROVED_RESPONSE_EMISSION.md) |
+| Evaluación, evidencias y cierre simulado | [Cierre documental V0.1](backend/DOCUMENT_CLOSURE.md) |
 
 ## Validación sin escrituras reales
 
