@@ -118,6 +118,14 @@ export const config = {
       ? process.env.ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD || ''
       : process.env.ALFRESCO_DISTRIBUTION_PASSWORD || '',
   },
+  hierarchyService: {
+    username: process.env.ALFRESCO_HIERARCHY_SERVICE_USERNAME || '',
+    password: process.env.ALFRESCO_HIERARCHY_SERVICE_PASSWORD || '',
+    containerNodeId: process.env.ALFRESCO_HIERARCHY_CONTAINER_NODE_ID || '',
+    auditContainerNodeId: process.env.ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID || '',
+    labContainerNodeId: process.env.ALFRESCO_HIERARCHY_LAB_CONTAINER_NODE_ID || '',
+    storage: process.env.ALFRESCO_HIERARCHY_STORAGE || '',
+  },
   userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),

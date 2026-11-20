@@ -3,6 +3,41 @@ import path from 'node:path'
 
 const fail = (code) => { throw Object.assign(new Error(code), { status: 503 }) }
 
+function processIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false
+    return true
+  }
+}
+
+function openPilotLease(leasePath) {
+  try { return fs.openSync(leasePath, 'wx') } catch (error) {
+    if (error?.code !== 'EEXIST') fail('DISPATCH_PILOT_LEASE_UNAVAILABLE')
+  }
+
+  let existing
+  let owner
+  try {
+    existing = fs.readFileSync(leasePath, 'utf8')
+    owner = JSON.parse(existing)
+  } catch {
+    fail('DISPATCH_PILOT_LEASE_UNAVAILABLE')
+  }
+  if (processIsAlive(owner?.pid) !== false) fail('DISPATCH_PILOT_LEASE_UNAVAILABLE')
+
+  try {
+    if (fs.readFileSync(leasePath, 'utf8') !== existing) fail('DISPATCH_PILOT_LEASE_UNAVAILABLE')
+    fs.unlinkSync(leasePath)
+    return fs.openSync(leasePath, 'wx')
+  } catch {
+    fail('DISPATCH_PILOT_LEASE_UNAVAILABLE')
+  }
+}
+
 export const pilotAcknowledgements = {
   dev: 'single-instance-exclusive-writer-dev-institutional-documents',
   preprod: 'single-instance-exclusive-writer-preprod-institutional-documents',
@@ -41,8 +76,7 @@ export function acquirePilotLease(settings) {
     fail('DISPATCH_PILOT_ENVIRONMENT_REQUIRED')
   }
   fs.mkdirSync(path.dirname(pilot.leasePath), { recursive: true })
-  let descriptor
-  try { descriptor = fs.openSync(pilot.leasePath, 'wx') } catch { fail('DISPATCH_PILOT_LEASE_UNAVAILABLE') }
+  const descriptor = openPilotLease(pilot.leasePath)
   fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(),
     ...scope }))
   console.info('[dispatch-pilot]', JSON.stringify({ ...scope,
