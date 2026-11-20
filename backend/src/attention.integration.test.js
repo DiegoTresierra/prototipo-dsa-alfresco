@@ -39,6 +39,18 @@ test('HTTP attention, existing institutional emission, verified response relatio
   const director = session('director', 'direccion')
   const head = session('head', 'jefe-unidad')
   const staff = session('staff', 'especialista')
+  const proposalUrl = base + `/api/documents/response-proposals?documentId=${originalId}`
+  const emptyProposals = await fetch(proposalUrl, { headers: director })
+  assert.equal(emptyProposals.status, 200)
+  assert.equal(emptyProposals.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await emptyProposals.json(), { proposals: [], persistence: 'alfresco', writesEnabled: false })
+  assert.equal((await fetch(base + `/api/documents/proposal-version-content?documentId=${originalId}&processId=forged&versionId=1.0`, { headers: director })).status, 403)
+  f.state.denyActor = true
+  assert.equal((await fetch(proposalUrl, { headers: director })).status, 403)
+  f.state.denyActor = false
+  actors.get('Basic actor-director').enabled = false
+  assert.equal((await fetch(proposalUrl, { headers: director })).status, 403)
+  actors.get('Basic actor-director').enabled = true
   const post = (endpoint, headers, body) => fetch(base + endpoint, { method: 'POST', headers, body: JSON.stringify(body) })
   const input = { documentId: originalId, assignmentId: root.recipients[1].id, requestKey: 'staff-attended', responseDocumentId: null }
   assert.equal((await post('/api/documents/assignments/attend', head, input)).status, 403)

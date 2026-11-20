@@ -77,8 +77,10 @@ export function officialFixture(t) {
       const nodeId = `pdf-${[...nodes.values()].filter((n) => n.isFile).length + 1}`
       const file = Buffer.from(await form.get('filedata').arrayBuffer())
       const entry = { id: nodeId, nodeType: 'cm:content', isFile: true, parentId: id, name: form.get('name'),
+        allowableOperations: ['update'], aspectNames: ['gd:identificacion', 'gd:clasificacion'],
         createdByUser: { id: actorUser }, content: { mimeType: 'application/pdf', sizeInBytes: file.length }, file,
         permissions: conditions.noNodeRecipientRead ? { isInheritanceEnabled: true, inherited: [] } : nodes.get(id).permissions, properties: {
+          'cm:title': form.get('cm:title'), 'cm:description': form.get('cm:description'),
           ...Object.fromEntries(['gd:dependenciaOrigen','gd:dependenciaDestino','gd:remitente','gd:destinatario','gd:fechaDocumento','gd:tipoDocumental'].map((name) => [name, form.get(name)])), 'gd:numero': form.get('gd:numero'), 'gd:codigoDocumental': form.get('gd:codigoDocumental'),
           'gd:cicloDocumental': Number(form.get('gd:cicloDocumental')), 'gd:identidadEmision': form.get('gd:identidadEmision'),
         } }

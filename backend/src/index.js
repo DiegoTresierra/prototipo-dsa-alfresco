@@ -1,4 +1,5 @@
 import express from 'express'
+import { createResponseProposalReader } from './responseProposalReader.js'
 import { getDistributionAuthorization, invalidateDistributionAuthorization } from './distributionService.js'
 import crypto from 'node:crypto'
 import * as cookie from 'cookie'
@@ -504,6 +505,23 @@ function requireDeliveryLock(request, response, next) {
     } catch (error) {
       return response.status(error.status || 502).json({ error: error.message || 'ATTENTION_FAILED',
         ...(error.responseDocumentId ? { responseDocumentId: error.responseDocumentId } : {}) })
+    }
+  })
+
+  app.get(['/api/documents/response-proposals', '/api/documents/proposal-version-content'], requireSession, requireInstitutionalIdentity, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    try {
+      if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
+      const { documentId, processId, versionId } = request.query
+      if (typeof documentId !== 'string' || !/^[A-Za-z0-9-]{1,250}$/.test(documentId) || request.session.authorizationStatus !== 'active' || !request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+      if (['jefe-unidad', 'especialista'].includes(request.session.functionalRole) && !await authorizeNodeRead(createReadContext(request.session), documentId)) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+      const reader = createResponseProposalReader(config)
+      if (request.path.endsWith('/response-proposals')) return response.json(await reader.list(documentId, request.session))
+      if (typeof processId !== 'string' || processId.length > 250 || typeof versionId !== 'string' || !/^[0-9]+\.[0-9]+$/.test(versionId)) return response.status(400).json({ error: 'INVALID_PROPOSAL_QUERY' })
+      const bytes = await reader.content(documentId, processId, versionId, request.session)
+      return response.type('application/pdf').set('Content-Disposition', 'attachment; filename="propuesta.pdf"').send(bytes)
+    } catch (error) {
+      return response.status(error.status || 502).json({ error: error.status === 403 ? 'DOCUMENT_READ_NOT_ALLOWED' : 'PROPOSAL_READ_FAILED' })
     }
   })
 

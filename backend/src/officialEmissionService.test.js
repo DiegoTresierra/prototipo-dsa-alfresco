@@ -176,11 +176,11 @@ test('legitimate attention changes do not invalidate approved test classificatio
   const f = officialFixture(t)
   const bytes = Buffer.from('legacy test')
   const node = { id: 'test-active', nodeType: 'cm:content', isFile: true, parentId: 'DSA-emitted', file: bytes,
-    properties: { 'gd:numero': 'TEST', 'gd:asignaciones': 'old revision' }, content: { mimeType: 'application/pdf' } }
+    properties: { 'gd:numero': 'TEST', 'gd:asignaciones': JSON.stringify({ schemaVersion: 1, revision: 0, documentId: 'test-active', dispatches: [], history: [] }) }, content: { mimeType: 'application/pdf' } }
   f.nodes.set(node.id, node); f.children.get('DSA-emitted').push(node.id)
   f.manifest.exclusions.push({ documentId: node.id, contentSha256: sha256(bytes), fingerprint: legacyFingerprint(node, sha256(bytes)), reason: 'approved test' })
   f.writeManifest(); f.restart()
-  node.properties['gd:asignaciones'] = 'new attended revision'
+  node.properties['gd:asignaciones'] = JSON.stringify({ schemaVersion: 1, revision: 1, documentId: 'test-active', dispatches: [], history: [] })
   node.properties['gd:estado'] = 'ATENDIDO'
   node.modifiedAt = '2026-11-19T00:00:00Z'
   assert.equal((await f.service.issue(f.session(), f.input())).emittedEntry.properties['gd:numero'], '1')

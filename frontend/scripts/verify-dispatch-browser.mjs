@@ -83,6 +83,11 @@ const server = http.createServer(async (request, response) => {
       return json({ list: { entries: url.pathname.includes('dsa-attention') ? [{ entry: node }] : [], pagination: { hasMoreItems: false } } })
     }
     if (url.pathname.endsWith('/content')) { response.writeHead(200, { 'Content-Type': 'application/pdf' }); return response.end('%PDF-1.7\n%local browser fixture') }
+    if (url.pathname === '/api/documents/response-proposals') return json({ persistence: 'alfresco', writesEnabled: false, proposals: [
+      { processId: 'mock-process', status: 'AVAILABLE', title: 'Propuesta verificada', state: 'BORRADOR', revision: 1, versions: ['1.0'] },
+      { status: 'INACCESSIBLE' }, { status: 'INVALID_VERSION' },
+    ] })
+    if (url.pathname === '/api/documents/proposal-version-content') { response.writeHead(200, { 'Content-Type': 'application/pdf' }); return response.end('%PDF-1.7\n%verified proposal fixture') }
     if (url.pathname === '/api/documents/response-candidates') return json({ documents: [] })
     if (url.pathname === '/api/documents/assignment-responses') return json({ responses: [], summary: { attended: counters.mockAttentions, pending: 3 - counters.mockAttentions, readyForClosureReview: false, formalClosureAllowed: false } })
     if (url.pathname === '/api/documents/assignments/attend' && request.method === 'POST') {
@@ -213,6 +218,12 @@ try {
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await evaluate("document.querySelector('.received-inbox__subject').click()")
   await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Responder con documento'))"), 'Dirección response action')
+  await clickText('Consultar propuestas')
+  await until(() => evaluate("document.body.textContent.includes('Propuesta verificada') && document.body.textContent.includes('Propuesta sin acceso autorizado.') && document.body.textContent.includes('Versión de propuesta inválida.')"), 'proposal statuses from repository')
+  assert.equal(await evaluate("Array.from(document.querySelectorAll('section[aria-label=\"Propuestas de respuesta\"] button')).some(b => /crear|presentar|aprobar|emitir/i.test(b.textContent))"), false)
+  await clickText('Ver versión 1.0')
+  await until(() => evaluate("Boolean(document.querySelector('iframe[title=\"Versión de propuesta\"]'))"), 'authorized proposal version preview')
+  await clickText('Cerrar propuesta')
   await clickText('Responder con documento')
   await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Generar nueva emisión'))"), 'response selection')
   await clickText('Generar nueva emisión')
@@ -279,7 +290,7 @@ try {
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
     checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
       'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],
-    visual, counters }
+    proposalChecks: ['available/inaccessible/invalid versions', 'verified version preview', 'no mutation buttons'], visual, counters }
   fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))
 } finally {

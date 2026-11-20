@@ -6,6 +6,8 @@ import { mapConcurrent } from './mapConcurrent.js'
 import { assignmentIsActive, canAttendSession, canIssueResponse, ownsAssignment, attentionSummary } from './attentionPolicy.js'
 import { documentIdentity } from './documentIdentity.js'
 import { allowedRecipientRoles } from './dispatchPolicy.js'
+import { validateReviewProcesses, assertReviewResponseLink } from './responseReview.js'
+import { validateProposalJournal } from './responseProposalJournal.js'
 
 export const assignmentProperty = 'gd:asignaciones'
 export const responsibleProperty = 'gd:responsablesActuales'
@@ -106,6 +108,8 @@ export function parseAssignments(raw, documentId) {
   for (const response of value.responses || []) {
     if (!value.history.some((event) => event.action === 'DOCUMENT_RESPONSE_LINKED' && event.responseDocumentId === response.documentId && event.actorUserId === response.linkedByUserId && event.at === response.linkedAt)) fail('DISPATCH_INVALID_ASSIGNMENTS')
   }
+  validateReviewProcesses(value.reviewProcesses, documentId, assignments)
+  validateProposalJournal(value.reviewOperations, documentId)
   return value
 }
 
@@ -361,6 +365,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
         return attentionResult(value)
       }
       if (value.assignment && !assignmentIsActive(value.assignment)) fail('ASSIGNMENT_NOT_ACTIVE', 409)
+      assertReviewResponseLink(value.envelope, input.responseDocumentId)
       const existing = [...(value.envelope.responses || []), ...value.envelope.dispatches.flatMap((dispatch) => dispatch.recipients).flatMap((assignment) => assignment.responses || [])]
       if (existing.some((response) => response.documentId === input.responseDocumentId)) fail('RESPONSE_ALREADY_LINKED', 409)
       const response = await validateResponse(input, session)
