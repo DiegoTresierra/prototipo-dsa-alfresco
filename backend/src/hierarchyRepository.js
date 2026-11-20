@@ -6,6 +6,7 @@ const assignmentType = 'gdo:asignacion'
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const roles = new Set(['jefe-unidad', 'especialista'])
 const statuses = new Set(['ACTIVA', 'INACTIVA'])
+const sameDependency = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase()
 
 function failure(code, status = 502, extra = {}) {
   return Object.assign(new Error(code), { code, status, ...extra })
@@ -129,7 +130,7 @@ export function createHierarchyRepository(settings, {
     const units = children.filter((entry) => entry.nodeType === unitType).map((entry) => {
       if (entry.parentId !== container.id) throw failure('HIERARCHY_UNIT_PARENT_INVALID', 409)
       return readProperties(entry, unitType)
-    }).filter((unit) => (!dependency || unit.dependency === dependency) && (includeInactive || unit.status === 'ACTIVA'))
+    }).filter((unit) => (!dependency || sameDependency(unit.dependency, dependency)) && (includeInactive || unit.status === 'ACTIVA'))
     return { units, revision: canonicalRevision(children) }
   }
 
@@ -145,7 +146,7 @@ export function createHierarchyRepository(settings, {
     const selectedUnits = unitId
       ? [units.find((unit) => unit.id === unitId) || await getUnit(unitId)]
       : units
-    if (dependency && selectedUnits.some((unit) => unit.dependency !== dependency)) throw failure('HIERARCHY_DEPENDENCY_MISMATCH', 403)
+    if (dependency && selectedUnits.some((unit) => !sameDependency(unit.dependency, dependency))) throw failure('HIERARCHY_DEPENDENCY_MISMATCH', 403)
     const assignments = []
     for (const unit of selectedUnits) {
       const children = await listAllChildren(unit.id)
@@ -236,8 +237,12 @@ export function createHierarchyRepository(settings, {
     const existing = await findByOperation(container.id, nodeName, unitType, properties)
     if (existing) return { ...readProperties(existing, unitType), reused: true }
     const { units } = await listUnits({ dependency: dependencyId, includeInactive: true })
-    if (unitCode && units.some((unit) => unit.code === unitCode && unit.status === 'ACTIVA')) {
-      throw failure('HIERARCHY_UNIT_CODE_DUPLICATE', 409)
+    const normalizedName = unitName.normalize('NFKC').trim().toLocaleLowerCase('es')
+    const normalizedCode = unitCode.normalize('NFKC').trim().toLocaleLowerCase('es')
+    const duplicateName = units.some((unit) => unit.name.normalize('NFKC').trim().toLocaleLowerCase('es') === normalizedName)
+    const duplicateCode = Boolean(normalizedCode && units.some((unit) => unit.code.normalize('NFKC').trim().toLocaleLowerCase('es') === normalizedCode))
+    if (duplicateName || duplicateCode) {
+      throw failure(duplicateCode ? 'HIERARCHY_UNIT_CODE_DUPLICATE' : 'HIERARCHY_UNIT_NAME_DUPLICATE', 409)
     }
     if (!container.allowableOperations?.includes('create')) throw failure('HIERARCHY_CONTAINER_CREATE_FORBIDDEN', 403)
     const created = await service.createChild(container.id, { name: nodeName, nodeType: unitType, properties })
@@ -263,6 +268,7 @@ export function createHierarchyRepository(settings, {
     const actor = text(actorId, 'HIERARCHY_ACTOR_REQUIRED', { max: 160 })
     const user = text(userId, 'HIERARCHY_USER_REQUIRED', { max: 160 })
     const unit = await getUnit(unitId)
+    if (unit.status !== 'ACTIVA') throw failure('HIERARCHY_UNIT_INACTIVE', 409)
     const dependencyId = text(dependency, 'HIERARCHY_DEPENDENCY_REQUIRED', { max: 80 })
     if (unit.dependency !== dependencyId) throw failure('HIERARCHY_DEPENDENCY_MISMATCH', 403)
     if (!roles.has(role)) throw failure('HIERARCHY_ASSIGNMENT_ROLE_INVALID', 400)

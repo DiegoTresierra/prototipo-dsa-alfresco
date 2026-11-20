@@ -294,6 +294,19 @@
 .office-chart__unassigned-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(180px, 1fr) auto; align-items: center; gap: 9px; }
 .office-chart__unassigned-row > span { min-width: 0; overflow-wrap: anywhere; }
 .office-chart__unassigned-row select { min-height: 38px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-background); color: var(--color-text-primary); font: inherit; font-size: 13px; }
+.hierarchy-unit-preparation { display: grid; gap: 14px; }
+.hierarchy-unit-preparation__fields { margin-top: 2px; }
+.hierarchy-candidates { display: grid; gap: 14px; }
+.hierarchy-candidates__lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hierarchy-readonly-help { color: var(--color-text-accessible-secondary); font-size: 12px; }
+.hierarchy-empty--card { display: grid; gap: 6px; justify-items: center; max-width: 620px; padding: 22px; border: 1px dashed var(--color-border); border-radius: 10px; text-align: center; }
+.hierarchy-empty--card strong { color: var(--color-text-primary); font-size: 14px; }
+.hierarchy-empty--card span, .office-chart__uuid { color: var(--color-text-accessible-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.office-chart__role-field { margin: 2px 0; font-size: 13px; }
+.office-chart__specialist-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto; align-items: center; gap: 9px; padding: 8px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-background); }
+.office-chart__specialist-row .office-chart__specialist { border: 0; padding: 0; }
+.office-chart__specialist-row .form-field { font-size: 12px; }
+.office-chart__specialist-row .form-field select, .office-chart__specialists > .form-field select { min-height: 38px; padding: 7px 9px; font-size: 12px; }
 
 @media (max-width: 900px) {
   .settings-entry-grid { grid-template-columns: 1fr; }
@@ -304,6 +317,8 @@
   .office-chart__units::before { display: none; }
   .office-chart__unit::before { height: 26px; }
   .office-chart__unassigned-row { grid-template-columns: 1fr; }
+  .office-chart__specialist-row { grid-template-columns: 1fr; }
+  .hierarchy-candidates__lanes { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .settings-detail__toolbar { align-items: stretch; flex-direction: column; }

@@ -54,7 +54,13 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
     const memberGroups = memberships || await loadMemberships()
     const userGroups = memberGroups.get(userId)
     if (!userGroups) throw failure('HIERARCHY_USER_NOT_IN_CONFIGURED_GROUPS', 403)
-    const person = await service.getPerson(userId)
+    let person
+    try {
+      person = await service.getPerson(userId)
+    } catch (error) {
+      if (error.status === 404) throw failure('HIERARCHY_USER_NOT_FOUND', 404)
+      throw error
+    }
     if (person.enabled !== true) throw failure('HIERARCHY_USER_DISABLED', 403)
     if (isTechnicalAccount(person, serviceUsername)) throw failure('HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE', 403)
     const resolved = resolveRole([...userGroups], mappings, userId)
@@ -89,6 +95,7 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
         candidates.push(await validateCandidate(userId, { dependency, role, memberships }))
       } catch (error) {
         if (![
+          'HIERARCHY_USER_NOT_FOUND',
           'HIERARCHY_USER_DISABLED',
           'HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE',
           'HIERARCHY_USER_MEMBERSHIP_AMBIGUOUS',

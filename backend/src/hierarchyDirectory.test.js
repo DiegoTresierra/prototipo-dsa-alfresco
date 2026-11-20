@@ -108,3 +108,14 @@ test('does not mask Alfresco authentication or group permission failures', async
   const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
   await assert.rejects(directory.listCandidates({ dependency: 'DSA', role: 'especialista' }), (error) => error.status === 403 && error.code === 'HIERARCHY_ALFRESCO_HTTP_403')
 })
+
+test('distinguishes a missing Alfresco person (404) from a REST permission failure (403)', async () => {
+  const fake = fakeDirectory({
+    memberships: { GROUP_GD_DSA: ['missing-person', 'active-person'], GROUP_GD_ESPECIALISTA: ['missing-person', 'active-person'] },
+    people: { 'active-person': {} },
+  })
+  const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
+  await assert.rejects(directory.validateAssignmentCandidate('missing-person', { dependency: 'DSA', role: 'especialista' }),
+    (error) => error.status === 404 && error.code === 'HIERARCHY_USER_NOT_FOUND')
+  assert.deepEqual((await directory.listCandidates({ dependency: 'DSA', role: 'especialista' })).map((person) => person.id), ['active-person'])
+})

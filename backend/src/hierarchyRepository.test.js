@@ -110,6 +110,17 @@ test('creates and reads a unit, paging through its assignments from the configur
   assert.equal(fake.calls.some((call) => call.method === 'DELETE'), false)
 })
 
+test('rejects active unit names and institutional codes duplicated within the dependency', async () => {
+  const fake = fakeAlfresco()
+  const repo = repository(fake)
+  await setupUnit(repo)
+  await assert.rejects(repo.createUnit({ operationId: 'duplicate-name-op', dependency: 'DSA', name: ' unidad de laboratorio ', code: 'LAB-02', actorId: 'director-dsa' }),
+    (error) => error.code === 'HIERARCHY_UNIT_NAME_DUPLICATE' && error.status === 409)
+  await assert.rejects(repo.createUnit({ operationId: 'duplicate-code-op', dependency: 'DSA', name: 'Otra unidad', code: 'lab-01', actorId: 'director-dsa' }),
+    (error) => error.code === 'HIERARCHY_UNIT_CODE_DUPLICATE' && error.status === 409)
+  assert.equal(fake.calls.filter((call) => call.method === 'POST' && call.body.nodeType === 'gdo:unidad').length, 1)
+})
+
 test('enforces one active head per unit and preserves the old assignment when changing heads', async () => {
   const fake = fakeAlfresco()
   const repo = repository(fake)
@@ -131,12 +142,25 @@ test('assigns specialists to a unit independently of its head and supports unit 
   const secondUnit = await repo.createUnit({ operationId: 'unit-op-2', dependency: 'DSA', name: 'Unidad dos', code: 'LAB-02', actorId: 'director-dsa' })
   const head = await addAssignment(repo, { operationId: 'head-op', userId: 'head-1', role: 'jefe-unidad', unitId: firstUnit.id })
   const specialist = await addAssignment(repo, { operationId: 'specialist-op-1', userId: 'specialist-1', role: 'especialista', unitId: firstUnit.id })
+  await assert.rejects(addAssignment(repo, { operationId: 'specialist-op-duplicate', userId: 'specialist-1', role: 'especialista', unitId: secondUnit.id }),
+    (error) => error.code === 'HIERARCHY_SPECIALIST_ALREADY_ASSIGNED' && error.status === 409)
+  assert.equal(fake.calls.filter((call) => call.method === 'POST' && call.body.nodeType === 'gdo:asignacion').length, 2)
   await repo.deactivateAssignment({ assignmentId: head.id, dependency: 'DSA', actorId: 'director-dsa', operationId: 'head-off' })
   assert.equal((await repo.listAssignments({ unitId: firstUnit.id, includeInactive: false })).assignments[0].id, specialist.id)
   await repo.deactivateAssignment({ assignmentId: specialist.id, dependency: 'DSA', actorId: 'director-dsa', operationId: 'specialist-off' })
   const reassigned = await addAssignment(repo, { operationId: 'specialist-op-2', userId: 'specialist-1', role: 'especialista', unitId: secondUnit.id })
   assert.equal(reassigned.unitId, secondUnit.id)
   assert.equal((await repo.listAssignments({ includeInactive: true })).assignments.length, 3)
+})
+
+test('rejects specialist assignment to an inactive unit before creating a child node', async () => {
+  const fake = fakeAlfresco()
+  const repo = repository(fake)
+  const unit = await setupUnit(repo)
+  fake.nodes.get(unit.id).properties['gdo:estadoUnidad'] = 'INACTIVA'
+  await assert.rejects(addAssignment(repo, { operationId: 'inactive-specialist-op', userId: 'specialist-1', role: 'especialista', unitId: unit.id }),
+    (error) => error.code === 'HIERARCHY_UNIT_INACTIVE' && error.status === 409)
+  assert.equal(fake.calls.filter((call) => call.method === 'POST' && call.body.nodeType === 'gdo:asignacion').length, 0)
 })
 
 test('rejects cross-dependency assignment and invalid node relations', async () => {
@@ -158,6 +182,25 @@ test('rejects cross-dependency assignment and invalid node relations', async () 
   }
   const malformedRepo = createHierarchyRepository(settings, { fetchImpl: fake.fetchImpl, allowWrites: true })
   await assert.rejects(malformedRepo.listAssignments({ unitId: unit.id }), /HIERARCHY_ASSIGNMENT_RELATION_INVALID/)
+})
+
+test('revalidates enabled role and dependency eligibility immediately before assignment creation', async () => {
+  const fake = fakeAlfresco()
+  const unit = await setupUnit(repository(fake))
+  const invalidCandidates = [
+    { code: 'HIERARCHY_USER_DISABLED', enabled: false, dependency: 'DSA', role: 'jefe-unidad' },
+    { code: 'HIERARCHY_USER_DEPENDENCY_MISMATCH', enabled: true, dependency: 'DTI', role: 'jefe-unidad' },
+    { code: 'HIERARCHY_USER_FUNCTION_MISMATCH', enabled: true, dependency: 'DSA', role: 'especialista' },
+  ]
+  for (const candidate of invalidCandidates) {
+    const repo = repository(fake, { validateAssignmentCandidate: async () => {
+      if (!candidate.enabled) throw Object.assign(new Error(candidate.code), { code: candidate.code, status: 403 })
+      return { id: 'not-the-requested-user', enabled: candidate.enabled, dependency: candidate.dependency, role: candidate.role }
+    } })
+    await assert.rejects(repo.createAssignment({ operationId: `invalid-${candidate.code}`, unitId: unit.id, userId: 'dsa-head', dependency: 'DSA', role: 'jefe-unidad', actorId: 'director-dsa' }),
+      (error) => error.code === candidate.code || error.code === 'HIERARCHY_DIRECTORY_VALIDATION_FAILED')
+  }
+  assert.equal(fake.calls.filter((call) => call.method === 'POST' && call.body.nodeType === 'gdo:asignacion').length, 0)
 })
 
 test('uses operation IDs to prevent duplicate writes and recovers uncertain POSTs by reading before retry', async () => {
