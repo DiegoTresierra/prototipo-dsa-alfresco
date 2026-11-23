@@ -21,11 +21,12 @@ function node({ id, name, nodeType, parentId, properties = {}, folder = false, o
   return { id, name, nodeType, parentId, properties, isFolder: folder, allowableOperations: operations, modifiedAt: '2026-11-19T12:00:00.000Z' }
 }
 
-function fakeAlfresco({ containerStatus = 200, postCommitFailure = false, authStatus = 200 } = {}) {
+function fakeAlfresco({ containerStatus = 200, postCommitFailure = false, putCommitFailure = false, authStatus = 200 } = {}) {
   const nodes = new Map([[containerId, node({ id: containerId, name: 'GD_JERARQUIAS', nodeType: 'cm:folder', folder: true })]])
   const children = new Map([[containerId, []]])
   let generatedId = 10
   let failPost = postCommitFailure
+  let failPut = putCommitFailure
   const calls = []
 
   function add(parentId, body) {
@@ -73,6 +74,7 @@ function fakeAlfresco({ containerStatus = 200, postCommitFailure = false, authSt
       if (method === 'PUT') {
         Object.assign(found.properties, body.properties)
         found.modifiedAt = '2026-11-19T12:05:00.000Z'
+        if (failPut) { failPut = false; throw new Error('connection dropped after Alfresco accepted property update') }
         return response(200, { entry: found })
       }
     }
@@ -119,6 +121,50 @@ test('rejects active unit names and institutional codes duplicated within the de
   await assert.rejects(repo.createUnit({ operationId: 'duplicate-code-op', dependency: 'DSA', name: 'Otra unidad', code: 'lab-01', actorId: 'director-dsa' }),
     (error) => error.code === 'HIERARCHY_UNIT_CODE_DUPLICATE' && error.status === 409)
   assert.equal(fake.calls.filter((call) => call.method === 'POST' && call.body.nodeType === 'gdo:unidad').length, 1)
+})
+
+test('updates only editable unit properties, preserves its UUID/status/dependency and skips no-op writes', async () => {
+  const fake = fakeAlfresco()
+  const repo = repository(fake)
+  const unit = await setupUnit(repo)
+  const head = await addAssignment(repo, { operationId: 'edit-preserve-head', userId: 'head-keep', role: 'jefe-unidad', unitId: unit.id })
+  const specialist = await addAssignment(repo, { operationId: 'edit-preserve-specialist', userId: 'specialist-keep', role: 'especialista', unitId: unit.id })
+  const updated = await repo.updateUnit({ unitId: unit.id, dependency: 'dsa', changes: { name: 'Nombre nuevo', code: 'LAB-03', description: 'Descripción nueva' } })
+  assert.equal(updated.id, unit.id)
+  assert.equal(updated.name, 'Nombre nuevo')
+  assert.equal(updated.code, 'LAB-03')
+  assert.equal(updated.description, 'Descripción nueva')
+  assert.equal(updated.dependency, 'DSA')
+  assert.equal(updated.status, 'ACTIVA')
+  const put = fake.calls.find((call) => call.method === 'PUT')
+  assert.deepEqual(Object.keys(put.body.properties).sort(), ['gdo:codigoUnidad', 'gdo:descripcionUnidad', 'gdo:nombreUnidad'].sort())
+  const writes = fake.calls.filter((call) => call.method === 'PUT').length
+  const noOp = await repo.updateUnit({ unitId: unit.id, dependency: 'DSA', changes: { name: updated.name, code: updated.code, description: updated.description } })
+  assert.equal(noOp.noChanges, true)
+  assert.equal(fake.calls.filter((call) => call.method === 'PUT').length, writes)
+  assert.equal(fake.calls.filter((call) => call.method === 'DELETE').length, 0)
+  assert.deepEqual((await repo.listAssignments({ unitId: unit.id, includeInactive: false })).assignments.map(({ id }) => id).sort(), [head.id, specialist.id].sort())
+})
+
+test('unit updates reject inactive or unauthorized property changes before mutation', async () => {
+  const fake = fakeAlfresco()
+  const repo = repository(fake)
+  const unit = await setupUnit(repo)
+  await assert.rejects(repo.updateUnit({ unitId: unit.id, dependency: 'DSA', changes: { dependency: 'DTI' } }), /HIERARCHY_UNIT_CHANGE_FIELDS_INVALID/)
+  fake.nodes.get(unit.id).properties['gdo:estadoUnidad'] = 'INACTIVA'
+  await assert.rejects(repo.updateUnit({ unitId: unit.id, dependency: 'DSA', changes: { name: 'No debe cambiar' } }), /HIERARCHY_UNIT_INACTIVE/)
+  assert.equal(fake.calls.filter((call) => call.method === 'PUT').length, 0)
+})
+
+test('recovers an uncertain unit property update by reading the node instead of repeating the PUT', async () => {
+  const fake = fakeAlfresco({ putCommitFailure: true })
+  const repo = repository(fake)
+  const unit = await setupUnit(repo)
+  const updated = await repo.updateUnit({ unitId: unit.id, dependency: 'DSA', changes: { name: 'Actualizada pese al timeout' } })
+  assert.equal(updated.outcomeRecovered, true)
+  assert.equal(updated.id, unit.id)
+  assert.equal(updated.name, 'Actualizada pese al timeout')
+  assert.equal(fake.calls.filter((call) => call.method === 'PUT').length, 1)
 })
 
 test('enforces one active head per unit and preserves the old assignment when changing heads', async () => {

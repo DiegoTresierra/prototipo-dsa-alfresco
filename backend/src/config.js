@@ -127,6 +127,7 @@ export const config = {
     labContainerNodeId: process.env.ALFRESCO_HIERARCHY_LAB_CONTAINER_NODE_ID || '',
     storage: process.env.ALFRESCO_HIERARCHY_STORAGE || '',
     unitWritesEnabled: process.env.ALFRESCO_HIERARCHY_UNIT_WRITES_ENABLED === 'true',
+    unitEditsEnabled: process.env.ALFRESCO_HIERARCHY_UNIT_EDITS_ENABLED === 'true',
     headWritesEnabled: process.env.ALFRESCO_HIERARCHY_HEAD_WRITES_ENABLED === 'true',
     specialistWritesEnabled: process.env.ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED === 'true',
     headChangesEnabled: process.env.ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED === 'true',

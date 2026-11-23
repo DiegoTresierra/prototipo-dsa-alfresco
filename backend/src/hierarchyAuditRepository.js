@@ -13,10 +13,11 @@ const requiredProperties = [
 ]
 const phases = new Set(['INICIADA', 'CAMBIO_APLICADO', 'COMPLETADA', 'PARCIAL', 'RECONCILIACION'])
 const actions = new Set([
-  'UNIDAD_CREADA', 'UNIDAD_ACTUALIZADA', 'JEFE_ASIGNADO', 'JEFE_DESACTIVADO',
+  'UNIDAD_CREADA', 'UNIDAD_ACTUALIZADA', 'UNIDAD_EDITADA', 'JEFE_ASIGNADO', 'JEFE_DESACTIVADO',
   'ESPECIALISTA_ASIGNADO', 'ESPECIALISTA_REASIGNADO', 'ASIGNACION_DESACTIVADA',
   'OPERACION_INICIADA', 'OPERACION_COMPLETADA', 'OPERACION_PARCIAL', 'RECONCILIACION_REQUERIDA',
 ])
+const operationTypes = new Set(['unidad', 'edicion-unidad', 'asignacion-jefe', 'cambio-jefe', 'asignacion-especialista', 'reasignacion-especialista'])
 const sensitiveKey = /(password|token|authorization|secret|credential|ticket|cookie)/i
 
 function failure(code, status = 502, extra = {}) {
@@ -87,6 +88,42 @@ function mapEvent(entry) {
     ...properties,
     modifiedAt: entry.modifiedAt || null,
   }
+}
+
+function eventData(value) {
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function operationType(event) {
+  const before = eventData(event.datosAntesEvento)
+  const after = eventData(event.datosDespuesEvento)
+  const kind = after.kind || before.kind
+  if (kind === 'edicion-unidad' || event.accionEvento === 'UNIDAD_EDITADA') return 'edicion-unidad'
+  if (kind === 'cambio-jefe' || event.accionEvento === 'JEFE_DESACTIVADO' ||
+      (event.accionEvento === 'JEFE_ASIGNADO' && event.faseEvento === 'CAMBIO_APLICADO')) return 'cambio-jefe'
+  if (kind === 'reasignacion-especialista' || event.accionEvento === 'ESPECIALISTA_REASIGNADO' ||
+      (event.accionEvento === 'ASIGNACION_DESACTIVADA' && (after.destinationUnitId || before.destinationUnitId))) return 'reasignacion-especialista'
+  const role = after.role || before.role
+  const entity = after.entity || before.entity
+  if (entity === 'unidad' || event.accionEvento === 'UNIDAD_CREADA' || event.accionEvento === 'UNIDAD_ACTUALIZADA') return 'unidad'
+  if (role === 'jefe-unidad' || event.accionEvento === 'JEFE_ASIGNADO') return 'asignacion-jefe'
+  if (role === 'especialista' || event.accionEvento === 'ESPECIALISTA_ASIGNADO') return 'asignacion-especialista'
+  return null
+}
+
+function dateFilter(value, code) {
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value !== 'string') throw failure(code, 400)
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw failure(code, 400)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value) && date.toISOString().slice(0, 10) !== value) throw failure(code, 400)
+  return date.toISOString()
 }
 
 function buildPayload(input) {
@@ -229,10 +266,18 @@ export function createHierarchyAuditRepository(settings, {
     return event
   }
 
-  async function listEvents({ dependency, operationId, page = 1, pageSize = 50 } = {}) {
+  async function listEvents({ dependency, operationId, operationType: typeFilter, phase, from, to, page = 1, pageSize = 50 } = {}) {
     assertConfigured()
     const scopedDependency = requiredText(dependency, 'HIERARCHY_AUDIT_DEPENDENCY_REQUIRED', 80)
     const operationFilter = optionalText(operationId, 'HIERARCHY_AUDIT_OPERATION_ID_INVALID', 160)
+    if (typeFilter !== undefined && !operationTypes.has(typeFilter)) throw failure('HIERARCHY_AUDIT_OPERATION_TYPE_INVALID', 400)
+    if (phase !== undefined && !phases.has(phase)) throw failure('HIERARCHY_AUDIT_PHASE_INVALID', 400)
+    const fromDate = dateFilter(from, 'HIERARCHY_AUDIT_FROM_INVALID')
+    const toDate = dateFilter(to, 'HIERARCHY_AUDIT_TO_INVALID')
+    if (fromDate && toDate && fromDate > toDate) throw failure('HIERARCHY_AUDIT_DATE_RANGE_INVALID', 400)
+    const inclusiveTo = to && /^\d{4}-\d{2}-\d{2}$/.test(to)
+      ? new Date(`${to}T23:59:59.999Z`).toISOString()
+      : toDate
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) {
       throw failure('HIERARCHY_AUDIT_PAGINATION_INVALID', 400)
     }
@@ -240,8 +285,13 @@ export function createHierarchyAuditRepository(settings, {
     const events = entries.map((entry) => {
       if (entry.parentId !== auditContainerId) throw failure('HIERARCHY_AUDIT_EVENT_OUT_OF_SCOPE', 409)
       return mapEvent(entry)
-    }).filter((event) => event.dependenciaEvento === scopedDependency &&
-      (!operationFilter || event.idOperacionEvento === operationFilter))
+    }).map((event) => ({ ...event, operationType: operationType(event) }))
+      .filter((event) => event.dependenciaEvento.toLowerCase() === scopedDependency.toLowerCase() &&
+      (!operationFilter || event.idOperacionEvento === operationFilter) &&
+      (!typeFilter || event.operationType === typeFilter) &&
+      (!phase || event.faseEvento === phase) &&
+      (!fromDate || event.fechaEvento >= fromDate) &&
+      (!inclusiveTo || event.fechaEvento <= inclusiveTo))
       .sort((left, right) => right.fechaEvento.localeCompare(left.fechaEvento) || left.id.localeCompare(right.id))
     const start = (page - 1) * pageSize
     const pageEvents = events.slice(start, start + pageSize)

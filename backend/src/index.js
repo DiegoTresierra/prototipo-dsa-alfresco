@@ -24,7 +24,9 @@ import { listInstitutionalEmitted } from './emittedDocuments.js'
 import { createHierarchyDirectory } from './hierarchyDirectory.js'
 import { createHierarchyRepository } from './hierarchyRepository.js'
 import { createHierarchyAuditRepository } from './hierarchyAuditRepository.js'
+import { createHierarchyAuditReadService } from './hierarchyAuditReadService.js'
 import { createHierarchyUnitCreationService } from './hierarchyUnitCreationService.js'
+import { createHierarchyUnitEditService } from './hierarchyUnitEditService.js'
 import { createHierarchyHeadAssignmentService } from './hierarchyHeadAssignmentService.js'
 import { createHierarchySpecialistAssignmentService } from './hierarchySpecialistAssignmentService.js'
 import { createHierarchyHeadChangeService } from './hierarchyHeadChangeService.js'
@@ -41,11 +43,12 @@ const hierarchyServiceConfigurationReady = (() => {
     new Set(containerIds.map((id) => id.toLowerCase())).size === containerIds.length
 })()
 const hierarchyUnitWritesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.unitWritesEnabled === true
+const hierarchyUnitEditsAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.unitEditsEnabled === true
 const hierarchyHeadWritesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.headWritesEnabled === true
 const hierarchySpecialistWritesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.specialistWritesEnabled === true
 const hierarchyHeadChangesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.headChangesEnabled === true
 const hierarchySpecialistReassignmentsAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.specialistReassignmentsEnabled === true
-const hierarchyAnyWritesAvailable = hierarchyUnitWritesAvailable || hierarchyHeadWritesAvailable || hierarchySpecialistWritesAvailable || hierarchyHeadChangesAvailable || hierarchySpecialistReassignmentsAvailable
+const hierarchyAnyWritesAvailable = hierarchyUnitWritesAvailable || hierarchyUnitEditsAvailable || hierarchyHeadWritesAvailable || hierarchySpecialistWritesAvailable || hierarchyHeadChangesAvailable || hierarchySpecialistReassignmentsAvailable
 const hierarchyDirectory = createHierarchyDirectory(config)
 const hierarchyReadService = createHierarchyReadService({
   repository: createHierarchyRepository(config),
@@ -57,10 +60,16 @@ const hierarchyRepository = createHierarchyRepository(config, {
   validateAssignmentCandidate: hierarchyDirectory.validateAssignmentCandidate,
 })
 const hierarchyAuditRepository = createHierarchyAuditRepository(config, { allowWrites: hierarchyAnyWritesAvailable })
+const hierarchyAuditReadService = createHierarchyAuditReadService(hierarchyAuditRepository)
 const hierarchyUnitCreationService = createHierarchyUnitCreationService({
   repository: hierarchyRepository,
   auditRepository: hierarchyAuditRepository,
   writesEnabled: hierarchyUnitWritesAvailable,
+})
+const hierarchyUnitEditService = createHierarchyUnitEditService({
+  repository: hierarchyRepository,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchyUnitEditsAvailable,
 })
 const hierarchyHeadAssignmentService = createHierarchyHeadAssignmentService({
   repository: hierarchyRepository,
@@ -509,6 +518,7 @@ function requireDeliveryLock(request, response, next) {
           pendingSpecialistReassignments,
           capabilities: {
             createUnits: hierarchyUnitWritesAvailable,
+            editUnits: hierarchyUnitEditsAvailable,
             assignHeads: hierarchyHeadWritesAvailable,
             assignSpecialists: hierarchySpecialistWritesAvailable,
             changeHeads: hierarchyHeadChangesAvailable,
@@ -530,6 +540,75 @@ function requireDeliveryLock(request, response, next) {
       })
     } catch (error) {
       return response.status(error.status || 503).json({ error: error.message || 'HIERARCHY_DIRECTORY_UNAVAILABLE' })
+    }
+  })
+
+  app.get('/api/hierarchy/audit', requireSession, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_AUDIT_ALFRESCO_REQUIRED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    try {
+      const result = await hierarchyAuditReadService.list({ dependency: dependencyKey, query: request.query })
+      return response.json(result)
+    } catch (error) {
+      const status = error.status === 400 ? 400 : error.status === 403 ? 403 : 503
+      const knownValidation = status === 400 || status === 403
+      return response.status(status).json({ error: knownValidation ? error.code : 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
+    }
+  })
+
+  app.patch('/api/hierarchy/units/:unitId', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchyUnitEditsAvailable) return response.status(403).json({ error: 'HIERARCHY_UNIT_EDITS_DISABLED' })
+    const dependency = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependency) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const allowedFields = new Set(['name', 'code', 'description', 'operationId', 'expectedRevision'])
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) ||
+        Object.keys(request.body).some((key) => !allowedFields.has(key))) {
+      return response.status(400).json({ error: 'HIERARCHY_UNIT_CHANGE_FIELDS_INVALID' })
+    }
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      const result = await hierarchyUnitEditService.editUnit({
+        unitId: request.params.unitId,
+        name: request.body.name,
+        code: request.body.code,
+        description: request.body.description,
+        operationId: request.body.operationId,
+        expectedRevision: request.body.expectedRevision,
+        dependency,
+        actorId,
+      })
+      return response.status(200).json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'HIERARCHY_UNIT_EDIT_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.unitId ? { unitId: error.unitId } : {}),
+        ...(error.causeCode ? { causeCode: error.causeCode } : {}),
+      })
     }
   })
 

@@ -128,6 +128,22 @@ test('reads by UUID and paginates while filtering dependency and operation in th
   await assert.rejects(repo.getEvent(one.id, { dependency: 'DTI' }), /HIERARCHY_AUDIT_EVENT_OUT_OF_SCOPE/)
 })
 
+test('filters audit events by operation, phase and inclusive date range before paging', async () => {
+  const fake = fakeAlfresco({ oneItemPages: true })
+  const repo = repository(fake)
+  await repo.createEvent(event({ operationId: 'unit-old', action: 'UNIDAD_CREADA', occurredAt: '2026-11-20T09:00:00.000Z', afterData: { entity: 'unidad', name: 'Unidad vieja' } }))
+  await repo.createEvent(event({ operationId: 'unit-new', action: 'UNIDAD_CREADA', phase: 'PARCIAL', occurredAt: '2026-11-22T23:59:00.000Z', afterData: { entity: 'unidad', name: 'Unidad nueva' } }))
+  await repo.createEvent(event({ operationId: 'unit-edit', action: 'UNIDAD_EDITADA', occurredAt: '2026-11-22T20:00:00.000Z', beforeData: { entity: 'unidad', kind: 'edicion-unidad', name: 'Antes' }, afterData: { entity: 'unidad', kind: 'edicion-unidad', name: 'Después' } }))
+  await repo.createEvent(event({ operationId: 'head-new', action: 'JEFE_ASIGNADO', occurredAt: '2026-11-22T12:00:00.000Z', afterData: { entity: 'asignacion', role: 'jefe-unidad', unitId: 'u', userId: 'h' } }))
+  const result = await repo.listEvents({ dependency: 'dsa', operationType: 'unidad', phase: 'PARCIAL', from: '2026-11-22', to: '2026-11-22', page: 1, pageSize: 1 })
+  assert.equal(result.pagination.totalItems, 1)
+  assert.equal(result.events[0].idOperacionEvento, 'unit-new')
+  assert.equal(result.events[0].operationType, 'unidad')
+  const edits = await repo.listEvents({ dependency: 'DSA', operationType: 'edicion-unidad', page: 1, pageSize: 10 })
+  assert.equal(edits.pagination.totalItems, 1)
+  assert.equal(edits.events[0].accionEvento, 'UNIDAD_EDITADA')
+})
+
 test('requires mandatory fields and valid phase/action before writing; rejects sensitive JSON keys', async () => {
   const fake = fakeAlfresco()
   const repo = repository(fake)

@@ -312,30 +312,58 @@ export function createHierarchyRepository(settings, {
     }
   }
 
-  async function updateUnit({ unitId, dependency, changes = {}, actorId, operationId, expectedRevision } = {}) {
+  async function updateUnit({ unitId, dependency, changes = {}, expectedRevision } = {}) {
     assertWriteEnabled()
     await assertExpectedRevision(expectedRevision)
     const unit = await getUnit(unitId)
-    if (unit.dependency !== dependency) throw failure('HIERARCHY_DEPENDENCY_MISMATCH', 403)
+    if (!sameDependency(unit.dependency, dependency)) throw failure('HIERARCHY_DEPENDENCY_MISMATCH', 403)
+    if (unit.status !== 'ACTIVA') throw failure('HIERARCHY_UNIT_INACTIVE', 409)
+    const allowedChanges = new Set(['name', 'code', 'description'])
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes) || Object.keys(changes).some((key) => !allowedChanges.has(key))) {
+      throw failure('HIERARCHY_UNIT_CHANGE_FIELDS_INVALID', 400)
+    }
+    const propertyNames = { name: 'nombreUnidad', code: 'codigoUnidad', description: 'descripcionUnidad' }
     const properties = {}
     if (Object.hasOwn(changes, 'name')) properties['gdo:nombreUnidad'] = text(changes.name, 'HIERARCHY_UNIT_NAME_REQUIRED')
     if (Object.hasOwn(changes, 'code')) properties['gdo:codigoUnidad'] = text(changes.code, 'HIERARCHY_UNIT_CODE_INVALID', { optional: true, max: 80 })
     if (Object.hasOwn(changes, 'description')) properties['gdo:descripcionUnidad'] = text(changes.description, 'HIERARCHY_UNIT_DESCRIPTION_INVALID', { optional: true, max: 1000 })
     if (!Object.keys(properties).length) throw failure('HIERARCHY_UNIT_CHANGES_REQUIRED', 400)
+    const currentValues = { name: unit.name, code: unit.code, description: unit.description }
+    const nextValues = { ...currentValues, ...Object.fromEntries(Object.keys(changes).map((key) => [key, properties[`gdo:${propertyNames[key]}`]])) }
+    if (Object.entries(nextValues).every(([key, value]) => currentValues[key] === value)) return { ...unit, reused: true, noChanges: true }
     const node = await service.getNode(unitId)
     if (!node.allowableOperations?.includes('update')) throw failure('HIERARCHY_UNIT_UPDATE_FORBIDDEN', 403)
-    await service.updateNode(unitId, properties)
+    const changedProperties = Object.fromEntries(Object.entries(properties).filter(([key, value]) => node.properties?.[key] !== value))
+    if (!Object.keys(changedProperties).length) return { ...unit, reused: true, noChanges: true }
+    try {
+      await service.updateNode(unitId, changedProperties)
+    } catch (error) {
+      if (error.code !== 'HIERARCHY_WRITE_OUTCOME_UNKNOWN') throw error
+      try {
+        const observed = await service.getNode(unitId)
+        if (Object.entries(changedProperties).every(([key, value]) => observed.properties?.[key] === value)) {
+          return { ...readProperties(observed, unitType), outcomeRecovered: true }
+        }
+        if (Object.entries(changedProperties).every(([key]) => observed.properties?.[key] === node.properties?.[key])) throw error
+        throw failure('HIERARCHY_UNIT_UPDATE_OUTCOME_PARTIAL', 503, { partialCommit: true })
+      } catch (readError) {
+        if (readError === error) throw error
+        if (readError.partialCommit) throw readError
+        throw failure('HIERARCHY_UNIT_UPDATE_OUTCOME_UNKNOWN', 503, { partialCommit: true })
+      }
+    }
     try {
       const verified = await service.getNode(unitId)
-      if (Object.entries(properties).some(([key, value]) => verified.properties?.[key] !== value)) {
+      if (verified.id !== unit.id || verified.nodeType !== unitType || verified.parentId !== unit.parentId ||
+          verified.properties?.['gdo:codigoDependencia'] !== unit.dependency || verified.properties?.['gdo:estadoUnidad'] !== unit.status ||
+          Object.entries(changedProperties).some(([key, value]) => verified.properties?.[key] !== value)) {
         throw failure('HIERARCHY_WRITE_VERIFICATION_FAILED', 409)
       }
       const result = readProperties(verified, unitType)
-      await emitAudit('UNIT_UPDATED', actorId, dependency, unitId, operationId, { changes })
       return result
     } catch (error) {
       if (error.partialCommit) throw error
-      throw failure(error.code || 'HIERARCHY_WRITE_VERIFICATION_FAILED', error.status || 409, { partialCommit: true, operationId })
+      throw failure(error.code || 'HIERARCHY_WRITE_VERIFICATION_FAILED', error.status || 409, { partialCommit: true })
     }
   }
 

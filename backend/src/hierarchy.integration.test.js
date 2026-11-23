@@ -11,6 +11,7 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   const containerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const dsaUnitId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   const dtiUnitId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  const auditContainerId = '99999999-9999-4999-8999-999999999999'
   let failAlfrescoRead = false
   let emptyAlfrescoContainer = false
   Object.assign(process.env, {
@@ -21,9 +22,10 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'directory', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'fixture-password',
     ALFRESCO_HIERARCHY_SERVICE_USERNAME: 'hierarchy-service', ALFRESCO_HIERARCHY_SERVICE_PASSWORD: 'fixture-hierarchy-password',
     ALFRESCO_HIERARCHY_CONTAINER_NODE_ID: containerId, ALFRESCO_HIERARCHY_STORAGE: 'alfresco', HIERARCHY_READ_STORAGE: 'json',
-    ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID: auditContainerId,
     ALFRESCO_HIERARCHY_LAB_CONTAINER_NODE_ID: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
     ALFRESCO_HIERARCHY_UNIT_WRITES_ENABLED: 'false',
+    ALFRESCO_HIERARCHY_UNIT_EDITS_ENABLED: 'false',
     ALFRESCO_HIERARCHY_HEAD_WRITES_ENABLED: 'false',
     ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED: 'false',
     ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED: 'false',
@@ -47,6 +49,19 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     }
     if (failAlfrescoRead && parsed.pathname.endsWith(`/nodes/${containerId}`)) return Response.json({ error: 'unavailable' }, { status: 503 })
     if (parsed.pathname.endsWith(`/nodes/${containerId}`)) return Response.json({ entry: { id: containerId, name: 'GD_JERARQUIAS', nodeType: 'cm:folder', isFolder: true, allowableOperations: ['create'] } })
+    if (parsed.pathname.endsWith(`/nodes/${auditContainerId}`)) return Response.json({ entry: { id: auditContainerId, name: 'GD_JERARQUIAS_AUDITORIA', nodeType: 'cm:folder', isFolder: true } })
+    if (parsed.pathname.endsWith(`/nodes/${auditContainerId}/children`)) return Response.json({ list: { entries: [
+      { entry: { id: '10000000-0000-4000-8000-000000000001', name: 'EVENT_DSA', nodeType: 'gdo:eventoJerarquia', parentId: auditContainerId, properties: {
+        'gdo:claveEvento': 'key-dsa', 'gdo:idOperacionEvento': 'op-dsa', 'gdo:faseEvento': 'COMPLETADA', 'gdo:accionEvento': 'UNIDAD_CREADA',
+        'gdo:dependenciaEvento': 'DSA', 'gdo:actorEvento': 'director', 'gdo:fechaEvento': '2026-11-22T10:00:00.000Z',
+        'gdo:datosDespuesEvento': JSON.stringify({ entity: 'unidad', name: 'Unidad DSA', code: 'DSA-01' }),
+      } } },
+      { entry: { id: '10000000-0000-4000-8000-000000000002', name: 'EVENT_DTI', nodeType: 'gdo:eventoJerarquia', parentId: auditContainerId, properties: {
+        'gdo:claveEvento': 'key-dti', 'gdo:idOperacionEvento': 'op-dti', 'gdo:faseEvento': 'PARCIAL', 'gdo:accionEvento': 'OPERACION_PARCIAL',
+        'gdo:dependenciaEvento': 'DTI', 'gdo:actorEvento': 'director-dti', 'gdo:fechaEvento': '2026-11-23T10:00:00.000Z',
+        'gdo:datosDespuesEvento': JSON.stringify({ entity: 'unidad', name: 'Unidad DTI' }),
+      } } },
+    ], pagination: { hasMoreItems: false } } })
     if (parsed.pathname.endsWith(`/nodes/${containerId}/children`)) {
       if (failAlfrescoRead) return Response.json({ error: 'unavailable' }, { status: 503 })
       const entries = emptyAlfrescoContainer ? [] : [
@@ -102,6 +117,12 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   const put = (auth, values) => realFetch(`${base}/api/hierarchy`, { method: 'PUT', headers: auth, body: JSON.stringify({ assignments: values, dependency: 'DTI' }) })
   assert.equal((await realFetch(`${base}/api/hierarchy`)).status, 401)
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: head })).status, 403)
+  const patchUnit = (auth, body = { operationId: 'unit-edit-http-01', name: 'Unidad editada', code: 'DSA-EDIT', description: 'Actualizada' }) =>
+    realFetch(`${base}/api/hierarchy/units/${dsaUnitId}`, { method: 'PATCH', headers: auth, body: JSON.stringify(body) })
+  assert.equal((await patchUnit({ ...director, 'X-CSRF-Token': '' })).status, 403, 'unit edits require CSRF')
+  assert.equal((await patchUnit(head)).status, 403, 'unit edits require Director role')
+  assert.equal((await realFetch(`${base}/api/hierarchy/units/${dsaUnitId}`, { method: 'PATCH', body: '{}' })).status, 401,
+    'unauthenticated unit edits are rejected before reaching the service')
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: headers('staff', 'especialista') })).status, 403)
   assert.equal((await put({ ...director, 'X-CSRF-Token': 'invalid' }, assignments)).status, 403)
   assert.equal((await put(director, [...assignments, { laneId: 'especialistas', userId: 'foreign' }])).status, 400)
@@ -124,6 +145,12 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   // Alfresco mode is opt-in, read-only, and must not fall back to the JSON saved above.
   config.hierarchyReadStorage = 'alfresco'
   assert.equal((await realFetch(`${base}/api/hierarchy`)).status, 401)
+  const alfrescoUnitWritesBeforeEdit = calls.filter((call) => call.method === 'PUT' ||
+    (call.method === 'POST' && /\/nodes\/.*\/children$/.test(call.pathname))).length
+  const editDisabled = await patchUnit(director)
+  assert.equal(editDisabled.status, 403, 'unit edits stay disabled until explicitly enabled')
+  assert.equal((await editDisabled.json()).error, 'HIERARCHY_UNIT_EDITS_DISABLED')
+  assert.equal(calls.filter((call) => call.method === 'PUT' || (call.method === 'POST' && /\/nodes\/.*\/children$/.test(call.pathname))).length, alfrescoUnitWritesBeforeEdit)
   const jsonBeforeReadOnlyPut = fs.readFileSync(config.organizationStorePath, 'utf8')
   const readOnlyPut = await put(director, assignments)
   assert.equal(readOnlyPut.status, 409)
@@ -133,6 +160,7 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   const alfrescoRead = await (await realFetch(`${base}/api/hierarchy`, { headers: director })).json()
   assert.equal(alfrescoRead.dependency, 'dsa')
   assert.equal(alfrescoRead.capabilities.createUnits, false)
+  assert.equal(alfrescoRead.capabilities.editUnits, false)
   assert.equal(alfrescoRead.capabilities.assignHeads, false)
   assert.equal(alfrescoRead.capabilities.assignSpecialists, false)
   assert.equal(alfrescoRead.capabilities.changeHeads, false)
@@ -141,6 +169,16 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.deepEqual(alfrescoRead.assignments.map((assignment) => assignment.userId), ['head', 'staff'])
   assert.equal(alfrescoRead.assignments[1].unitHeadUserId, 'head')
   assert.deepEqual(alfrescoRead.recipients.map((recipient) => recipient.id), ['head', 'staff'])
+  assert.equal((await realFetch(`${base}/api/hierarchy/audit`)).status, 401)
+  assert.equal((await realFetch(`${base}/api/hierarchy/audit`, { headers: head })).status, 403)
+  const auditRead = await realFetch(`${base}/api/hierarchy/audit?page=1&pageSize=25&dependency=DTI`, { headers: director })
+  assert.equal(auditRead.status, 200)
+  const auditBody = await auditRead.json()
+  assert.deepEqual(auditBody.events.map((event) => event.unitName), ['Unidad DSA'], 'query parameters cannot change the dependency taken from session')
+  assert.equal(auditBody.events[0].operationType, 'unidad')
+  assert.equal(auditBody.events[0].actor, 'director')
+  assert.equal(auditBody.pagination.totalItems, 1)
+  assert.equal((await realFetch(`${base}/api/hierarchy/audit?phase=INVENTADA`, { headers: director })).status, 400)
   const createUnit = (auth, body = { operationId: 'unit-operation-test-01', name: 'Unidad de prueba' }) =>
     realFetch(`${base}/api/hierarchy/units`, { method: 'POST', headers: auth, body: JSON.stringify(body) })
   const missingCsrf = { ...director }

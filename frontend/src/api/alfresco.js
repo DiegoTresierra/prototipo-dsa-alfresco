@@ -76,6 +76,13 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_ALFRESCO_READ_ONLY: 'La jerarquía se está consultando desde Alfresco, pero todavía no se pueden guardar cambios.',
       HIERARCHY_ALFRESCO_REQUIRED: 'La creación de unidades solo está disponible cuando la jerarquía se consulta desde Alfresco.',
       HIERARCHY_UNIT_WRITES_DISABLED: 'El servidor mantiene deshabilitada la creación de unidades.',
+      HIERARCHY_UNIT_EDITS_DISABLED: 'La edición de unidades está deshabilitada por el backend.',
+      HIERARCHY_UNIT_CHANGE_FIELDS_INVALID: 'La solicitud contiene propiedades que no se pueden editar.',
+      HIERARCHY_OPERATION_DUPLICATE_CONFLICT: 'Ese identificador de operación ya se usó con otros datos.',
+      HIERARCHY_OPERATION_RESULT_CONFLICT: 'La operación tiene un resultado parcial que requiere revisión antes de reintentar.',
+      HIERARCHY_UNIT_UPDATE_OUTCOME_UNKNOWN: 'Alfresco no confirmó el resultado de la edición. Reintenta con el mismo identificador de operación.',
+      HIERARCHY_UNIT_UPDATE_OUTCOME_PARTIAL: 'Alfresco aplicó solo parte de los cambios. Reintenta con los mismos datos para reconciliar.',
+      HIERARCHY_WRITE_VERIFICATION_FAILED: 'Alfresco no confirmó los valores actualizados. La operación requiere reconciliación.',
       HIERARCHY_UNIT_NAME_REQUIRED: 'Escribe el nombre de la unidad.',
       HIERARCHY_UNIT_NAME_DUPLICATE: 'Ya existe una unidad con ese nombre en esta dependencia.',
       HIERARCHY_UNIT_CODE_DUPLICATE: 'Ya existe una unidad con ese código en esta dependencia.',
@@ -155,10 +162,19 @@ async function hierarchyRequest(url, options = {}) {
 }
 
 export const getHierarchy = () => hierarchyRequest('/api/hierarchy')
+export const getHierarchyAudit = (filters = {}) => {
+  const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== undefined && value !== ''))
+  return hierarchyRequest(`/api/hierarchy/audit${query.size ? `?${query.toString()}` : ''}`)
+}
 export const createHierarchyUnit = ({ name, code, description, operationId }, csrfToken) => hierarchyRequest('/api/hierarchy/units', {
   method: 'POST',
   csrfToken,
   body: JSON.stringify({ name, code, description, operationId }),
+})
+export const editHierarchyUnit = ({ unitId, name, code, description, operationId, expectedRevision }, csrfToken) => hierarchyRequest(`/api/hierarchy/units/${encodeURIComponent(unitId)}`, {
+  method: 'PATCH',
+  csrfToken,
+  body: JSON.stringify({ name, code, description, operationId, ...(expectedRevision ? { expectedRevision } : {}) }),
 })
 export const assignHierarchyHead = ({ unitId, userId, operationId }, csrfToken) => hierarchyRequest(`/api/hierarchy/units/${encodeURIComponent(unitId)}/head`, {
   method: 'POST',

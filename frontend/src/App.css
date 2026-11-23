@@ -307,6 +307,37 @@
 .office-chart__specialist-row .office-chart__specialist { border: 0; padding: 0; }
 .office-chart__specialist-row .form-field { font-size: 12px; }
 .office-chart__specialist-row .form-field select, .office-chart__specialists > .form-field select { min-height: 38px; padding: 7px 9px; font-size: 12px; }
+.hierarchy-audit { display: grid; gap: 16px; }
+.hierarchy-audit__heading, .hierarchy-audit__pagination { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.hierarchy-audit__heading h2 { margin: 0; color: var(--color-text-primary); font-size: 18px; }
+.hierarchy-audit__filters { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; align-items: end; gap: 10px; }
+.hierarchy-audit__filters select, .hierarchy-audit__filters input { min-height: 40px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-background); color: var(--color-text-primary); font: inherit; }
+.hierarchy-audit__table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 10px; }
+.hierarchy-audit__table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.hierarchy-audit__table th, .hierarchy-audit__table td { padding: 11px 12px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+.hierarchy-audit__table th { background: var(--color-background-secondary); color: var(--color-text-accessible-secondary); font-size: 12px; }
+.hierarchy-audit__table td small { display: block; margin-top: 4px; color: var(--color-text-accessible-secondary); }
+.hierarchy-audit__partial { background: #fff8e9; }
+.hierarchy-audit__status { display: inline-block; padding: 4px 8px; border-radius: 999px; background: var(--color-background-secondary); font-size: 11px; font-weight: 700; }
+.hierarchy-audit__status--completada { background: #e7f5ec; color: #17643a; }
+.hierarchy-audit__status--parcial { background: #fff0cf; color: #805100; }
+.hierarchy-audit__status--iniciada, .hierarchy-audit__status--reconciliacion { background: #fbe8e8; color: #8b2727; }
+.hierarchy-audit__details { position: absolute; z-index: 2; width: min(520px, 75vw); padding: 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-background); box-shadow: var(--shadow-card); }
+.hierarchy-audit__details summary { cursor: pointer; font-weight: 700; }
+.hierarchy-audit__details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.hierarchy-audit__details pre { max-height: 180px; overflow: auto; margin: 0; padding: 8px; background: var(--color-background-secondary); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.hierarchy-audit__pagination > div { display: flex; gap: 8px; }
+.hierarchy-unit-edit__toolbar { display: flex; align-items: center; gap: 9px; }
+.hierarchy-unit-edit__toolbar small { color: var(--color-text-accessible-secondary); font-size: 11px; }
+.hierarchy-unit-edit { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-background-secondary); }
+.hierarchy-unit-edit .form-field textarea { min-height: 76px; resize: vertical; }
+.hierarchy-unit-edit__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.hierarchy-audit__details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-top: 12px; }
+.hierarchy-audit__details-grid h4 { margin: 0 0 8px; font-size: 12px; }
+.hierarchy-audit__changes { display: grid; gap: 7px; margin: 0; }
+.hierarchy-audit__changes > div { display: grid; grid-template-columns: minmax(100px, auto) 1fr; gap: 8px; font-size: 12px; }
+.hierarchy-audit__changes dt { color: var(--color-text-accessible-secondary); }
+.hierarchy-audit__changes dd { margin: 0; overflow-wrap: anywhere; }
 
 @media (max-width: 900px) {
   .settings-entry-grid { grid-template-columns: 1fr; }
@@ -319,6 +350,10 @@
   .office-chart__unassigned-row { grid-template-columns: 1fr; }
   .office-chart__specialist-row { grid-template-columns: 1fr; }
   .hierarchy-candidates__lanes { grid-template-columns: 1fr; }
+  .hierarchy-audit__filters { grid-template-columns: 1fr 1fr; }
+  .hierarchy-audit__heading, .hierarchy-audit__pagination { align-items: stretch; flex-direction: column; }
+  .hierarchy-audit__details > div { grid-template-columns: 1fr; }
+  .hierarchy-audit__details-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .settings-detail__toolbar { align-items: stretch; flex-direction: column; }

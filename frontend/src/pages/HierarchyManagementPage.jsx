@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PanelPage } from '../components/PanelPage'
-import { assignHierarchyHead as postHierarchyHead, assignHierarchySpecialist as postHierarchySpecialist, changeHierarchyHead as postHierarchyHeadChange, createHierarchyUnit as postHierarchyUnit, getHierarchy, reassignHierarchySpecialist as postHierarchySpecialistReassignment, saveHierarchy } from '../api/alfresco'
+import { assignHierarchyHead as postHierarchyHead, assignHierarchySpecialist as postHierarchySpecialist, changeHierarchyHead as postHierarchyHeadChange, createHierarchyUnit as postHierarchyUnit, editHierarchyUnit as patchHierarchyUnit, getHierarchy, getHierarchyAudit, reassignHierarchySpecialist as postHierarchySpecialistReassignment, saveHierarchy } from '../api/alfresco'
 import { createHierarchyManagementModel } from '../utils/hierarchyManagementModel'
 
 const moduleViews = { home: 'home', office: 'office', timings: 'timings' }
@@ -41,13 +41,49 @@ function SettingsHome({ officeName, onOpen }) {
   )
 }
 
-function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, assignments, recipients, staleCount, revision, pendingHeadChanges, pendingSpecialistReassignments, loading, loadingError, unitCreationEnabled, headAssignmentEnabled, headChangeEnabled, specialistAssignmentEnabled, specialistReassignmentEnabled, creationPending, pendingUnitOperation, creationMessage, creationError, onCreateUnit, onAssignHead, onChangeHead, onAssignSpecialist, onReassignSpecialist, onRefresh, onBack }) {
+function AuditChangeDetails({ beforeData, afterData }) {
+  const labels = {
+    name: 'Nombre', code: 'Código', description: 'Descripción', status: 'Estado', role: 'Rol',
+    userId: 'Usuario responsable', previousHeadUserId: 'Jefe anterior', newHeadUserId: 'Nuevo Jefe',
+    currentHeadUserId: 'Jefe vigente', replacementUserId: 'Usuario reemplazante',
+  }
+  const display = (data) => {
+    const rows = Object.entries(data || {}).filter(([key, value]) => labels[key] && value !== undefined && value !== null && value !== '')
+    return rows.length ? <dl className="hierarchy-audit__changes">{rows.map(([key, value]) => <div key={key}><dt>{labels[key]}</dt><dd>{String(value)}</dd></div>)}</dl> : <p>Sin datos registrados.</p>
+  }
+  return <div className="hierarchy-audit__details-grid"><section><h4>Antes</h4>{display(beforeData)}</section><section><h4>Después</h4>{display(afterData)}</section></div>
+}
+
+function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, assignments, recipients, staleCount, revision, pendingHeadChanges, pendingSpecialistReassignments, loading, loadingError, unitCreationEnabled, unitEditEnabled, headAssignmentEnabled, headChangeEnabled, specialistAssignmentEnabled, specialistReassignmentEnabled, creationPending, pendingUnitOperation, creationMessage, creationError, onCreateUnit, onEditUnit, onAssignHead, onChangeHead, onAssignSpecialist, onReassignSpecialist, onRefresh, onBack }) {
   const [unitDraft, setUnitDraft] = useState({ name: '', code: '', description: '' })
   const [headDrafts, setHeadDrafts] = useState({})
   const [specialistDrafts, setSpecialistDrafts] = useState({})
   const [newSpecialistDrafts, setNewSpecialistDrafts] = useState({})
   const [pendingHeadOperations, setPendingHeadOperations] = useState({})
   const [pendingHeadChangeOperations, setPendingHeadChangeOperations] = useState({})
+  const [editingUnitId, setEditingUnitId] = useState('')
+  const [unitEditDraft, setUnitEditDraft] = useState({ name: '', code: '', description: '' })
+  const [pendingUnitEdits, setPendingUnitEdits] = useState({})
+  const [unitEditSaving, setUnitEditSaving] = useState(false)
+  const [unitEditMessage, setUnitEditMessage] = useState({})
+  const [auditPage, setAuditPage] = useState(1)
+  const [auditFilters, setAuditFilters] = useState({ operationType: '', phase: '', from: '', to: '' })
+  const [auditDraft, setAuditDraft] = useState({ operationType: '', phase: '', from: '', to: '' })
+  const [auditResult, setAuditResult] = useState({ events: [], pagination: { page: 1, totalPages: 0, totalItems: 0 } })
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [auditError, setAuditError] = useState('')
+  const [auditSelected, setAuditSelected] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setAuditLoading(true)
+    setAuditError('')
+    getHierarchyAudit({ ...auditFilters, page: auditPage, pageSize: 25 })
+      .then((result) => { if (active) { setAuditResult(result); setAuditSelected('') } })
+      .catch((error) => { if (active) setAuditError(error.message || 'No se pudo consultar el historial.') })
+      .finally(() => { if (active) setAuditLoading(false) })
+    return () => { active = false }
+  }, [auditFilters, auditPage])
   const [pendingSpecialistOperations, setPendingSpecialistOperations] = useState({})
   const [pendingSpecialistReassignmentOperations, setPendingSpecialistReassignmentOperations] = useState({})
   const [headSavingUnitId, setHeadSavingUnitId] = useState('')
@@ -74,6 +110,45 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
   const createUnit = async (event) => {
     event?.preventDefault()
     if (await onCreateUnit(unitDraft)) setUnitDraft({ name: '', code: '', description: '' })
+  }
+
+  const startUnitEdit = (unit) => {
+    const pending = pendingUnitEdits[unit.id]
+    setEditingUnitId(unit.id)
+    setUnitEditDraft(pending || { name: unit.name || '', code: unit.code || '', description: unit.description || '' })
+    setUnitEditMessage({})
+  }
+
+  const saveUnitEdit = async (event, unit) => {
+    event.preventDefault()
+    if (!unitEditEnabled || unitEditSaving) return
+    const payload = { name: unitEditDraft.name.trim(), code: unitEditDraft.code.trim(), description: unitEditDraft.description.trim() }
+    if (!payload.name) return setUnitEditMessage({ unitId: unit.id, error: 'El nombre de la unidad es obligatorio.' })
+    if (payload.name.length > 240 || payload.code.length > 80 || payload.description.length > 1000) return setUnitEditMessage({ unitId: unit.id, error: 'Revisa las longitudes: nombre 240, código 80 y descripción 1000 caracteres como máximo.' })
+    const pending = pendingUnitEdits[unit.id]
+    if (pending && ['name', 'code', 'description'].some((key) => pending[key] !== payload[key])) {
+      return setUnitEditMessage({ unitId: unit.id, error: `Hay una operación pendiente ${pending.operationId}. Reintenta con los mismos datos para reconciliarla.` })
+    }
+    const operationId = pending?.operationId || globalThis.crypto?.randomUUID?.()
+    if (!operationId) return setUnitEditMessage({ unitId: unit.id, error: 'No se pudo generar un identificador seguro de operación.' })
+    const operation = { ...payload, operationId, expectedRevision: pending?.expectedRevision || revision }
+    setPendingUnitEdits((current) => ({ ...current, [unit.id]: operation }))
+    setUnitEditSaving(true)
+    setUnitEditMessage({})
+    try {
+      const result = await onEditUnit({ unitId: unit.id, ...operation })
+      setPendingUnitEdits((current) => { const next = { ...current }; delete next[unit.id]; return next })
+      setUnitEditMessage({ unitId: unit.id, success: result.status === 'SIN_CAMBIOS' ? 'No se detectaron cambios en los datos.' : `Unidad actualizada y verificada. Operación ${result.operationId}.${result.refreshError ? ` ${result.refreshError}` : ''}` })
+      setEditingUnitId('')
+    } catch (error) {
+      const retryable = error.operationStatus === 'PARCIAL' || error.uncertain === true || !error.status || error.status >= 500
+      if (!retryable) setPendingUnitEdits((current) => { const next = { ...current }; delete next[unit.id]; return next })
+      setUnitEditMessage({ unitId: unit.id, error: retryable
+        ? `${error.message || 'El resultado de la edición es parcial o incierto.'} Conserva la operación ${error.operationId || operationId} y reintenta con los mismos datos.`
+        : `${error.message || 'No se pudo actualizar la unidad.'}${error.code === 'HIERARCHY_REVISION_CONFLICT' ? ' Actualiza la oficina y revisa los datos antes de intentar de nuevo.' : ''}` })
+    } finally {
+      setUnitEditSaving(false)
+    }
   }
 
   const removePendingHeadOperation = (unitId) => setPendingHeadOperations((current) => {
@@ -313,6 +388,16 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
               if (selectedHeadId && !headCandidates.some((candidate) => candidate.id === selectedHeadId)) headCandidates.unshift(getPerson(selectedHeadId))
               return <article className="office-chart__unit" key={unit.id}>
                 <div className="office-chart__head"><span aria-hidden="true" className="settings-lane__avatar"><Icon name="users" size={18} /></span><span><small>Unidad organizacional</small><strong>{unit.name}</strong><small>{unit.code || 'Sin código institucional'}</small><small className="office-chart__uuid">UUID: {unit.id}</small></span></div>
+                <div className="hierarchy-unit-edit__toolbar"><button className="button-secondary" disabled={!unitEditEnabled || unitEditSaving || loading} onClick={() => startUnitEdit(unit)} type="button">Editar unidad</button>{!unitEditEnabled && <small>Edición deshabilitada por el backend.</small>}</div>
+                {unitEditMessage.unitId === unit.id && unitEditMessage.success && <p className="form-message" role="status">{unitEditMessage.success}</p>}
+                {editingUnitId === unit.id && <form className="hierarchy-unit-edit" onSubmit={(event) => saveUnitEdit(event, unit)}>
+                  <label className="form-field"><span>Nombre de la unidad</span><input disabled={!unitEditEnabled || unitEditSaving} maxLength={240} onChange={(event) => setUnitEditDraft((current) => ({ ...current, name: event.target.value }))} required value={unitEditDraft.name} /></label>
+                  <label className="form-field"><span>Código de la unidad</span><input disabled={!unitEditEnabled || unitEditSaving} maxLength={80} onChange={(event) => setUnitEditDraft((current) => ({ ...current, code: event.target.value }))} value={unitEditDraft.code} /></label>
+                  <label className="form-field"><span>Descripción</span><textarea disabled={!unitEditEnabled || unitEditSaving} maxLength={1000} onChange={(event) => setUnitEditDraft((current) => ({ ...current, description: event.target.value }))} rows={3} value={unitEditDraft.description} /></label>
+                  {pendingUnitEdits[unit.id] && <small>Operación pendiente {pendingUnitEdits[unit.id].operationId}. Conserva estos valores para reconciliarla.</small>}
+                  {unitEditMessage.unitId === unit.id && unitEditMessage.error && <p className="form-message form-message--error" role="alert">{unitEditMessage.error}</p>}
+                  <div className="hierarchy-unit-edit__actions"><button className="button-primary" disabled={!unitEditEnabled || unitEditSaving || !unitEditDraft.name.trim()} type="submit">{unitEditSaving ? 'Guardando…' : pendingUnitEdits[unit.id] ? 'Reintentar edición' : 'Guardar cambios'}</button><button className="button-secondary" disabled={unitEditSaving} onClick={() => setEditingUnitId('')} type="button">Cancelar</button></div>
+                </form>}
                 <label className="form-field office-chart__role-field"><span>Jefe de unidad</span><select disabled={Boolean(pendingHead) || Boolean(pendingHeadChange) || headSavingUnitId === unit.id || (headAssignment ? !headChangeEnabled : !headAssignmentEnabled)} onChange={(event) => setHeadDrafts((current) => ({ ...current, [unit.id]: event.target.value }))} value={selectedHeadId}><option value="">{headAssignment ? 'Selecciona el nuevo Jefe' : 'Selecciona un Jefe'}</option>{headCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.id}{candidate.id === headAssignment?.userId ? ' · actual' : ''}</option>)}</select><small>{pendingHeadChange ? `Cambio pendiente · operación ${pendingHeadChange.operationId}. Reintenta con el mismo usuario.` : headAssignment ? `Jefe actual: ${getPerson(headAssignment.userId).displayName}. Se conservan ${unitSpecialists.length} Especialista(s) vinculados a esta unidad.` : pendingHead ? `Reintento con operación ${pendingHead.operationId}.` : `Solo se muestran candidatos habilitados de ${dependency?.toUpperCase()} con rol Jefe de Unidad y sin jefatura activa en otra unidad.`}</small></label>
                 <button className="button-secondary" disabled={pendingHeadChange ? (!headChangeEnabled || headSavingUnitId !== '') : headAssignment ? (!headChangeEnabled || (!selectedHeadId || selectedHeadId === headAssignment.userId) || headSavingUnitId !== '') : (!headAssignmentEnabled || (!selectedHeadId && !pendingHead) || headSavingUnitId !== '')} onClick={() => (headAssignment || pendingHeadChange) ? changeHead(unit.id) : assignHead(unit.id)} type="button">{headSavingUnitId === unit.id ? 'Procesando…' : pendingHeadChange ? 'Reintentar cambio' : headAssignment ? headChangeEnabled ? 'Cambiar Jefe' : 'Cambio de Jefe · no disponible' : pendingHead ? 'Reintentar asignación' : headAssignmentEnabled ? 'Asignar Jefe' : 'Asignar Jefe · no disponible'}</button>
                 {headMessages[unit.id]?.success && <p className="form-message" role="status">{headMessages[unit.id].success}</p>}
@@ -361,11 +446,43 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
           ))}
         </div>
       </section>
+      <section aria-labelledby="hierarchy-audit-title" className="hierarchy-card hierarchy-audit">
+        <div className="hierarchy-audit__heading"><div><h2 id="hierarchy-audit-title">Historial de movimientos</h2><p className="hierarchy-card__intro">Consulta los eventos de auditoría registrados para {officeName}. La consulta es de solo lectura.</p></div>
+          <button className="button-secondary" disabled={auditLoading} onClick={() => setAuditPage(1)} type="button">Actualizar historial</button></div>
+        <form className="hierarchy-audit__filters" onSubmit={(event) => { event.preventDefault(); setAuditPage(1); setAuditFilters({ ...auditDraft }) }}>
+          <label className="form-field"><span>Tipo de operación</span><select onChange={(event) => setAuditDraft((current) => ({ ...current, operationType: event.target.value }))} value={auditDraft.operationType}><option value="">Todas</option><option value="unidad">Creación de unidad</option><option value="asignacion-jefe">Asignación de Jefe</option><option value="cambio-jefe">Cambio de Jefe</option><option value="asignacion-especialista">Asignación de Especialista</option><option value="reasignacion-especialista">Reasignación de Especialista</option></select></label>
+          <label className="form-field"><span>Resultado</span><select onChange={(event) => setAuditDraft((current) => ({ ...current, phase: event.target.value }))} value={auditDraft.phase}><option value="">Todos</option><option value="INICIADA">Iniciada</option><option value="CAMBIO_APLICADO">Cambio aplicado</option><option value="COMPLETADA">Completada</option><option value="PARCIAL">Parcial</option><option value="RECONCILIACION">Reconciliación</option></select></label>
+          <label className="form-field"><span>Desde</span><input onChange={(event) => setAuditDraft((current) => ({ ...current, from: event.target.value }))} type="date" value={auditDraft.from} /></label>
+          <label className="form-field"><span>Hasta</span><input onChange={(event) => setAuditDraft((current) => ({ ...current, to: event.target.value }))} type="date" value={auditDraft.to} /></label>
+          <button className="button-primary" disabled={auditLoading} type="submit">Aplicar filtros</button>
+        </form>
+        {auditLoading && <p className="hierarchy-message" role="status">Consultando historial…</p>}
+        {auditError && <p className="form-message form-message--error" role="alert">{auditError}</p>}
+        {!auditLoading && !auditError && auditResult.events.length === 0 && <p className="hierarchy-empty">No hay movimientos para los filtros seleccionados.</p>}
+        {auditResult.events.length > 0 && <div className="hierarchy-audit__table-wrap"><table className="hierarchy-audit__table"><thead><tr><th>Fecha y hora</th><th>Movimiento</th><th>Unidad</th><th>Responsable</th><th>Resultado</th><th>Detalle</th></tr></thead><tbody>
+          {auditResult.events.map((event) => {
+            const labels = { unidad: 'Creación de unidad', 'edicion-unidad': 'Edición de unidad', 'asignacion-jefe': 'Asignación de Jefe', 'cambio-jefe': 'Cambio de Jefe', 'asignacion-especialista': 'Asignación de Especialista', 'reasignacion-especialista': 'Reasignación de Especialista' }
+            const selected = auditSelected === event.id
+            const eventUnit = units.find((unit) => unit.id === event.unitId || unit.id === event.afterData?.destinationUnitId || unit.id === event.beforeData?.sourceUnitId)
+            const phaseLabel = { INICIADA: 'Iniciada', CAMBIO_APLICADO: 'Cambio aplicado', COMPLETADA: 'Completada', PARCIAL: 'Parcial', RECONCILIACION: 'Reconciliación' }[event.phase] || event.phase
+            return <tr className={event.phase === 'PARCIAL' ? 'hierarchy-audit__partial' : ''} key={event.id}>
+              <td>{event.occurredAt ? new Date(event.occurredAt).toLocaleString('es-PE') : 'Fecha no disponible'}</td>
+              <td>{labels[event.operationType] || 'Movimiento de jerarquía'}</td>
+              <td>{event.unitName || eventUnit?.name || (event.unitId ? `Unidad ${event.unitId}` : 'No especificada')}{event.unitCode && <small>Código: {event.unitCode}</small>}</td>
+              <td>{event.actor || 'No identificado'}{event.userId && <small>Usuario afectado: {event.userId}</small>}</td>
+              <td><span className={`hierarchy-audit__status hierarchy-audit__status--${event.phase.toLowerCase()}`}>{phaseLabel}</span></td>
+              <td><button className="button-secondary hierarchy-audit__detail-button" onClick={() => setAuditSelected(selected ? '' : event.id)} type="button">{selected ? 'Ocultar' : 'Ver detalle'}</button>
+                {selected && <details className="hierarchy-audit__details" open><summary>Datos del movimiento</summary><AuditChangeDetails afterData={event.afterData} beforeData={event.beforeData} /></details>}</td>
+            </tr>
+          })}
+        </tbody></table></div>}
+        <div className="hierarchy-audit__pagination"><span>{auditResult.pagination.totalItems || 0} movimiento(s) · página {auditResult.pagination.page || auditPage} de {auditResult.pagination.totalPages || 0}</span><div><button className="button-secondary" disabled={auditLoading || auditPage <= 1} onClick={() => setAuditPage((page) => Math.max(1, page - 1))} type="button">Anterior</button><button className="button-secondary" disabled={auditLoading || !auditResult.pagination.hasMoreItems} onClick={() => setAuditPage((page) => page + 1)} type="button">Siguiente</button></div></div>
+      </section>
     </div>
   )
 }
 
-function OfficeHierarchy({ officeName, dependency, members, specialistUnits, recipients, staleCount, revision, pendingHeadChanges, pendingSpecialistReassignments, units, assignments, alfrescoReadOnly, loading, loadingError, saving, unitCreationEnabled, headAssignmentEnabled, headChangeEnabled, specialistAssignmentEnabled, specialistReassignmentEnabled, creationPending, pendingUnitOperation, creationMessage, creationError, onCreateUnit, onAssignHead, onChangeHead, onAssignSpecialist, onReassignSpecialist, onRefresh, onAddMembers, onRemoveMember, onBack }) {
+function OfficeHierarchy({ officeName, dependency, members, specialistUnits, recipients, staleCount, revision, pendingHeadChanges, pendingSpecialistReassignments, units, assignments, alfrescoReadOnly, loading, loadingError, saving, unitCreationEnabled, unitEditEnabled, headAssignmentEnabled, headChangeEnabled, specialistAssignmentEnabled, specialistReassignmentEnabled, creationPending, pendingUnitOperation, creationMessage, creationError, onCreateUnit, onEditUnit, onAssignHead, onChangeHead, onAssignSpecialist, onReassignSpecialist, onRefresh, onAddMembers, onRemoveMember, onBack }) {
   const [addOpen, setAddOpen] = useState(false)
   const [laneId, setLaneId] = useState('jefes')
   const [unitHeadUserId, setUnitHeadUserId] = useState('')
@@ -427,6 +544,7 @@ function OfficeHierarchy({ officeName, dependency, members, specialistUnits, rec
       loadingError={loadingError}
       members={members}
       onCreateUnit={onCreateUnit}
+      onEditUnit={onEditUnit}
       onAssignHead={onAssignHead}
       onChangeHead={onChangeHead}
       onAssignSpecialist={onAssignSpecialist}
@@ -438,6 +556,7 @@ function OfficeHierarchy({ officeName, dependency, members, specialistUnits, rec
       staleCount={staleCount}
       units={units}
       unitCreationEnabled={unitCreationEnabled}
+      unitEditEnabled={unitEditEnabled}
     />
   }
 
@@ -543,6 +662,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
   const [pendingSpecialistReassignments, setPendingSpecialistReassignments] = useState([])
   const [alfrescoReadOnly, setAlfrescoReadOnly] = useState(false)
   const [unitCreationEnabled, setUnitCreationEnabled] = useState(false)
+  const [unitEditEnabled, setUnitEditEnabled] = useState(false)
   const [headAssignmentEnabled, setHeadAssignmentEnabled] = useState(false)
   const [headChangeEnabled, setHeadChangeEnabled] = useState(false)
   const [specialistAssignmentEnabled, setSpecialistAssignmentEnabled] = useState(false)
@@ -576,6 +696,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
       setPendingSpecialistReassignments(Array.isArray(result.pendingSpecialistReassignments) ? result.pendingSpecialistReassignments : [])
       setAlfrescoReadOnly(model.alfrescoReadOnly)
       setUnitCreationEnabled(model.alfrescoReadOnly && result.capabilities?.createUnits === true)
+      setUnitEditEnabled(model.alfrescoReadOnly && result.capabilities?.editUnits === true)
       setHeadAssignmentEnabled(model.alfrescoReadOnly && result.capabilities?.assignHeads === true)
       setHeadChangeEnabled(model.alfrescoReadOnly && result.capabilities?.changeHeads === true)
       setSpecialistAssignmentEnabled(model.alfrescoReadOnly && result.capabilities?.assignSpecialists === true)
@@ -593,6 +714,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
         setRecipients([])
         setStaleCount(0)
         setUnitCreationEnabled(false)
+        setUnitEditEnabled(false)
         setHeadAssignmentEnabled(false)
         setHeadChangeEnabled(false)
         setSpecialistAssignmentEnabled(false)
@@ -665,6 +787,33 @@ export function HierarchyManagementPage({ office, csrfToken }) {
     } finally {
       setCreationPending(false)
     }
+  }
+
+  const editUnit = async ({ unitId, name, code, description, operationId, expectedRevision }) => {
+    const result = await patchHierarchyUnit({ unitId, name, code, description, operationId, expectedRevision }, csrfToken)
+    try {
+      const refreshed = await getHierarchy()
+      const model = createHierarchyManagementModel(refreshed)
+      setRecipients(model.recipients)
+      setStaleCount(model.staleCount)
+      setMembers(model.members)
+      setSpecialistUnits(model.specialistUnits)
+      setUnits(model.units)
+      setHierarchyAssignments(model.assignments)
+      setHierarchyRevision(refreshed.revision || '')
+      setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
+      setPendingSpecialistReassignments(Array.isArray(refreshed.pendingSpecialistReassignments) ? refreshed.pendingSpecialistReassignments : [])
+      setAlfrescoReadOnly(model.alfrescoReadOnly)
+      setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
+      setUnitEditEnabled(model.alfrescoReadOnly && refreshed.capabilities?.editUnits === true)
+      setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
+      setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
+      setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
+      setSpecialistReassignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.reassignSpecialists === true)
+    } catch (refreshError) {
+      return { ...result, refreshError: refreshError.message || 'No se pudo actualizar la vista desde Alfresco.' }
+    }
+    return result
   }
 
   const assignHead = async ({ unitId, userId, operationId }) => {
@@ -808,7 +957,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
 
   if (view === moduleViews.office) {
     return <PanelPage description={`Organiza la jerarquía documental de ${officeName}.`} title="Administrar mi oficina">
-      <OfficeHierarchy officeName={officeName} dependency={office?.dependencyId} members={members} specialistUnits={specialistUnits} recipients={recipients} staleCount={staleCount} revision={hierarchyRevision} pendingHeadChanges={pendingHeadChanges} pendingSpecialistReassignments={pendingSpecialistReassignments} units={units} assignments={hierarchyAssignments} alfrescoReadOnly={alfrescoReadOnly} loading={loading} loadingError={loadingError} saving={saving} unitCreationEnabled={unitCreationEnabled} headAssignmentEnabled={headAssignmentEnabled} headChangeEnabled={headChangeEnabled} specialistAssignmentEnabled={specialistAssignmentEnabled} specialistReassignmentEnabled={specialistReassignmentEnabled} creationPending={creationPending} pendingUnitOperation={pendingUnitOperation} creationMessage={creationMessage} creationError={creationError} onCreateUnit={createUnit} onAssignHead={assignHead} onChangeHead={changeHead} onReassignSpecialist={reassignSpecialist} onRefresh={() => loadOffice()} onAddMembers={(laneId, ids, unitHeadUserId) => {
+      <OfficeHierarchy officeName={officeName} dependency={office?.dependencyId} members={members} specialistUnits={specialistUnits} recipients={recipients} staleCount={staleCount} revision={hierarchyRevision} pendingHeadChanges={pendingHeadChanges} pendingSpecialistReassignments={pendingSpecialistReassignments} units={units} assignments={hierarchyAssignments} alfrescoReadOnly={alfrescoReadOnly} loading={loading} loadingError={loadingError} saving={saving} unitCreationEnabled={unitCreationEnabled} unitEditEnabled={unitEditEnabled} headAssignmentEnabled={headAssignmentEnabled} headChangeEnabled={headChangeEnabled} specialistAssignmentEnabled={specialistAssignmentEnabled} specialistReassignmentEnabled={specialistReassignmentEnabled} creationPending={creationPending} pendingUnitOperation={pendingUnitOperation} creationMessage={creationMessage} creationError={creationError} onCreateUnit={createUnit} onEditUnit={editUnit} onAssignHead={assignHead} onChangeHead={changeHead} onReassignSpecialist={reassignSpecialist} onRefresh={() => loadOffice()} onAddMembers={(laneId, ids, unitHeadUserId) => {
         const nextMembers = { ...members, [laneId]: [...new Set([...members[laneId], ...ids])] }
         const nextSpecialistUnits = laneId === 'especialistas'
           ? { ...specialistUnits, ...Object.fromEntries(ids.map((id) => [id, unitHeadUserId])) }
