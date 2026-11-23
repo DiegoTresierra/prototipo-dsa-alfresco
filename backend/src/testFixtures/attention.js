@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createAlfrescoDispatchRepository, assignmentProperty, projections } from '../alfrescoDispatchRepository.js'
 import { pilotAcknowledgements } from '../dispatchPilot.js'
+import { identityResponse } from './institutionalIdentity.js'
 
 export const originalId = '00000000-0000-0000-0000-000000000010'
 export const responseId = '00000000-0000-0000-0000-000000000020'
@@ -27,6 +28,10 @@ export function attentionFixture() {
     const p = parsed.pathname
     const method = options.method || 'GET'
     state.calls.push({ path: p, method })
+    const institutionalActors = new Map([['head', 'jefe-unidad'], ['other-head', 'jefe-unidad'], ['staff', 'especialista'], ['director', 'direccion'], ['DTI_T', 'direccion']]
+      .map(([id, functionalRole]) => [`Basic actor-${id}`, { id, functionalRole, dependency: id === 'DTI_T' ? 'DTI' : 'DSA' }]))
+    const identity = identityResponse(url, options, institutionalActors, settings.groupMappings)
+    if (identity) return identity
     const json = (body, status = 200) => Response.json(body, { status })
     if (p.endsWith('/tickets')) return json({ entry: { id: 'test-ticket' } }, 201)
     if (p.endsWith('/people/-me-')) return json({ entry: { id: 'gd_distribucion', enabled: true, capabilities: { isAdmin: false } } })
@@ -50,7 +55,7 @@ export function attentionFixture() {
         folders.get(folder).add(responseId)
         return json({ entry: nodes.get(responseId) }, 201)
       }
-      return json({ list: { entries: [...(folders.get(folder) || [])].map((id) => ({ entry: { ...nodes.get(id), association: { assocType: 'cm:contains', isPrimary: nodes.get(id).parentId === folder } } })), pagination: { hasMoreItems: false } } })
+      return json({ list: { entries: [...(folders.get(folder) || [])].map((id) => ({ entry: { ...nodes.get(id), association: { assocType: 'cm:contains', isPrimary: nodes.get(id).parentId === folder } } })), pagination: { hasMoreItems: false, skipCount: 0, count: folders.get(folder)?.size || 0, totalItems: folders.get(folder)?.size || 0 } } })
     }
     if (p.endsWith('/secondary-children')) {
       const folder = segments.at(-2)
@@ -69,9 +74,10 @@ export function attentionFixture() {
         references.get(source).add(body.targetId)
         return json({ entry: body }, 201)
       }
-      return json({ list: { entries: [...(references.get(source) || [])].map((id) => ({ entry: { ...nodes.get(id), association: { assocType: 'cm:references' } } })), pagination: { hasMoreItems: false } } })
+      return json({ list: { entries: [...(references.get(source) || [])].map((id) => ({ entry: { ...nodes.get(id), association: { assocType: 'cm:references' } } })), pagination: { hasMoreItems: false, skipCount: 0, count: references.get(source)?.size || 0, totalItems: references.get(source)?.size || 0 } } })
     }
     const id = p.endsWith('/content') ? segments.at(-2) : segments.at(-1)
+    if (folders.has(id)) return json({ entry: { id, isFolder: true, nodeType: 'cm:folder' } })
     const node = nodes.get(id)
     if (!node) return json({}, 404)
     if (method === 'PUT') {
@@ -106,6 +112,11 @@ export function attentionFixture() {
     Object.assign(nodes.get(originalId).properties, projections(value))
     return assignment
   }
-  const addResponse = () => { nodes.set(responseId, pdf(responseId, 'director', 'dsa-emitted', 'DSA')); folders.get('dsa-emitted').add(responseId) }
+  const addResponse = () => {
+    const node = pdf(responseId, 'director', 'dsa-emitted', 'DSA')
+    Object.assign(node.properties, { 'gd:numero': '1', 'gd:codigoDocumental': 'DSA', 'gd:cicloDocumental': 2026,
+      'gd:fechaDocumento': '2026-11-23', 'gd:identidadEmision': JSON.stringify({ version: 1, actorId: 'director', requestKey: 'official-fixture', payloadHash: 'a'.repeat(64) }) })
+    nodes.set(responseId, node); folders.get('dsa-emitted').add(responseId)
+  }
   return { settings, nodes, folders, references, state, fetchImpl, repository, seed, envelope, seedDirectionOwnAssignment, addResponse }
 }

@@ -52,3 +52,11 @@ test('missing content identifies the exact field or the pending PDF', () => {
   input.mainDocument = null
   assert.match(getDocumentSubmissionError(input), /PDF principal/)
 })
+for (const role of ['director-dti', 'jefe-unidad-dti', 'especialista-dti']) test(`${role} can submit an own numbered emission without recipient`, () => {
+  const i = complete(role); i.officialEmission = true; delete i.dependency; delete i.recipient
+  assert.equal(getDocumentSubmissionError(i), '')
+})
+test('own emission never treats an empty destination as distribution authority', () => {
+  const i = complete('especialista-dti'); i.officialEmission = true
+  assert.match(getDocumentSubmissionError(i), /circuito institucional autorizado/)
+})

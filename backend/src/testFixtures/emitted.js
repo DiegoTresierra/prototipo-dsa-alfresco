@@ -1,5 +1,9 @@
+import { identityResponse } from './institutionalIdentity.js'
 export function emittedFixture() {
-  const settings = { alfrescoTarget: 'https://emitted.invalid', officeInboxNodeIds: { DTI: { emitidos: 'dti-root' }, DSA: { emitidos: 'dsa-root' } } }
+  const settings = { alfrescoTarget: 'https://emitted.invalid', officeInboxNodeIds: { DTI: { emitidos: 'dti-root' }, DSA: { emitidos: 'dsa-root' } },
+    groupMappings: { dependencies: { DTI: 'GROUP_FIXTURE_DTI', DSA: 'GROUP_FIXTURE_DSA' },
+      functions: { direccion: 'GROUP_FIXTURE_DIRECTION', 'jefe-unidad': 'GROUP_FIXTURE_HEAD', especialista: 'GROUP_FIXTURE_STAFF' } } }
+  const actors = new Map()
   const node = (id, origin, creator, properties = {}) => ({ id, name: `${id}.pdf`, isFile: true, nodeType: 'cm:content', parentId: `${origin.toLowerCase()}-root`,
     createdAt: '2026-11-16T12:00:00Z', createdByUser: { id: creator }, content: { mimeType: 'application/pdf', sizeInBytes: id === 'dti-legacy' ? 0 : 200 },
     properties: { 'cm:title': id, ...properties } })
@@ -18,6 +22,8 @@ export function emittedFixture() {
     const parsed = new URL(url)
     if (parsed.hostname !== 'emitted.invalid' || options.method !== 'GET') throw new Error('unexpected request')
     calls.push({ method: options.method, path: parsed.pathname, query: parsed.search, authorization: options.headers.Authorization })
+    const identity = identityResponse(url, options, actors, settings.groupMappings)
+    if (identity) return identity
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
     const match = parsed.pathname.match(/\/nodes\/([^/]+)(?:\/(children))?$/)
     if (!match) return json({}, 404)
@@ -32,7 +38,11 @@ export function emittedFixture() {
     }
     return json({ entry: nodes.get(id) })
   }
-  const session = (dependency) => ({ dependency, authorizationStatus: 'active', functionalRole: 'direccion', capabilities: ['documents:read'],
-    alfresco: { id: `${dependency}_T` }, authorization: `actor-${dependency}-fixture` })
-  return { settings, nodes, children, calls, denied, fetch, session }
+  const session = (dependency, functionalRole = 'direccion') => {
+    const id = functionalRole === 'direccion' ? `${dependency}_T` : `${dependency}-${functionalRole}-fixture`
+    const authorization = `actor-${dependency}-${functionalRole}-fixture`
+    actors.set(authorization, { id, dependency, functionalRole })
+    return { dependency, authorizationStatus: 'active', functionalRole, capabilities: ['documents:read'], alfresco: { id }, authorization }
+  }
+  return { settings, nodes, children, calls, denied, fetch, session, actors }
 }

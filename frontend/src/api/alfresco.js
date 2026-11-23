@@ -14,6 +14,28 @@ export async function getClosureEvaluation(documentId) {
   if (body.evaluation?.documentId !== documentId || !Array.isArray(body.evaluation?.blockingReasons) || typeof body.canClose !== 'boolean' || typeof body.writesEnabled !== 'boolean') throw new Error('Evaluación incompleta. Consulta nuevamente.')
   return body
 }
+export async function getClosureInbox() {
+  const r = await apiFetch('/api/documents/closure', { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } })
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(body.error || 'No se pudo consultar la bandeja de cierre.')
+  if (body.source !== 'alfresco' || body.semantics !== 'dependency-closure-interventions' || !Array.isArray(body.documents) ||
+      body.documents.some(n => n.closure?.evaluation?.documentId !== n.id || n.closure.dependency !== body.dependency || n.closure.key !== `${n.id}:${body.dependency}` ||
+        !Array.isArray(n.closure.responsibleUserIds) || !Array.isArray(n.closure.evaluation.blockingReasons) || !['APTAS', 'PENDIENTES', 'CERRADAS'].includes(n.closure.category) ||
+        n.closure.category === 'CERRADAS' && (!n.closure.closed || !n.closure.closedAt || !n.closure.closedBy || !n.closure.closureProcessId || n.closure.uncertain ||
+          n.closure.closureReceipt?.schemaVersion !== 2 || n.closure.closureReceipt.executionMode !== 'ALFRESCO' ||
+          n.closure.closureReceipt.documentId !== n.id || n.closure.closureReceipt.dependency !== body.dependency) ||
+        !['MET', 'BLOCKED', 'INDETERMINATE'].includes(n.closure?.compliance))) throw new Error('Bandeja de cierre incompleta o inválida.')
+  return { ...body, documents: body.documents.map(n => ({ ...nodeToDocument(n), closure: n.closure })),
+    warning: body.complete !== true ? 'La consulta es parcial o tiene evaluaciones no verificadas; no se acreditan contadores completos.' : '' }
+}
+export async function getResponseOriginals(documentId) {
+  const r = await apiFetch(`/api/documents/assignment-responses?documentId=${encodeURIComponent(documentId)}&direction=originals`, { credentials: 'include', cache: 'no-store' })
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok || body.responseDocumentId !== documentId || !Array.isArray(body.originals) || typeof body.complete !== 'boolean' ||
+      body.originals.some(o => o.relationType !== 'response' || o.direction !== 'response-to-original' || o.documentId !== documentId || o.node?.id !== o.originalDocumentId) ||
+      new Set(body.originals.map(o => o.originalDocumentId)).size !== body.originals.length) throw new Error(body.error || 'No se pudieron verificar los originales relacionados.')
+  return body
+}
 export async function confirmDocumentClosure(input, csrfToken, reconcile = false) {
   const r = await apiFetch(`/api/documents/closure${reconcile ? '/reconcile' : ''}`, { method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(input) })
@@ -228,6 +250,7 @@ export async function getEmittedDocuments() {
   if (!response.ok) throw new Error(response.status === 403 ? 'Tu sesión no tiene autorización para consultar Emitidos.' : 'No se pudo consultar Emitidos en Alfresco. Actualiza la bandeja para reintentar.')
   if (!Array.isArray(body.documents) || body.source !== 'alfresco' || body.semantics !== 'institutional-originals') throw new Error('La respuesta de Emitidos no tiene un formato válido.')
   return { ...body, documents: body.documents.map(nodeToDocument),
+    scopeNotice: body.scopeNotice === 'UNIT_COMPETENCE_NOT_VERIFIED_OWN_ONLY' ? 'Se muestran solo documentos propios. El acceso por unidad requiere jerarquía institucional verificada.' : '',
     warning: body.documentErrors?.length ? `${body.documentErrors.length} documentos no pudieron verificarse por permisos u origen institucional. La lista es parcial.` : '' }
 }
 
@@ -480,13 +503,18 @@ export async function emitOfficialDocument(file, fields, csrfToken) {
       OFFICIAL_RECONCILIATION_CHANGED: 'Cambio un documento excluido; se requiere revisar la conciliacion administrativa.',
       NUMBERING_RETRY_CONFLICT: 'La misma clave ya corresponde a otro contenido o parametros. No se ha creado otro PDF.',
       NUMBERING_RESULT_UNCERTAIN: 'La emision quedo incierta. Reintenta con la misma clave, PDF y datos; no generes otra emision.',
+      DOCUMENT_ISSUER_CONFIGURATION_REQUIRED: 'Falta configurar tu unidad y código documental propio. No se ha creado ni numerado el PDF.',
+      DOCUMENT_ISSUER_UNIT_NOT_VERIFIED: 'No se pudo acreditar la unidad institucional en Alfresco. No se ha emitido.',
+      DOCUMENT_ISSUER_MEMBERSHIP_NOT_VERIFIED: 'Alfresco no acredita una asignación vigente a esa unidad y función.',
+      DOCUMENT_ISSUER_CODE_CONFLICT: 'El código documental configurado es incompatible o está duplicado. Requiere revisión institucional.',
+      DOCUMENT_DISTRIBUTION_AUTHORITY_PENDING: 'La distribución de documentos de Jefatura o Especialista requiere un circuito autorizado. Puedes emitir sin destinatario.',
     }
     const error = new Error(messages[body.error] || body.error || 'No se pudo confirmar la emision oficial.')
     error.uncertain = body.uncertain === true
     error.emittedNodeId = body.emittedNodeId || ''
     throw error
   }
-  if (!body.officialEmission || !body.emittedEntry?.id || body.receivedEntry?.id !== body.emittedEntry.id) {
+  if (!body.officialEmission || !body.emittedEntry?.id || (body.distributed === false ? body.receivedEntry !== null || Boolean(fields.recipientDependency) : body.receivedEntry?.id !== body.emittedEntry.id)) {
     const error = new Error('No se pudo verificar el resultado de la emision. Conserva la misma clave para conciliar.'); error.uncertain = true; throw error
   }
   return body

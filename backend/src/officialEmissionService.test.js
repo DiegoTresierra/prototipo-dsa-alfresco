@@ -95,8 +95,8 @@ test('timeout after create blocks next allocation and restart until same-key rec
 
 test('actor ACL, receiving read prerequisites, role and creation denials never change ACL', async (t) => {
   const f = officialFixture(t)
-  await assert.rejects(f.service.issue({ ...f.session(), functionalRole: 'jefe-unidad' }, f.input()), /DIRECTION_REQUIRED/)
-  await assert.rejects(f.service.issue({ ...f.session(), functionalRole: 'especialista' }, f.input()), /DIRECTION_REQUIRED/)
+  await assert.rejects(f.service.issue({ ...f.session(), functionalRole: 'jefe-unidad' }, f.input()), /INSTITUTIONAL_IDENTITY_REJECTED/)
+  await assert.rejects(f.service.issue({ ...f.session(), functionalRole: 'especialista' }, f.input()), /INSTITUTIONAL_IDENTITY_REJECTED/)
   f.conditions.noRecipientRead = true
   const permitted = await f.service.issue(f.session(), f.input('node-allowed'))
   assert.equal(permitted.emittedEntry.properties['gd:numero'], '1')

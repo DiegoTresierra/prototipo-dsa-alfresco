@@ -27,7 +27,7 @@ export function emittedOrigin(node, dependency, folderId) {
 
 export async function listInstitutionalEmitted(settings, session, fetchImpl = globalThis.fetch) {
   const dependency = institution(session?.dependency)
-  if (session?.authorizationStatus !== 'active' || session.functionalRole !== 'direccion' || !dependency ||
+  if (session?.authorizationStatus !== 'active' || !['direccion', 'jefe-unidad', 'especialista'].includes(session.functionalRole) || !dependency ||
       !session.capabilities?.includes('documents:read') || !session.alfresco?.id || !session.authorization) throw fail('EMITTED_READ_NOT_ALLOWED', 403)
   const folderId = settings.officeInboxNodeIds?.[dependency]?.emitidos
   if (!folderId) throw fail('EMITTED_FOLDER_NOT_CONFIGURED', 503)
@@ -58,6 +58,10 @@ export async function listInstitutionalEmitted(settings, session, fetchImpl = gl
         node = (await get(`/nodes/${encodeURIComponent(entry.id)}?include=properties,aspectNames`))?.entry
         if (node?.id !== entry.id) throw fail('EMITTED_INVALID_RESPONSE')
         if (!node.isFile) continue
+        // Until unit competence is supplied by the institutional hierarchy, only
+        // the actor's OWN originals are established for heads and specialists.
+        // Folder ACL, a familiar UUID or organization.json cannot widen that scope.
+        if (session.functionalRole !== 'direccion' && node.createdByUser?.id !== session.alfresco.id) continue
         const origin = emittedOrigin(node, dependency, folderId)
         if (!origin) continue
         const mime = node.content?.mimeType
@@ -74,5 +78,7 @@ export async function listInstitutionalEmitted(settings, session, fetchImpl = gl
     if (!paging.hasMoreItems) break
   }
   return { dependency, folderId, documents, documentErrors, source: 'alfresco', semantics: 'institutional-originals',
+    accessScope: session.functionalRole === 'direccion' ? 'dependency' : 'own',
+    scopeNotice: session.functionalRole === 'direccion' ? null : 'UNIT_COMPETENCE_NOT_VERIFIED_OWN_ONLY',
     observedAt: new Date().toISOString() }
 }

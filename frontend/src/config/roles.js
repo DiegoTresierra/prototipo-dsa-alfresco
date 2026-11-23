@@ -1,4 +1,5 @@
 const item = (id, label, description, icon = 'file') => ({ id, label, description, icon })
+const emittedItem = () => item('documentos-enviados', 'Emitidos', 'Consulta tus originales accesibles en Alfresco.', 'inbox')
 const newDocumentItem = () => item('nuevo-documento', 'Nuevo documento', 'Registra un documento emitido por el usuario autenticado.')
 
 const directorMenu = [
@@ -8,7 +9,7 @@ const directorMenu = [
   item('documentos-recibidos', 'Documentos recibidos', 'Consulta documentos enviados a la carpeta de recepción de esta dependencia.', 'inbox'),
   item('para-atencion', 'Para atención', 'Documentos que seleccionaste Para mí desde Recibidos.', 'review'),
   item('mis-documentos', 'Mis documentos', 'Consulta los originales de tu dependencia creados por tu usuario.', 'archive'),
-  item('aprobar-cierres', 'Aprobar cierres', 'Consulta de cierres cuando el flujo correspondiente esté conectado.'),
+  item('aprobar-cierres', 'Aprobar cierres', 'Evalúa las intervenciones de tu dependencia; el cierre real permanece protegido.'),
   item('seguimiento', 'Seguimiento', 'Consulta estados publicados por Alfresco.', 'chart'),
   item('gestion-jerarquia', 'Ajustes', 'Administra la organización documental de tu oficina.', 'users'),
 ]
@@ -57,4 +58,9 @@ for (const role of new Set(Object.values(roleDefinitions))) {
     const newDocumentIndex = role.menu.findIndex((entry) => entry.id === 'nuevo-documento')
     role.menu.splice(newDocumentIndex + 1, 0, item('documentos-recibidos', 'Documentos recibidos', 'Consulta los documentos recibidos por esta cuenta.', 'inbox'))
   }
+}
+
+// Navigation only: backend identity, documentary competence and ACL remain mandatory.
+for (const roleId of ['jefe-unidad-dti', 'jefe-unidad-dsa', 'jefe_unidad', 'especialista-dti', 'especialista-dsa', 'especialista']) {
+  roleDefinitions[roleId].menu.splice(2, 0, emittedItem())
 }

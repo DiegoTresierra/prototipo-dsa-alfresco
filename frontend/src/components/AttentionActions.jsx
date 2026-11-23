@@ -5,7 +5,7 @@ import { ResponseComposer } from './ResponseComposer'
 import { ResponseProposals } from './ResponseProposals'
 
 /* eslint-disable react/prop-types */
-export function AttentionActions({ documentId, assignment, csrfToken, canAttend, canIssue, onChanged, onEmit }) {
+export function AttentionActions({ documentId, assignment, csrfToken, canAttend, canIssue, canLink = false, onChanged, onEmit }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [linked, setLinked] = useState(null)
@@ -34,7 +34,7 @@ export function AttentionActions({ documentId, assignment, csrfToken, canAttend,
     <strong>Mi asignación: {completed ? 'ATENDIDO' : assignment.status}</strong>
     {assignment.attendedAt && <p>Atendida por {assignment.attendedByUserId} · {new Date(assignment.attendedAt).toLocaleString('es-PE')}</p>}
     {active && canAttend && <button type="button" className="button-primary" disabled={busy} onClick={() => attend()}>Marcar como atendido</button>}
-    {canIssue && <ResponseComposer key={active ? assignment.id : documentId} documentId={documentId} assignmentId={active ? assignment.id : null} csrfToken={csrfToken} onEmit={onEmit} onLinked={(result) => { onChanged?.(result); run(loadLinks) }} />}
+    {(canIssue || active && canLink) && <ResponseComposer key={active ? assignment.id : documentId} documentId={documentId} assignmentId={active ? assignment.id : null} csrfToken={csrfToken} onEmit={canIssue ? onEmit : undefined} onLinked={(result) => { onChanged?.(result); run(loadLinks) }} />}
     <button type="button" className="button-secondary" disabled={busy} onClick={() => run(loadLinks)}>Consultar respuestas relacionadas</button>
     {linked && <div>
       <p>Obligaciones: {linked.summary.attended} atendidas · {linked.summary.pending} pendientes. {linked.summary.readyForClosureReview ? 'Listo para revisión de cierre; falta autoridad formal.' : 'Sin cierre global.'}</p>

@@ -10,7 +10,7 @@ Los documentos emitidos permanecen en Emitidos institucional, incluidos anulados
 
 Cada secuencia se identifica por código documental completo y ciclo. El ciclo comienza el 2 de enero en America/Lima y termina el 1 de enero siguiente. Se toma el máximo numérico utilizado, incluyendo anulados; nunca se ordena como texto ni se usa el más reciente por fecha.
 
-El numerador genérico admite secuencias independientes por código. El emisor actual autoriza Dirección y obtiene el código institucional de su dependencia; no inventa códigos de unidades o especialistas.
+El numerador admite secuencias independientes por código. Dirección usa su dependencia verificada. Jefatura y Especialista pueden formalizar documentos propios: el backend exige configuración explícita y una asignación `gdo:asignacion` ACTIVA en una `gdo:unidad` ACTIVA, con usuario, función y dependencia coincidentes. No deduce siglas de nombres ni del organigrama JSON.
 
 La fuente es la enumeración directa y completa de Emitidos mediante GET, con cm:contains, deduplicación y paginación consistente. No se depende del índice eventual, del nombre, de conteos ni de un contador local.
 
@@ -26,9 +26,19 @@ La identidad contiene version, actorId, requestKey y payloadHash. El backend con
 
 ## API existente
 
-POST /api/documents/official-emissions requiere Dirección, sesión, CSRF, revalidación institucional y habilitación explícita. Su multipart admite filedata, requestKey, title, description, documentType, documentPeriod, priority, recipientDependency y receiptCategory. PDF con firma %PDF-, máximo 20 MiB.
+POST /api/documents/official-emissions requiere Dirección, Jefatura o Especialista, sesión, CSRF, revalidación institucional y habilitación explícita. Su multipart admite filedata, requestKey, title, description, documentType, documentPeriod, priority, recipientDependency y receiptCategory. PDF con firma %PDF-, máximo 20 MiB. El código, carpeta, ciclo y número los resuelve exclusivamente el backend.
+
+Sin destinatario, `recipientDependency` y `receiptCategory` deben estar vacíos: se crea solo el original en Emitidos, sin recepción, asociación secundaria ni asignación. La respuesta devuelve `distributed: false` y `receivedEntry: null`. Dirección conserva la distribución existente con destinatario; la distribución de documentos propios de Jefatura/Especialista queda bloqueada hasta definir su circuito. Jefatura y Especialista pueden formalizar emisiones propias directamente: no se exige aprobación de Dirección por defecto. La capacidad interna de emisión por revisión aprobada sigue reservada a Dirección; cuando existe un proceso de revisión se conserva su aprobación y la vinculación a contenido concreto. Un documento ya oficial puede reutilizarse posteriormente como respuesta sin otra emisión ni otro número, respetando esas reglas específicas y la competencia sobre el original.
+
+Configuración manual, sin activar escrituras: `ALFRESCO_DOCUMENT_ISSUER_ASSIGNMENTS_JSON` relaciona el ID exacto de actor con `unitId` (UUID real de la unidad) y `documentCode` completo; especialistas añaden `signatoryCode` institucional explícito. Ejemplo sintético: `{"person@example.invalid":{"unitId":"00000000-0000-4000-8000-000000000099","documentCode":"DTI-UNIT-AA","signatoryCode":"AA"}}`. Jefatura usa el código de unidad sin sigla personal. El código de unidad procede de `gdo:codigoUnidad`; puede ser local (`UNIT`) o completo (`DTI-UNIT`). Se rechazan códigos incompatibles, duplicados personales, relaciones inactivas, ausencia de ACL de lectura y paginación incompleta. La configuración asigna códigos, no concede membresías, aprobación ni permisos.
+
+El rol y la afiliación se comprueban también antes de crear el PDF y durante su verificación. Esto detecta cambios observables, pero no constituye una transacción distribuida con las modificaciones de jerarquía. La ventana coordinada y un único backend siguen siendo requisitos del piloto. En DEV la configuración continúa vacía hasta intervención del operador; el modelo desplegado no implica que existan relaciones activas ni códigos personales configurados.
+
+GET /api/documents/emitted se consulta con identidad institucional revalidada y ACL del actor. Dirección ve originales de su dependencia; Jefatura y Especialista ven sus propios originales. El acceso adicional por unidad sigue bloqueado hasta integrar su competencia verificable. Se recorren todas las páginas y se deduplican UUID; errores documentales individuales producen una advertencia de lista parcial, y errores de paginación rechazan la consulta.
 
 No se aceptan propiedades gd arbitrarias ni un indicador approved como aprobación. Las rutas genéricas no pueden cargar en Emitidos para eludir el servicio.
+
+La identidad técnica debe acreditar explícitamente `capabilities.isAdmin: false` mediante GET; el nombre de cuenta por sí solo no demuestra ausencia de privilegios administrativos. Una respuesta sin esa evidencia bloquea la emisión antes de crear el PDF.
 
 Para una propuesta aprobada, la integración interna obtiene los bytes desde Alfresco, valida aprobación y reutiliza este emisor con una capacidad del servidor. No existe una ruta productiva nueva de emisión por propuestas.
 

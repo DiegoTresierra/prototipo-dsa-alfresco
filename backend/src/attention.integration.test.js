@@ -64,7 +64,9 @@ test('HTTP attention, existing institutional emission, verified response relatio
   f.state.denyActor = true
   assert.equal((await fetch(base + `/api/alfresco/api/-default-/public/alfresco/versions/1/nodes/${originalId}/content`, { headers: staff })).status, 403)
   f.state.denyActor = false
-  assert.equal((await fetch(base + '/api/documents/response-candidates', { headers: staff })).status, 403)
+  const staffCandidates = await fetch(base + '/api/documents/response-candidates', { headers: staff })
+  assert.equal(staffCandidates.status, 200)
+  assert.deepEqual((await staffCandidates.json()).documents, [])
   // Fixture represents Dirección already having an own obligation; the dispatch API still cannot target Dirección.
   const own = f.seedDirectionOwnAssignment()
   // Link an already emitted institutional PDF. New creation is covered by the
@@ -80,6 +82,10 @@ test('HTTP attention, existing institutional emission, verified response relatio
   assert.equal(bundle.documentIdentity.originalDependency, 'DTI')
   assert.equal(bundle.responses[0].emitterDependency, 'dsa')
   assert.equal(bundle.responses[0].available, true)
+  const originals = await fetch(base + `/api/documents/assignment-responses?documentId=${responseId}&direction=originals`, { headers: director })
+  assert.equal(originals.status, 200)
+  assert.equal((await originals.json()).originals[0].originalDocumentId, originalId)
+  assert.equal((await fetch(base + `/api/documents/assignment-responses?documentId=${responseId}&direction=annex`, { headers: director })).status, 400)
   const content = await fetch(base + `/api/documents/response-content?documentId=${originalId}&responseDocumentId=${responseId}`, { headers: director })
   assert.equal(content.status, 200)
   assert.equal((await fetch(base + `/api/documents/response-content?documentId=${originalId}&responseDocumentId=arbitrary-uuid`, { headers: director })).status, 403)

@@ -20,12 +20,15 @@ El resumen distingue pendientes, atendidas y anuladas. readyForClosureReview no 
 
 Una respuesta emitida es otro PDF, con UUID propio, vinculado al original mediante cm:references y el registro persistente correspondiente. No es una copia del PDF original.
 
-- GET /api/documents/response-candidates: emisiones propias candidatas para Dirección.
-- POST /api/documents/assignments/response: vinculación autorizada, con assignmentId opcional para respuesta documental de Dirección.
+- GET /api/documents/response-candidates: emisiones oficiales propias verificadas para Dirección, Jefatura y Especialista. Reutiliza la consulta de Emitidos y rechaza cobertura parcial; un borrador o un registro sin identidad oficial no es candidato.
+- POST /api/documents/assignments/response: vinculación autorizada. Dirección conserva la competencia documental de su ámbito. Jefatura y Especialista requieren una asignación propia vigente; si solo se envía el UUID original se resuelve únicamente una asignación inequívoca desde Alfresco. Varias obligaciones propias requieren selección explícita, nunca un responsable elegido arbitrariamente.
 - GET /api/documents/assignment-responses: vínculos y disponibilidad verificable.
+- GET /api/documents/assignment-responses?documentId=...&direction=originals: consulta inversa desde una emisión oficial. Comprueba ACL del actor en ambos nodos y la relación registrada en el sobre original. Una asociación aislada o inaccesible no se presenta como respuesta confirmada. `direction` no admite anexos ni antecedentes.
 - GET /api/documents/response-content: exige original autorizado, vínculo persistido, asociación y ACL del actor.
 
-La respuesta candidata debe ser cm:content PDF, emisión propia del usuario, ubicada en Emitidos institucional y con origen compatible. La cuenta técnica no concede acceso al actor. Si la asociación se creó pero falló el sobre, se conserva el UUID y se concilia el vínculo; no se vuelve a emitir.
+La respuesta candidata debe ser cm:content PDF, emisión propia del usuario, ubicada en Emitidos institucional y con origen compatible. Se valida el contrato de código, ciclo, `gd:numero`, identidad idempotente, autoría y fecha de emisión; el contenido debe ser un PDF no vacío. Antes de las escrituras se revalida la identidad institucional y se compara la huella del documento reutilizado. No se modifica su número, identidad, autoría, fecha de emisión ni contenido/versiones. La cuenta técnica no concede acceso al actor. Si la asociación se creó pero falló el sobre, se conserva el UUID y se concilia el vínculo; no se vuelve a emitir.
+
+El cliente conserva únicamente la clave idempotente pendiente entre recargas, no una fuente documental. El sobre original y la asociación Alfresco son la evidencia operativa. El mutex de ambos UUID se adquiere en orden estable; la revisión y la lectura previa del sobre detectan cambios observables. No existe CAS distribuido: el piloto mantiene la restricción de un backend/escritor coordinado, y no se certifican escrituras reales ni protección frente a modificaciones externas. Una operación parcial no concede un permiso ni completa una obligación.
 
 Para originales con procesos de revisión, las nuevas respuestas deben proceder de una emisión registrada por el circuito aprobado. Los reintentos históricos legítimos conservan su validación; no se eliminan vínculos anteriores.
 

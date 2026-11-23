@@ -12,11 +12,15 @@ export function emissionDate(at) {
     .formatToParts(at).map(({ type, value }) => [type, value]))
   return `${parts.year}-${parts.month}-${parts.day}`
 }
-export function descriptiveMetadata({ code, actorId, recipientDependency, documentType }, date) {
-  return { 'gd:dependenciaOrigen': code, 'gd:dependenciaDestino': recipientDependency, 'gd:remitente': actorId,
-    'gd:destinatario': recipientDependency, 'gd:tipoDocumental': documentType, 'gd:fechaDocumento': date }
+export function descriptiveMetadata({ code, dependency = code, actorId, recipientDependency, documentType }, date) {
+  return { 'gd:dependenciaOrigen': dependency, 'gd:remitente': actorId,
+    ...(recipientDependency ? { 'gd:dependenciaDestino': recipientDependency, 'gd:destinatario': recipientDependency } : {}),
+    'gd:tipoDocumental': documentType, 'gd:fechaDocumento': date }
 }
 export function verifyDescriptiveMetadata(node, expected) {
+  if (!Object.hasOwn(expected, 'gd:dependenciaDestino') && ['gd:dependenciaDestino', 'gd:destinatario'].some(k => node.properties?.[k])) {
+    throw Object.assign(new Error('OFFICIAL_DESCRIPTIVE_METADATA_MISMATCH'), { status: 409 })
+  }
   if (Object.entries(expected).some(([name, value]) => node.properties?.[name] !== value) ||
       !/^\d{4}-\d{2}-\d{2}$/.test(node.properties?.['gd:fechaDocumento'] || '')) {
     throw Object.assign(new Error('OFFICIAL_DESCRIPTIVE_METADATA_MISMATCH'), { status: 409 })

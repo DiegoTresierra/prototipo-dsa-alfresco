@@ -18,7 +18,7 @@ import { resolveRole } from './roleResolver.js'
 import { loadDispatchDirectory, loadInstitutionalDirectory } from './dispatchDirectory.js'
 import { resolveManagedRecipients } from './organizationalHierarchy.js'
 import { authorizeNodeRead, filterDocumentCollection, validateDocumentReadRequest } from './documentReadPolicy.js'
-import { canAttendSession, canIssueResponse, validateAttentionInput } from './attentionPolicy.js'
+import { canAttendSession, canIssueResponse, canLinkResponse, validateAttentionInput } from './attentionPolicy.js'
 import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { buildGenericPdfForm } from './pdfCreation.js'
 import { genericActorGet, verifyGenericRecipient } from './genericCreation.js'
@@ -107,6 +107,7 @@ function publicSession(session) {
     dispatchRecipientRoles: allowedRecipientRoles(session),
     canAttendAssignments: canAttendSession(session),
     canIssueInstitutionalResponse: canIssueResponse(session),
+    canLinkOfficialResponse: canLinkResponse(session),
     csrfToken: session.csrfToken,
     expiresAt: session.expiresAt,
   }
@@ -313,7 +314,10 @@ app.get('/api/directory/recipients', requireSession, async (request, response) =
 app.get('/api/documents/emitted', requireSession, async (request, response) => {
   response.set('Cache-Control', 'no-store')
   if (Object.keys(request.query).length) return response.status(400).json({ error: 'EMITTED_QUERY_NOT_ALLOWED' })
-  try { return response.json(await listInstitutionalEmitted(config, request.session)) }
+  try {
+    await revalidateInstitutionalIdentity(config, request.session)
+    return response.json(await listInstitutionalEmitted(config, request.session))
+  }
   catch (error) { return response.status(error.status || 502).json({ error: error.message || 'EMITTED_READ_FAILED' }) }
 })
 
@@ -530,7 +534,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.get('/api/documents/response-candidates', requireSession, async (request, response) => {
+  app.get('/api/documents/response-candidates', requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')
     try {
       if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
@@ -538,7 +542,7 @@ function requireDeliveryLock(request, response, next) {
     } catch (error) { return response.status(error.status || 502).json({ error: error.message || 'RESPONSE_READ_FAILED' }) }
   })
 
-  app.get(['/api/documents/assignment-responses', '/api/documents/response-content'], requireSession, async (request, response) => {
+  app.get(['/api/documents/assignment-responses', '/api/documents/response-content'], requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')
     try {
       if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
@@ -546,6 +550,11 @@ function requireDeliveryLock(request, response, next) {
       if (typeof documentId !== 'string' || !/^[A-Za-z0-9-]+$/.test(documentId) || request.session.authorizationStatus !== 'active' || !request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
       const context = createReadContext(request.session)
       if (['jefe-unidad', 'especialista'].includes(request.session.functionalRole) && !await authorizeNodeRead(context, documentId)) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+      if (request.query.direction !== undefined) {
+        if (request.query.direction !== 'originals' || !request.path.endsWith('/assignment-responses') || Object.keys(request.query).sort().join(',') !== 'direction,documentId') return response.status(400).json({ error: 'INVALID_RESPONSE_QUERY' })
+        return response.json(await dispatchRepository.relatedOriginals(documentId, request.session, id =>
+          ['jefe-unidad', 'especialista'].includes(request.session.functionalRole) ? authorizeNodeRead(context, id) : true))
+      }
       const bundle = await dispatchRepository.relatedResponses(documentId, request.session)
       if (request.path.endsWith('/assignment-responses')) return response.json(bundle)
       const linked = bundle.responses.find((entry) => entry.documentId === request.query.responseDocumentId && entry.available)
@@ -760,7 +769,7 @@ function requireDeliveryLock(request, response, next) {
   })
 app.post('/api/documents/official-emissions', requireSession, requireCsrf, async (request, response) => {
   try {
-    if (request.session.functionalRole !== 'direccion') return response.status(403).json({ error: 'OFFICIAL_DIRECTION_REQUIRED' })
+    if (!['direccion', 'jefe-unidad', 'especialista'].includes(request.session.functionalRole)) return response.status(403).json({ error: 'OFFICIAL_DIRECTION_REQUIRED' })
     if (!config.officialEmission.writesEnabled) return response.status(503).json({ error: 'OFFICIAL_EMISSION_WRITES_DISABLED' })
     const body = await requestBody(request)
     let form

@@ -17,6 +17,7 @@ import { JefeUnidadPage } from './pages/JefeUnidadPage'
 import { EspecialistaPage } from './pages/EspecialistaPage'
 import { useAssignmentInbox } from './hooks/useAssignmentInbox'
 import { useEmittedInbox } from './hooks/useEmittedInbox'
+import { ClosureInbox } from './components/ClosureInbox'
 import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
@@ -188,7 +189,7 @@ function ApplicationShell({ session, onLogout }) {
     refreshKey: activePanel,
   })
   const assignmentInbox = useAssignmentInbox({ active: isAssignmentUser, allowed: canReadAlfresco, refreshKey: activePanel })
-  const emittedInbox = useEmittedInbox({ active: isDirector, allowed: canReadAlfresco, refreshKey: activePanel, scopeKey: `${currentOffice.userId}:${session.dependency}` })
+  const emittedInbox = useEmittedInbox({ active: isDirector || isUnitHead || isSpecialist, allowed: canReadAlfresco, refreshKey: activePanel, scopeKey: `${currentOffice.userId}:${session.dependency}` })
   const inbox = isAssignmentUser ? assignmentInbox : institutionalInbox
   const receivedDocuments = inbox.documents
   const visibleNotifications = canReadAlfresco && !inbox.loading && !inbox.refreshing && !inbox.error && inbox.lastUpdated
@@ -300,9 +301,9 @@ function ApplicationShell({ session, onLogout }) {
     if (uploadInFlight.current) return { ok: false, error: 'Ya hay un envío en curso.' }
     uploadInFlight.current = true
     try {
-      if (isDirector ? !documentData.recipientDependencyId : !documentData.recipientUserId) return { ok: false, error: 'Completa el destinatario antes de enviar.' }
+      if (!documentData.officialEmission && !documentData.recipientUserId) return { ok: false, error: 'Completa el destinatario antes de enviar.' }
       let entry
-      if (isDirector) {
+      if (documentData.officialEmission || isDirector) {
         const delivery = documentData.existingNodeId ? await uploadPdfToDirectorInbox(documentData.mainDocumentFile, {
           title: documentData.subject,
           description: documentData.description,
@@ -356,7 +357,7 @@ function ApplicationShell({ session, onLogout }) {
 
   const ActivePage = rolePages[getDashboardRoleId(session)]
   const attentionProps = { userId: currentOffice.userId, csrfToken: session.csrfToken,
-    canAttend: session.canAttendAssignments === true, canIssueResponse: session.canIssueInstitutionalResponse === true,
+    canAttend: session.canAttendAssignments === true, canLinkResponse: session.canLinkOfficialResponse === true, canIssueResponse: session.canIssueInstitutionalResponse === true,
     onAttentionChanged: handleAttentionChanged, onEmitResponse: handleEmitResponse }
   return (
     <div className="app-shell">
@@ -375,6 +376,10 @@ function ApplicationShell({ session, onLogout }) {
         />
         <main className="main-content">{responseNotice && <p className="form-message" role="status">{responseNotice}</p>}{activePanel === 'notificaciones'
           ? <NotificationsPage notifications={visibleNotifications} onViewDocument={handleViewNotification} />
+          : activePanel === 'aprobar-cierres'
+          ? <ClosureInbox allowed={isDirector && canReadAlfresco} csrfToken={session.csrfToken} scopeKey={`${currentOffice.userId}:${session.dependency}`} />
+          : activePanel === 'documentos-enviados' && !isDirector
+          ? <DirectorPage key={activePanel} title="Emitidos" mode="sent" allowAlfresco={canReadAlfresco} inbox={emittedInbox} userId={currentOffice.userId} csrfToken={session.csrfToken} canLinkExisting={session.canLinkOfficialResponse === true} showClosure={false} />
           : activePanel === 'nuevo-documento'
           ? <>{responseContext && <p className="form-message">Respuesta al documento {responseContext.documentId}. Emitir no marca la asignación como atendida.</p>}<DocumentForm allowAlfrescoUpload={canWriteAlfresco} csrfToken={session.csrfToken} onSubmit={handleDocumentSubmit} panelLabel={`Panel ${role.label} · ${currentOffice.acronym}`} user={currentOffice} /></>
           : isUnitHead && ['documentos-recibidos', 'derivaciones-enviadas'].includes(activePanel)
@@ -383,7 +388,7 @@ function ApplicationShell({ session, onLogout }) {
             ? <EspecialistaPage key={activePanel} activePanel={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} {...attentionProps} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
             ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} {...attentionProps} />
-          : <ActivePage activePanel={activePanel} emittedInbox={emittedInbox} csrfToken={session.csrfToken} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
+          : <ActivePage canLinkExisting={session.canLinkOfficialResponse === true} activePanel={activePanel} emittedInbox={emittedInbox} csrfToken={session.csrfToken} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>
   )

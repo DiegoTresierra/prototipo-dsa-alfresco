@@ -10,7 +10,7 @@ import { AttentionActions } from '../components/AttentionActions'
 import { DocumentIdentitySummary } from '../components/DocumentIdentitySummary'
 
 /* eslint-disable react/prop-types */
-export function AssignmentsPage({ title, description, allowAlfresco, inbox, userId, mode = 'received', recipientRoles = [], recipients = [], recipientsLoading, recipientsError, onDispatch, csrfToken, canAttend = false, canIssueResponse = false, onAttentionChanged, onEmitResponse }) {
+export function AssignmentsPage({ title, description, allowAlfresco, inbox, userId, mode = 'received', recipientRoles = [], recipients = [], recipientsLoading, recipientsError, onDispatch, csrfToken, canAttend = false, canIssueResponse = false, canLinkResponse = false, onAttentionChanged, onEmitResponse }) {
   const [selectedId, setSelectedId] = useState('')
   const [readOnlyId, setReadOnlyId] = useState('')
   if (!allowAlfresco) return <PanelPage title={title} description={description}><p className="form-message">La consulta requiere una sesión con permiso de lectura.</p></PanelPage>
@@ -44,7 +44,7 @@ export function AssignmentsPage({ title, description, allowAlfresco, inbox, user
     {selected && document && <section className="document-preview" aria-labelledby="assignment-preview-title"><div className="document-preview__header"><h2 id="assignment-preview-title">{document.subject || document.attachmentName}</h2><button className="button-secondary" onClick={() => setSelectedId('')} type="button">Cerrar vista previa</button></div>
       <div className="dispatch-summary"><strong>Encargo de {selected.dispatch.senderUserId}</strong><p>{selected.dispatch.instruction}</p><p>{selected.assignment.status} · {dateLabel(selected.dispatch.createdAt)}</p></div>
       <DocumentIdentitySummary identity={selected.dispatch.documentIdentity || document.documentIdentity} dispatch={selected.dispatch} />
-      {!sent && selected.assignment.userId === userId && <AttentionActions key={selected.assignment.id} documentId={document.id} assignment={selected.assignment} csrfToken={csrfToken} canAttend={canAttend} canIssue={canIssueResponse} onChanged={onAttentionChanged} onEmit={onEmitResponse} />}
+      {!sent && selected.assignment.userId === userId && <AttentionActions key={selected.assignment.id} documentId={document.id} assignment={selected.assignment} csrfToken={csrfToken} canAttend={canAttend} canIssue={canIssueResponse} canLink={canLinkResponse} onChanged={onAttentionChanged} onEmit={onEmitResponse} />}
       {canDerive && <DispatchPanel key={selected.assignment.id} document={document} recipients={recipients} allowedRecipientRoles={recipientRoles} loading={recipientsLoading} error={recipientsError} onDispatch={onDispatch} originAssignmentId={selected.assignment.id} assignedUserIds={documentResponsibilities([...(inbox.dispatchRecords || []), ...(inbox.sentDispatches || [])], document.id, true).map((recipient) => recipient.userId)} />}
       <PdfPreview declaredMimeType={document.mimeType} fileName={document.attachmentName} nodeId={document.id} />
     </section>}

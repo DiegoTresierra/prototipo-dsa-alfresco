@@ -125,6 +125,7 @@ export const config = {
       : process.env.ALFRESCO_DISTRIBUTION_PASSWORD || '',
   },
   userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
+  documentIssuerAssignments: parseJson('ALFRESCO_DOCUMENT_ISSUER_ASSIGNMENTS_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),
     clientId: required('KEYCLOAK_CLIENT_ID'),
