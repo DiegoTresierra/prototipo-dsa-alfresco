@@ -15,11 +15,11 @@ assert.ok(fs.existsSync(edge), 'Edge executable required (or set DISPATCH_TEST_E
 assert.ok(fs.existsSync(path.join(dist, 'index.html')), 'Run npm run build first')
 fs.mkdirSync(artifacts, { recursive: true })
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-browser-'))
-const id = '18cf8ec0-dbd5-4370-8f8e-c0dbd5a37097'
+const id = '11111111-2222-4333-8444-2a29efcb482b'
 const people = [
   { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
   { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
-  { id: '021200931d@uandina.edu.pe', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: null },
+  { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: null },
 ]
 const node = { id, name: 'oficio-prueba.pdf', isFile: true, nodeType: 'cm:content', parentId: 'dsa-attention',
   content: { mimeType: 'application/pdf', sizeInBytes: 500 }, aspectNames: ['gd:tramite'],
@@ -33,6 +33,7 @@ const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'D
 const records = [record('initial-fixture', [people[0]])]
 const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
 let officialFixture
+let closureEnabled = false, closureClosed = false, closurePosts = 0
 const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
   alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
   capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
@@ -41,7 +42,19 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const json = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)) }
   if (url.pathname.startsWith('/api/')) {
-    if (url.pathname === '/api/auth/me') return json(session)
+    if (url.pathname === '/api/documents/closure') {
+      if (request.method === 'POST') {
+        let raw = ''; for await (const chunk of request) raw += chunk
+        const input = JSON.parse(raw)
+        assert.equal(request.headers['x-csrf-token'], session.csrfToken)
+        assert.deepEqual(Object.keys(input).sort(), ['documentId', 'expectedEnvelopeRevision', 'reason', 'requestKey'])
+        if (!closureEnabled) return json({ error: 'CLOSURE_WRITES_DISABLED' }, 503)
+        closureClosed = true; closurePosts++; return json({ process: { documentId: id, executionMode: 'ALFRESCO', state: 'CERRADA' } })
+      }
+      return json({ evaluation: { documentId: id, envelopeRevision: 10, preliminaryCompliance: 'MET', blockingReasons: [], knowledgeSummary: { exclusivelyKnowledge: false } },
+        writesEnabled: closureEnabled, closed: closureClosed, canClose: closureEnabled && !closureClosed, pendingOperation: null })
+    }
+    if (url.pathname === '/api/auth/me') return json({ ...session, institutionalDocumentCode: session.functionalRole === 'direccion' ? session.dependency : '', unitVerified: false })
     if (url.pathname === '/api/auth/status') return json({ basicAuthEnabled: true })
     if (url.pathname === '/api/documents/emitted') {
       counters.emitted++
@@ -83,6 +96,11 @@ const server = http.createServer(async (request, response) => {
       return json({ list: { entries: url.pathname.includes('dsa-attention') ? [{ entry: node }] : [], pagination: { hasMoreItems: false } } })
     }
     if (url.pathname.endsWith('/content')) { response.writeHead(200, { 'Content-Type': 'application/pdf' }); return response.end('%PDF-1.7\n%local browser fixture') }
+    if (url.pathname === '/api/documents/response-proposals') return json({ persistence: 'alfresco', writesEnabled: false, proposals: [
+      { processId: 'mock-process', status: 'AVAILABLE', title: 'Propuesta verificada', state: 'BORRADOR', revision: 1, versions: ['1.0'] },
+      { status: 'INACCESSIBLE' }, { status: 'INVALID_VERSION' },
+    ] })
+    if (url.pathname === '/api/documents/proposal-version-content') { response.writeHead(200, { 'Content-Type': 'application/pdf' }); return response.end('%PDF-1.7\n%verified proposal fixture') }
     if (url.pathname === '/api/documents/response-candidates') return json({ documents: [] })
     if (url.pathname === '/api/documents/assignment-responses') return json({ responses: [], summary: { attended: counters.mockAttentions, pending: 3 - counters.mockAttentions, readyForClosureReview: false, formalClosureAllowed: false } })
     if (url.pathname === '/api/documents/assignments/attend' && request.method === 'POST') {
@@ -213,6 +231,12 @@ try {
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await evaluate("document.querySelector('.received-inbox__subject').click()")
   await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Responder con documento'))"), 'Dirección response action')
+  await clickText('Consultar propuestas')
+  await until(() => evaluate("document.body.textContent.includes('Propuesta verificada') && document.body.textContent.includes('Propuesta sin acceso autorizado.') && document.body.textContent.includes('Versión de propuesta inválida.')"), 'proposal statuses from repository')
+  assert.equal(await evaluate("Array.from(document.querySelectorAll('section[aria-label=\"Propuestas de respuesta\"] button')).some(b => /crear|presentar|aprobar|emitir/i.test(b.textContent))"), false)
+  await clickText('Ver versión 1.0')
+  await until(() => evaluate("Boolean(document.querySelector('iframe[title=\"Versión de propuesta\"]'))"), 'authorized proposal version preview')
+  await clickText('Cerrar propuesta')
   await clickText('Responder con documento')
   await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Generar nueva emisión'))"), 'response selection')
   await clickText('Generar nueva emisión')
@@ -222,8 +246,6 @@ try {
   await until(() => evaluate("Boolean(document.querySelector('.searchable-select__option'))"), 'recipient dependency options')
   await evaluate("document.querySelector('.searchable-select__option').click()")
   const selectOption = async (selector) => evaluate(`(() => {const el=document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,el.options[1].value); el.dispatchEvent(new Event('change',{bubbles:true}));})()`)
-  await selectOption('.form-grid--recipient select')
-  await selectOption('.form-grid--recipient label:nth-of-type(2) select')
   await selectOption('select[name=documentType]')
   await selectOption('select[name=documentPeriod]')
   await selectOption('select[name=priority]')
@@ -237,7 +259,7 @@ try {
   assert.equal(counters.mockAttentions, 0, 'formal emission and link never attend assignments automatically')
   for (const [userId, role, roleId, menu, capture] of [
     ['JEFE_UNIDAD_DSA_1', 'jefe-unidad', 'jefe-unidad-dsa', 'Documentos recibidos', 'attention-head'],
-    ['021200931d@uandina.edu.pe', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
+    ['specialist.fixture.1@example.invalid', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
   ]) {
     Object.assign(session, { functionalRole: role, roleId, alfresco: { id: userId }, user: { id: userId, name: userId }, canIssueInstitutionalResponse: false,
       dispatchRecipientRoles: role === 'jefe-unidad' ? ['especialista'] : [] })
@@ -278,10 +300,26 @@ try {
   await clickText('Emitidos')
   await until(() => evaluate("document.body.textContent.includes('No hay documentos emitidos') && !document.querySelector('.received-inbox__refresh button').disabled"), 'DSA emitted stays empty for received DTI original')
   assert.equal(await evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), false)
+  await clickText('Documentos recibidos')
+  await until(() => evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), 'closure fixture inbox')
+  await evaluate("document.querySelector('.received-inbox__subject').click()")
+  await clickText('Evaluar cierre de mi intervención')
+  await until(() => evaluate("document.body.textContent.includes('Cierre deshabilitado')"), 'closure disabled by backend')
+  assert.equal(await evaluate("[...document.querySelectorAll('button')].some(b=>b.textContent==='Cerrar intervención')"), false)
+  assert.equal(closurePosts, 0)
+  closureEnabled = true // API fixture only. Does not configure backend or Alfresco.
+  await clickText('Evaluar cierre de mi intervención')
+  await until(() => evaluate("Boolean(document.querySelector('section[aria-label=\"Cierre de intervención\"] textarea'))"), 'explicit reason')
+  await evaluate(`(()=>{const field=document.querySelector('section[aria-label="Cierre de intervención"] textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Constancia de prueba');field.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+  await until(() => evaluate("[...document.querySelectorAll('button')].some(b=>b.textContent==='Cerrar intervención'&&!b.disabled)"), 'explicit close available')
+  await clickText('Cerrar intervención')
+  await until(() => evaluate("document.body.textContent.includes('Intervención cerrada definitivamente.')"), 'verified closed UI')
+  assert.equal(closurePosts, 1)
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
+    closureChecks: ['backend disabled hides close', 'explicit reason and CSRF', 'one mocked close', 'read-after-close refresh'],
     checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
       'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],
-    visual, counters }
+    proposalChecks: ['available/inaccessible/invalid versions', 'verified version preview', 'no mutation buttons'], visual, counters }
   fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))
 } finally {

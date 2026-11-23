@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { loadDispatchDirectory } from './dispatchDirectory.js'
+import { loadDispatchDirectory, loadInstitutionalDirectory } from './dispatchDirectory.js'
 import { validateDispatchRequest } from './dispatchPolicy.js'
 
 const head1 = 'JEFE_UNIDAD_DSA_1'
@@ -46,6 +46,18 @@ test('classic pagination recovers both DSA heads and verifies effective service 
   assert.deepEqual(result.configurationErrors, [])
   assert.equal(f.calls.filter((url) => url.includes('/DSA/children')).length, 2)
   assert.ok(f.calls[0].endsWith('/people/-me-'))
+})
+
+test('generic institutional directory reuses exact paginated membership and verifies enabled Direction accounts too', async () => {
+  const f = fixture()
+  f.groups.DIRECTORS.push('real-director', 'disabled-director')
+  f.groups.DSA.push('real-director', 'disabled-director')
+  f.disabled.add('disabled-director')
+  const generic = await loadInstitutionalDirectory(f.settings, f.fetch)
+  assert.deepEqual(generic.recipients.filter((r) => r.functionalRole === 'direccion').map((r) => r.id), ['real-director'])
+  assert.ok(!generic.recipients.some((r) => r.id === 'disabled-director'))
+  assert.ok(f.calls.some((url) => url.includes('/DIRECTORS/children?') && url.includes('skipCount=1')))
+  assert.ok(!(await loadDispatchDirectory(f.settings, f.fetch)).recipients.some((r) => r.functionalRole === 'direccion'))
 })
 
 test('eligible users remain visible and assignable without units or with an invalid optional unit', async () => {

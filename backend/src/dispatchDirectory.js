@@ -6,10 +6,15 @@ function failure(code, status = 502) {
 
 // Separate contract: never replace the public v1 client used by other flows.
 export async function loadDispatchDirectory(settings, fetchImpl = globalThis.fetch) {
+  if (!settings.groupMappings?.functions?.['jefe-unidad'] || !settings.groupMappings?.functions?.especialista) throw failure('GROUP_MAPPINGS_REQUIRED', 503)
+  return loadInstitutionalDirectory(settings, fetchImpl, ['jefe-unidad', 'especialista'])
+}
+
+export async function loadInstitutionalDirectory(settings, fetchImpl = globalThis.fetch, recipientRoles = ['direccion', 'jefe-unidad', 'especialista']) {
   const { username, password } = settings.distributionService
   if (!username || !password) throw failure('DISPATCH_DIRECTORY_CREDENTIALS_REQUIRED', 503)
   const mappings = settings.groupMappings
-  if (!Object.keys(mappings.dependencies || {}).length || !mappings.functions?.['jefe-unidad'] || !mappings.functions?.especialista) {
+  if (!Object.keys(mappings.dependencies || {}).length || !Object.keys(mappings.functions || {}).length) {
     throw failure('GROUP_MAPPINGS_REQUIRED', 503)
   }
   const headers = { Accept: 'application/json', Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` }
@@ -57,13 +62,13 @@ export async function loadDispatchDirectory(settings, fetchImpl = globalThis.fet
     memberships.set(groupId, users)
   }
   const belongs = (userId, mapping) => Object.entries(mapping).filter(([, ids]) => asArray(ids).some((id) => memberships.get(id)?.has(userId))).map(([key]) => key)
-  const candidates = new Map(['jefe-unidad', 'especialista'].flatMap((role) => asArray(mappings.functions[role]).flatMap((id) => [...memberships.get(id)])))
+  const candidates = new Map(recipientRoles.filter((role) => mappings.functions[role]).flatMap((role) => asArray(mappings.functions[role]).flatMap((id) => [...memberships.get(id)])))
   const recipients = []
   const configurationErrors = []
   for (const [userId, member] of candidates) {
     const dependencies = belongs(userId, mappings.dependencies)
     const roles = belongs(userId, mappings.functions)
-    if (dependencies.length !== 1 || roles.length !== 1 || !['jefe-unidad', 'especialista'].includes(roles[0])) continue
+    if (dependencies.length !== 1 || roles.length !== 1 || !recipientRoles.includes(roles[0])) continue
     const person = (await get(`${core}/people/${encodeURIComponent(userId)}`))?.entry
     if (person?.id !== userId || typeof person.enabled !== 'boolean') throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
     if (!person.enabled) continue

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { attendAssignment, getLinkedResponses } from '../api/alfresco'
 import { PdfPreview } from './PdfPreview'
 import { ResponseComposer } from './ResponseComposer'
+import { ResponseProposals } from './ResponseProposals'
 
 /* eslint-disable react/prop-types */
 export function AttentionActions({ documentId, assignment, csrfToken, canAttend, canIssue, onChanged, onEmit }) {
@@ -29,6 +30,7 @@ export function AttentionActions({ documentId, assignment, csrfToken, canAttend,
   })
   const loadLinks = async () => { const result = await getLinkedResponses(documentId); setLinked(result); return result }
   return <section className="dispatch-summary" aria-label="Atención individual">
+    <ResponseProposals key={documentId} documentId={documentId} />
     <strong>Mi asignación: {completed ? 'ATENDIDO' : assignment.status}</strong>
     {assignment.attendedAt && <p>Atendida por {assignment.attendedByUserId} · {new Date(assignment.attendedAt).toLocaleString('es-PE')}</p>}
     {active && canAttend && <button type="button" className="button-primary" disabled={busy} onClick={() => attend()}>Marcar como atendido</button>}

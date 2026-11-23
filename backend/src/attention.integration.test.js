@@ -1,3 +1,4 @@
+import { identityResponse } from './testFixtures/institutionalIdentity.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -15,8 +16,9 @@ test('HTTP attention, existing institutional emission, verified response relatio
   Object.assign(config, f.settings, { port: 0, sessionSecret: 'attention-test-only' })
   config.dispatchPilot.leasePath = path.join(temporary, 'pilot.lock')
   const originalFetch = globalThis.fetch
+  const actors = new Map()
   let base
-  globalThis.fetch = (url, options) => String(url).startsWith(base + '/') ? originalFetch(url, options) : f.fetchImpl(url, options)
+  globalThis.fetch = (url, options) => String(url).startsWith(base + '/') ? originalFetch(url, options) : identityResponse(url, options, actors, config.groupMappings) || f.fetchImpl(url, options)
   const { server } = await import('./index.js')
   const { createSession } = await import('./sessionStore.js')
   if (!server.listening) await once(server, 'listening')
@@ -28,6 +30,7 @@ test('HTTP attention, existing institutional emission, verified response relatio
     fs.rmSync(temporary, { recursive: true, force: true })
   })
   const session = (id, role) => {
+    actors.set(`Basic actor-${id}`, { id, functionalRole: role, dependency: 'DSA' })
     const value = createSession({ alfresco: { id }, authorization: `Basic actor-${id}`, functionalRole: role, dependency: 'DSA',
       authorizationStatus: 'active', capabilities: ['documents:read', 'documents:write'] })
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(value.id).digest('base64url')
@@ -36,6 +39,18 @@ test('HTTP attention, existing institutional emission, verified response relatio
   const director = session('director', 'direccion')
   const head = session('head', 'jefe-unidad')
   const staff = session('staff', 'especialista')
+  const proposalUrl = base + `/api/documents/response-proposals?documentId=${originalId}`
+  const emptyProposals = await fetch(proposalUrl, { headers: director })
+  assert.equal(emptyProposals.status, 200)
+  assert.equal(emptyProposals.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await emptyProposals.json(), { proposals: [], persistence: 'alfresco', writesEnabled: false })
+  assert.equal((await fetch(base + `/api/documents/proposal-version-content?documentId=${originalId}&processId=forged&versionId=1.0`, { headers: director })).status, 403)
+  f.state.denyActor = true
+  assert.equal((await fetch(proposalUrl, { headers: director })).status, 403)
+  f.state.denyActor = false
+  actors.get('Basic actor-director').enabled = false
+  assert.equal((await fetch(proposalUrl, { headers: director })).status, 403)
+  actors.get('Basic actor-director').enabled = true
   const post = (endpoint, headers, body) => fetch(base + endpoint, { method: 'POST', headers, body: JSON.stringify(body) })
   const input = { documentId: originalId, assignmentId: root.recipients[1].id, requestKey: 'staff-attended', responseDocumentId: null }
   assert.equal((await post('/api/documents/assignments/attend', head, input)).status, 403)
@@ -52,15 +67,9 @@ test('HTTP attention, existing institutional emission, verified response relatio
   assert.equal((await fetch(base + '/api/documents/response-candidates', { headers: staff })).status, 403)
   // Fixture represents Dirección already having an own obligation; the dispatch API still cannot target Dirección.
   const own = f.seedDirectionOwnAssignment()
-  const boundary = 'attention-response-fixture'
-  const multipart = `--${boundary}\r\nContent-Disposition: form-data; name="filedata"; filename="respuesta.pdf"\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.7\nresponse-fixture\r\n--${boundary}--\r\n`
-  const emitted = await fetch(base + '/api/documents/send-to-director', { method: 'POST', headers: {
-    ...director, 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'X-UAC-Recipient-Dependency': 'DTI', 'X-UAC-Receipt-Category': 'por-atender',
-  }, body: multipart })
-  assert.equal(emitted.status, 201, JSON.stringify(await emitted.clone().json()))
-  const emission = await emitted.json()
-  assert.equal(emission.emittedEntry.id, responseId)
-  assert.equal(emission.receivedEntry.id, responseId)
+  // Link an already emitted institutional PDF. New creation is covered by the
+  // official-emission suite; the legacy route must no longer issue new records.
+  f.addResponse()
   assert.notEqual(responseId, originalId)
   const linkInput = { documentId: originalId, assignmentId: own.id, requestKey: 'response-link-http', responseDocumentId: responseId }
   const linked = await post('/api/documents/assignments/response', director, linkInput)
@@ -77,4 +86,10 @@ test('HTTP attention, existing institutional emission, verified response relatio
   assert.equal((await post('/api/documents/assignments/attend', director, { ...linkInput, requestKey: 'response-attention-http' })).status, 200)
   assert.equal(f.envelope().dispatches[0].recipients[0].status, 'ATENDIDO')
   assert.equal(f.nodes.get(originalId).properties['gd:estado'], 'unchanged')
+  const current = f.nodes.get(originalId).properties['gd:asignaciones']
+  actors.get('Basic actor-staff').enabled = false
+  const disabled = await post('/api/documents/assignments/attend', staff, { ...input, requestKey: 'disabled-after-login' })
+  assert.equal(disabled.status, 403)
+  assert.equal((await disabled.json()).error, 'INSTITUTIONAL_IDENTITY_REJECTED')
+  assert.equal(f.nodes.get(originalId).properties['gd:asignaciones'], current)
 })

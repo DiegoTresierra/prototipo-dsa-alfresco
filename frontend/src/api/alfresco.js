@@ -2,10 +2,26 @@ import { apiFetch } from './client'
 import { collectInboxPages } from '../utils/inboxPages'
 import { loadAssignmentInbox } from '../utils/assignmentInbox'
 import { dispatchPersistenceError, requireDispatchPersistence, withDispatchPersistence } from '../utils/dispatchPersistence'
-import { documentIdentity } from '../utils/documentIdentity'
+import { nodeToDocument } from '../utils/documentMapping.js'
 
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
+
+export async function getClosureEvaluation(documentId) {
+  const r = await apiFetch(`/api/documents/closure?documentId=${encodeURIComponent(documentId)}`, { credentials: 'include', headers: { Accept: 'application/json' } })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || 'No se pudo evaluar el cierre.')
+  if (body.evaluation?.documentId !== documentId || !Array.isArray(body.evaluation?.blockingReasons) || typeof body.canClose !== 'boolean' || typeof body.writesEnabled !== 'boolean') throw new Error('Evaluación incompleta. Consulta nuevamente.')
+  return body
+}
+export async function confirmDocumentClosure(input, csrfToken, reconcile = false) {
+  const r = await apiFetch(`/api/documents/closure${reconcile ? '/reconcile' : ''}`, { method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(input) })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || 'Resultado no confirmado; consulta y concilia sin crear otra operación.')
+  if (body.process?.documentId !== input.documentId || body.process?.executionMode !== 'ALFRESCO' || body.process?.state !== 'CERRADA') throw new Error('Resultado de cierre incompleto. Consulta y concilia antes de continuar.')
+  return body
+}
 
 export async function listEligibleDocumentRecipients() {
   const response = await apiFetch('/api/directory/recipients', { credentials: 'include', headers: { Accept: 'application/json' } })
@@ -66,6 +82,8 @@ async function hierarchyRequest(url, options = {}) {
   if (!response.ok) {
     const messages = {
       DIRECTOR_HIERARCHY_REQUIRED: 'Solo la Dirección autorizada de esta dependencia puede administrar su oficina.',
+      INSTITUTIONAL_IDENTITY_REJECTED: 'Alfresco no confirma tu identidad o rol institucional vigente. Inicia sesión nuevamente.',
+      INSTITUTIONAL_IDENTITY_UNAVAILABLE: 'No se pudo verificar tu identidad institucional en Alfresco. No se guardaron cambios; reintenta.',
       DISPATCH_DIRECTORY_CREDENTIALS_REQUIRED: 'Falta configurar la cuenta de consulta del directorio de Alfresco.',
       GROUP_MAPPINGS_REQUIRED: 'Faltan los grupos institucionales de dependencia y función.',
       DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED: 'Alfresco devolvió subgrupos; el directorio requiere revisar la política de membresías.',
@@ -214,6 +232,7 @@ export async function listDispatches() {
   }
   const result = await response.json()
   if (!Array.isArray(result?.dispatches)) throw new Error('La respuesta de encargos documentales no es válida.')
+  if (result.discoveryErrors?.length) throw new Error('La consulta de asignaciones es parcial. Algunas fuentes no pudieron verificarse; reintenta sin asumir que la lista está vacía.')
   requireDispatchPersistence(result.persistence)
   return withDispatchPersistence(result.dispatches, result.persistence)
 }
@@ -249,6 +268,8 @@ export async function dispatchDocument(documentId, recipientUserIds, instruction
   if (!response.ok) {
     const messages = {
       HIERARCHICAL_DISPATCH_REQUIRED: 'Tu rol no permite realizar esta derivación interna.',
+      INSTITUTIONAL_IDENTITY_REJECTED: 'Alfresco no confirma tu identidad o rol institucional vigente. Inicia sesión nuevamente.',
+      INSTITUTIONAL_IDENTITY_UNAVAILABLE: 'No se pudo verificar tu identidad institucional en Alfresco. No se ejecutó el despacho.',
       DISPATCH_RECIPIENT_NOT_ALLOWED: 'Uno o más destinatarios no pertenecen a la dependencia autorizada.',
       ORGANIZATIONAL_HIERARCHY_PENDING: 'La relación organizativa entre Jefatura y Especialistas está pendiente de configuración institucional.',
       DISPATCH_DOCUMENT_NOT_ALLOWED: 'No tienes autorización documental para derivar este PDF.',
@@ -312,36 +333,6 @@ async function requestBlob(url) {
   return response.blob()
 }
 
-function nodeToDocument(node) {
-  const properties = node.properties || {}
-  const content = node.content || {}
-  return {
-    id: node.id,
-    subject: properties['cm:title'] || node.name,
-    description: properties['cm:description'] || '',
-    sender: node.createdByUser?.displayName || node.createdByUser?.id || '',
-    senderUserId: node.createdByUser?.id || '',
-    createdByUserId: node.createdByUser?.id || '',
-    createdByName: node.createdByUser?.displayName || node.createdByUser?.id || '',
-    formalSender: properties['gd:remitente'] || '',
-    originatingDependency: '',
-    documentIdentity: documentIdentity(node),
-    emittedOrigin: node.emittedOrigin || null,
-    contentWarning: node.contentWarning || null,
-    recipientName: properties['gd:destinatario'] || '',
-    recipientDependencyId: properties['gd:dependenciaDestino'] || '',
-    emissionDate: properties['gd:fechaDocumento'] || '',
-    unitName: '',
-    specialistName: '',
-    attachmentName: node.name,
-    createdAt: node.createdAt,
-    status: properties['gd:estado'] || null,
-    nodeType: node.nodeType,
-    mimeType: content.mimeType || '',
-    sizeInBytes: content.sizeInBytes || 0,
-  }
-}
-
 export async function getEmittedDocuments() {
   const response = await apiFetch('/api/documents/emitted', { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } })
   const body = await response.json().catch(() => ({}))
@@ -378,6 +369,12 @@ export function getNodeContent(nodeId, originalDocumentId) {
     : `${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/content?attachment=false`)
 }
 
+export async function getAuthorizedDocument(nodeId) {
+  const result = await request(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}?include=properties`)
+  if (result?.entry?.id !== nodeId) throw new Error('No se pudo verificar el documento.')
+  return nodeToDocument(result.entry)
+}
+
 async function attentionRequest(path, body, csrfToken) {
   const response = await apiFetch(path, { method: body ? 'POST' : 'GET', credentials: 'include', cache: 'no-store',
     headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken } : {}) },
@@ -409,7 +406,7 @@ export const linkAssignmentResponse = (input, csrfToken) => attentionRequest('/a
 export const listResponseCandidates = () => attentionRequest('/api/documents/response-candidates')
 export const getLinkedResponses = (documentId) => attentionRequest(`/api/documents/assignment-responses?documentId=${encodeURIComponent(documentId)}`)
 
-export async function uploadPdfToFolder(nodeId, file, { title, description }, csrfToken, recipientUserId) {
+export async function uploadPdfToFolder(nodeId, file, { title, description, documentType, recipientDependency, recipientFunctionalRole }, csrfToken, recipientUserId) {
   if (!nodeId) throw new Error('No está configurada la bandeja personal del destinatario en Alfresco.')
   if (typeof File === 'undefined' || !(file instanceof File) || (file.type && file.type !== 'application/pdf') || !file.name.toLocaleLowerCase('es').endsWith('.pdf')) throw new Error('Selecciona un archivo PDF válido.')
   const signature = new Uint8Array(await file.slice(0, 5).arrayBuffer())
@@ -420,24 +417,42 @@ export async function uploadPdfToFolder(nodeId, file, { title, description }, cs
   formData.append('nodeType', 'cm:content')
   formData.append('cm:title', title)
   formData.append('cm:description', description)
+  if (documentType) formData.append('documentType', documentType)
   let response
   try {
-    response = await apiFetch(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?autoRename=false`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-CSRF-Token': csrfToken, 'X-UAC-Recipient-User': recipientUserId }, body: formData })
+    response = await apiFetch(`${coreApiPrefix}/nodes/${encodeURIComponent(nodeId)}/children?autoRename=false`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-CSRF-Token': csrfToken, 'X-UAC-Recipient-User': recipientUserId,
+      'X-UAC-Recipient-Dependency': recipientDependency || '', 'X-UAC-Recipient-Role': recipientFunctionalRole || '' }, body: formData })
   } catch {
     const error = new Error('No se pudo confirmar la respuesta de Alfresco. Revisa la carpeta antes de volver a intentar.')
     error.uncertain = true
     throw error
   }
   if (!response.ok) {
-    let serverError = ''
-    try { serverError = (await response.clone().json())?.error || '' } catch { /* safe generic status below */ }
+    const failurePayload = await response.clone().json().catch(() => ({}))
+    const serverError = failurePayload.error || ''
     const uploadErrors = {
       DOCUMENT_WRITE_NOT_ALLOWED: 'La sesión autenticada no tiene permiso para enviar documentos.',
+      RESERVED_DOCUMENT_METADATA: 'La carga incluye metadatos reservados. Envía solo el PDF, nombre, título y descripción.',
+      GENERIC_RECIPIENT_SELECTION_REQUIRED: 'Actualiza el directorio y selecciona la cuenta, dependencia y función destinatarias.',
+      GENERIC_RECIPIENT_UNVERIFIABLE: 'No se pudo verificar el destinatario o su carpeta en Alfresco. No se creó el documento.',
+      GENERIC_RECIPIENT_NOT_ALLOWED: 'El destinatario cambió de estado o pertenencia institucional. Actualiza el directorio.',
+      GENERIC_RECIPIENT_FOLDER_DENIED: 'La carpeta ya no corresponde al destino autorizado o Alfresco deniega crear allí.',
+      GENERIC_DOCUMENT_TYPE_INVALID: 'Selecciona un tipo documental admitido.',
+      GENERIC_DOCUMENT_TYPE_MODEL_REQUIRED: 'No se pudo verificar el modelo de tipo documental. No se creó el documento.',
+      GENERIC_CREATE_OUTCOME_UNCERTAIN: 'El PDF pudo crearse, pero no se confirmó su tipo mediante lectura posterior. Conserva el UUID y revisa la carpeta antes de reintentar.',
+      INVALID_PDF_MULTIPART: 'Los campos de la carga PDF no tienen un formato válido.',
+      INSTITUTIONAL_IDENTITY_REJECTED: 'Alfresco no confirma tu identidad o rol institucional vigente. Inicia sesión nuevamente.',
+      INSTITUTIONAL_IDENTITY_UNAVAILABLE: 'No se pudo verificar tu identidad institucional en Alfresco. No se creó el documento.',
       RECIPIENT_INBOX_NOT_CONFIGURED: 'La bandeja del destinatario no está configurada en el servidor.',
       CSRF_VALIDATION_FAILED: 'La sesión de seguridad expiró. Actualiza la página e inicia sesión otra vez.',
       ROLE_NOT_CONFIGURED: 'La cuenta no tiene un rol documental habilitado.',
     }
-    if (uploadErrors[serverError]) throw new Error(uploadErrors[serverError])
+    if (uploadErrors[serverError]) {
+      const error = new Error(uploadErrors[serverError])
+      error.uncertain = failurePayload.uncertain === true
+      error.emittedNodeId = failurePayload.emittedNodeId || ''
+      throw error
+    }
     const messages = { 401: 'Alfresco rechazó la autenticación de la sesión.', 403: 'La sesión no tiene permiso para crear documentos.', 404: 'No se encontró la carpeta configurada.', 409: 'Ya existe un archivo con ese nombre.', 413: 'El archivo supera el tamaño permitido.', 415: 'Alfresco rechazó el formato del archivo.' }
     const error = new Error(messages[response.status] || `Alfresco no pudo crear el documento (HTTP ${response.status}).`)
     error.status = response.status
@@ -492,6 +507,11 @@ export async function uploadPdfToDirectorInbox(file, { title, description, recip
     const body = await response.json().catch(() => ({}))
     const knownErrors = {
       DISTRIBUTION_SERVICE_NOT_CONFIGURED: 'Falta configurar la cuenta de distribución en el servidor. El PDF no se ha vuelto a cargar.',
+      OFFICIAL_EMISSION_ENDPOINT_REQUIRED: 'Las emisiones nuevas deben usar el flujo oficial. No se creó otro PDF.',
+      OFFICIAL_RETRY_ENDPOINT_REQUIRED: 'Este documento es una emisión oficial. Reintenta con la misma clave y PDF mediante el flujo oficial.',
+      DIRECTOR_RECIPIENT_NODE_READ_REQUIRED: 'El PDF ya existe en Emitidos, pero falta confirmar la lectura institucional del destinatario. Conserva el UUID; no se cambiaron permisos ni se creó otro PDF.',
+      INSTITUTIONAL_IDENTITY_REJECTED: 'Alfresco no confirma tu identidad o rol institucional vigente. Inicia sesión nuevamente.',
+      INSTITUTIONAL_IDENTITY_UNAVAILABLE: 'No se pudo verificar tu identidad institucional en Alfresco. No se inició la distribución.',
       DISTRIBUTION_SERVICE_AUTH_FAILED: 'Alfresco no pudo autenticar la cuenta de distribución. Revisa su configuración en el servidor.',
       DISTRIBUTION_SERVICE_DOCUMENT_ACCESS_FAILED: 'El PDF está en Emitidos, pero la cuenta de distribución no puede consultar el original. Revisa su permiso Lector en Emitidos.',
       OFFICE_GROUP_MAPPING_REQUIRED: 'El backend no tiene configurado el grupo institucional destinatario.',

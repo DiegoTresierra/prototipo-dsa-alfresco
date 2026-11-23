@@ -21,10 +21,6 @@ export function loadDocumentNotificationState(storage, key) {
         id: notification.id,
         type: notificationEventType,
         documentId: notification.documentId,
-        title: typeof notification.title === 'string' ? notification.title : '',
-        sender: typeof notification.sender === 'string' ? notification.sender : '',
-        priority: typeof notification.priority === 'string' ? notification.priority : '',
-        inboxKinds: Array.isArray(notification.inboxKinds) ? notification.inboxKinds.filter((kind) => typeof kind === 'string') : [],
         detectedAt: typeof notification.detectedAt === 'string' ? notification.detectedAt : '',
         isRead: notification.isRead === true,
       }))
@@ -44,12 +40,21 @@ export function saveDocumentNotificationState(storage, key, state) {
     storage.setItem(key, JSON.stringify({
       initialized: state.initialized,
       knownDocumentIds: state.knownDocumentIds,
-      notifications: state.notifications.map(({ id, type, documentId, title, sender, priority, inboxKinds, detectedAt, isRead }) => ({
-        id, type, documentId, title, sender, priority, inboxKinds, detectedAt, isRead,
+      notifications: state.notifications.map(({ id, type, documentId, detectedAt, isRead }) => ({
+        id, type, documentId, detectedAt, isRead,
       })),
     }))
     return true
   } catch {
     return false
   }
+}
+
+export function authorizedNotifications(notifications, documents) {
+  const current = new Map(documents.map((document) => [document.id, document]))
+  return notifications.filter((notice) => current.has(notice.documentId)).map((notice) => {
+    const document = current.get(notice.documentId)
+    return { ...notice, title: document.subject || document.attachmentName || '', sender: document.sender || '',
+      priority: document.priority || '', inboxKinds: document.inboxKinds || [], source: 'browser-detection' }
+  })
 }
