@@ -1,0 +1,31 @@
+{
+  "status": "PROPOSAL_ONLY_NOT_DEPLOYABLE",
+  "model": {
+    "name": "gd_configuracion_institucional",
+    "prefix": "gdc",
+    "namespaceUri": "http://www.uandina.edu.pe/model/configuracion/1.0"
+  },
+  "types": [
+    {
+      "name": "gdc:tiemposRespuesta",
+      "parent": "cm:content",
+      "title": "Configuración de tiempos de respuesta",
+      "properties": [
+        { "name": "gdc:codigoDependencia", "type": "d:text", "mandatory": true, "multiple": false, "indexed": true },
+        { "name": "gdc:normalValor", "type": "d:int", "mandatory": true, "multiple": false },
+        { "name": "gdc:normalUnidad", "type": "d:text", "mandatory": true, "multiple": false },
+        { "name": "gdc:altaValor", "type": "d:int", "mandatory": true, "multiple": false },
+        { "name": "gdc:altaUnidad", "type": "d:text", "mandatory": true, "multiple": false },
+        { "name": "gdc:urgenteValor", "type": "d:int", "mandatory": true, "multiple": false },
+        { "name": "gdc:urgenteUnidad", "type": "d:text", "mandatory": true, "multiple": false },
+        { "name": "gdc:revisionConfiguracion", "type": "d:text", "mandatory": true, "multiple": false },
+        { "name": "gdc:idOperacion", "type": "d:text", "mandatory": true, "multiple": false },
+        { "name": "gdc:modificadoPor", "type": "d:text", "mandatory": true, "multiple": false },
+        { "name": "gdc:fechaModificacion", "type": "d:datetime", "mandatory": true, "multiple": false }
+      ]
+    }
+  ],
+  "containers": [
+    { "name": "GD_CONFIGURACION_TIEMPOS_RESPUESTA", "contents": "gdc:tiemposRespuesta" }
+  ]
+}

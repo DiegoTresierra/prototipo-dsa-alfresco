@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PanelPage } from '../components/PanelPage'
-import { assignHierarchyHead as postHierarchyHead, assignHierarchySpecialist as postHierarchySpecialist, changeHierarchyHead as postHierarchyHeadChange, createHierarchyUnit as postHierarchyUnit, editHierarchyUnit as patchHierarchyUnit, getHierarchy, getHierarchyAudit, reassignHierarchySpecialist as postHierarchySpecialistReassignment, saveHierarchy } from '../api/alfresco'
+import { assignHierarchyHead as postHierarchyHead, assignHierarchySpecialist as postHierarchySpecialist, changeHierarchyHead as postHierarchyHeadChange, createHierarchyUnit as postHierarchyUnit, editHierarchyUnit as patchHierarchyUnit, getHierarchy, getHierarchyAudit, getResponseTimes, reassignHierarchySpecialist as postHierarchySpecialistReassignment, saveHierarchy, updateResponseTimes } from '../api/alfresco'
 import { createHierarchyManagementModel } from '../utils/hierarchyManagementModel'
 
 const moduleViews = { home: 'home', office: 'office', timings: 'timings' }
@@ -10,10 +10,10 @@ const lanes = [
   { id: 'jefes', role: 'jefe-unidad', title: 'Jefes de unidad', description: 'Responsables de oficina o unidad' },
   { id: 'especialistas', role: 'especialista', title: 'Especialistas', description: 'Responsables de atención documental' },
 ]
-const timingLevels = [
-  { id: 'director', title: 'Dirección', description: 'Tiempo para distribuir el documento' },
-  { id: 'unit-head', title: 'Jefatura de unidad', description: 'Tiempo para asignar al especialista' },
-  { id: 'specialist', title: 'Especialista', description: 'Tiempo para iniciar la atención' },
+const timingPriorities = [
+  { id: 'NORMAL', className: 'normal', title: 'Normal' },
+  { id: 'ALTA', className: 'high', title: 'Alta' },
+  { id: 'URGENTE', className: 'urgent', title: 'Urgente' },
 ]
 const emptyMembers = { direccion: null, jefes: [], especialistas: [] }
 
@@ -32,8 +32,8 @@ function SettingsHome({ officeName, onOpen }) {
       <button className="settings-entry-card" onClick={() => onOpen(moduleViews.timings)} type="button">
         <span className="settings-entry-card__icon"><Icon name="chart" size={23} /></span>
         <span className="settings-entry-card__copy">
-          <strong>Tiempos de entrega dentro de la oficina</strong>
-          <span>Consulta los plazos de distribución y asignación de documentos en la oficina.</span>
+          <strong>Tiempos de respuesta</strong>
+          <span>Configura los plazos de respuesta de documentos según su prioridad.</span>
         </span>
         <span aria-hidden="true" className="settings-entry-card__arrow">›</span>
       </button>
@@ -635,17 +635,105 @@ function OfficeHierarchy({ officeName, dependency, members, specialistUnits, rec
   )
 }
 
-function OfficeTimings({ onBack }) {
+function OfficeTimings({ onBack, csrfToken }) {
+  const [settings, setSettings] = useState(null)
+  const [draft, setDraft] = useState([])
+  const [editing, setEditing] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [pendingOperationId, setPendingOperationId] = useState('')
+  const [operationPending, setOperationPending] = useState(false)
+  const savingRef = useRef(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const canEdit = settings?.capabilities?.edit === true
+
+  const loadSettings = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const result = await getResponseTimes()
+      setSettings(result)
+      setDraft(result.values || [])
+    } catch (loadError) {
+      setError(loadError.message || 'No se pudieron consultar los tiempos de respuesta.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadSettings() }, [])
+
+  const updateDraft = (priority, changes) => {
+    setPendingOperationId('')
+    setDraft((current) => current.map((entry) => entry.priority === priority ? { ...entry, ...changes } : entry))
+  }
+  const cancelEdit = () => { setDraft(settings?.values || []); setPendingOperationId(''); setOperationPending(false); setEditing(false); setError(''); setMessage('') }
+  const save = async () => {
+    if (savingRef.current) return
+    savingRef.current = true
+    const operationId = pendingOperationId || globalThis.crypto?.randomUUID?.() || `response-times-${Date.now()}`
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      setPendingOperationId(operationId)
+      await updateResponseTimes({ operationId, expectedRevision: settings?.revision, values: draft }, csrfToken)
+      const refreshed = await getResponseTimes()
+      setSettings(refreshed)
+      setDraft(refreshed.values || [])
+      setPendingOperationId('')
+      setOperationPending(false)
+      setEditing(false)
+      setMessage('Los tiempos se guardaron y se volvieron a consultar desde el servidor.')
+    } catch (saveError) {
+      setError(saveError.message || 'No se pudieron guardar los tiempos.')
+      if (saveError.operationStatus === 'PARCIAL' || saveError.code === 'RESPONSE_TIMES_OPERATION_PENDING') {
+        setOperationPending(true)
+        setPendingOperationId(saveError.operationId || operationId)
+      }
+      if (saveError.code === 'RESPONSE_TIMES_REVISION_CONFLICT') {
+        try {
+          const refreshed = await getResponseTimes()
+          setSettings(refreshed)
+          setMessage('Se cargó la revisión actual del servidor. Revisa el borrador antes de volver a guardarlo.')
+        } catch { /* keep the conflict visible; do not submit again automatically */ }
+      }
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  const formatValue = ({ value, unit }) => `${value} ${unit === 'DIAS' ? (value === 1 ? 'día' : 'días') : (value === 1 ? 'hora' : 'horas')}`
   return (
     <div className="settings-detail">
       <button className="button-secondary settings-back" onClick={onBack} type="button"><span aria-hidden="true">‹</span> Volver a Ajustes</button>
       <section className="hierarchy-card">
-        <h2>Tiempos de entrega dentro de la oficina</h2>
-        <p className="hierarchy-card__intro">Los plazos se habilitarán cuando se definan los valores institucionales para cada nivel.</p>
-        <div className="settings-timing-list">
-          {timingLevels.map((level) => <div className="settings-timing-row" key={level.id}><div><strong>{level.title}</strong><span>{level.description}</span></div><input aria-label={`Plazo para ${level.title}`} disabled placeholder="Sin configurar" type="text" /></div>)}
+        <div className="settings-detail__toolbar">
+          <div><h2>Tiempos de respuesta</h2><p>Configure los plazos de respuesta de los documentos según su prioridad. Valores para {settings?.dependency?.toUpperCase() || 'la dependencia de tu sesión'}.</p></div>
+          {!editing
+            ? <button className="button-secondary" disabled={!canEdit || loading} onClick={() => { setDraft(settings?.values || []); setEditing(true); setMessage('') }} type="button">Editar tiempos</button>
+            : <div className="settings-detail__actions"><button className="button-secondary" disabled={saving || operationPending} onClick={cancelEdit} type="button">Cancelar</button><button className="button-primary" disabled={saving || !canEdit} onClick={save} type="button">{saving ? 'Guardando…' : 'Guardar cambios'}</button></div>}
         </div>
-        <p className="hierarchy-notice">No hay plazos guardados y estos campos no están habilitados.</p>
+        {loading ? <p className="hierarchy-notice" role="status">Consultando configuración…</p> : null}
+        {error ? <p className="settings-feedback settings-feedback--error" role="alert">{error}</p> : null}
+        {message ? <p className="settings-feedback" role="status">{message}</p> : null}
+        {!loading && settings ? <>
+          <div className="settings-timing-list">
+            {timingPriorities.map((priority) => {
+              const value = (editing ? draft : settings.values).find((entry) => entry.priority === priority.id)
+              if (!value) return null
+              return <div className={`settings-timing-row settings-timing-row--${priority.className}`} key={priority.id}>
+                <div><strong>{priority.title}</strong><span>Tiempo máximo de respuesta</span></div>
+                {editing
+                  ? <div className="settings-timing-controls"><input aria-label={`Cantidad de tiempo ${priority.title}`} disabled={saving || operationPending} max={value.unit === 'DIAS' ? 365 : 8760} min="1" onChange={(event) => updateDraft(priority.id, { value: event.target.value === '' ? '' : Number(event.target.value) })} step="1" type="number" value={value.value} /><select aria-label={`Unidad de tiempo ${priority.title}`} disabled={saving || operationPending} onChange={(event) => updateDraft(priority.id, { unit: event.target.value })} value={value.unit}><option value="DIAS">Días</option><option value="HORAS">Horas</option></select></div>
+                  : <strong className="settings-timing-value">{formatValue(value)}</strong>}
+              </div>
+            })}
+          </div>
+          <p className="hierarchy-notice">{settings.isDefault ? 'Se muestran valores predeterminados de referencia. Aún no existe una configuración institucional persistida.' : 'Configuración persistida en el servicio institucional.'}{!canEdit ? ' El guardado solo se habilita durante un piloto DSA autorizado con instancia única.' : ''}</p>
+        </> : null}
       </section>
     </div>
   )
@@ -976,7 +1064,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
   }
 
   if (view === moduleViews.timings) {
-    return <PanelPage description="Plazos de entrega y asignación dentro de la oficina." title="Tiempos de entrega dentro de la oficina"><OfficeTimings onBack={() => setView(moduleViews.home)} /></PanelPage>
+    return <PanelPage description="Plazos de respuesta institucionales clasificados por prioridad." title="Tiempos de respuesta"><OfficeTimings csrfToken={csrfToken} onBack={() => setView(moduleViews.home)} /></PanelPage>
   }
 
   return <PanelPage description={`Opciones de organización para ${officeName}.`} title="Ajustes"><SettingsHome officeName={officeName} onOpen={setView} /></PanelPage>

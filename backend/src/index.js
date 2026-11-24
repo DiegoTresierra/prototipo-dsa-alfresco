@@ -34,6 +34,9 @@ import { createHierarchyHeadAssignmentService } from './hierarchyHeadAssignmentS
 import { createHierarchySpecialistAssignmentService } from './hierarchySpecialistAssignmentService.js'
 import { createHierarchyHeadChangeService } from './hierarchyHeadChangeService.js'
 import { createHierarchySpecialistReassignmentService } from './hierarchySpecialistReassignmentService.js'
+import { createResponseTimesService, responseTimesDependency, responseTimesReadAllowed, responseTimesWriteAllowed } from './responseTimesService.js'
+import { createResponseTimesAlfrescoRepository, responseTimesAlfrescoConfigurationReady } from './responseTimesAlfrescoRepository.js'
+import { acquireResponseTimesPilotLease, responseTimesPilotLeaseIsHeld, setResponseTimesPilotPendingOperation } from './responseTimesPilot.js'
 import { assertHierarchyJsonWritesEnabled, createHierarchyReadService, hierarchyStorageMode, safeHierarchyReadError } from './hierarchyReadService.js'
 import { installClosureRoutes } from './closureRoutes.js'
 import { assertInterventionMutable } from './closedInterventionPolicy.js'
@@ -98,6 +101,33 @@ const hierarchySpecialistReassignmentService = createHierarchySpecialistReassign
   directory: hierarchyDirectory,
   auditRepository: hierarchyAuditRepository,
   writesEnabled: hierarchySpecialistReassignmentsAvailable,
+})
+const responseTimesAlfrescoReady = responseTimesAlfrescoConfigurationReady(config)
+const responseTimesPersistenceConfigured = config.responseTimes.writesEnabled === true || Boolean(config.responseTimes.storage || config.responseTimes.username ||
+  config.responseTimes.password || config.responseTimes.containerNodeId)
+let releaseResponseTimesPilotLease = () => {}
+let responseTimesPilotLeaseReady = false
+try {
+  releaseResponseTimesPilotLease = acquireResponseTimesPilotLease(config)
+  responseTimesPilotLeaseReady = responseTimesPilotLeaseIsHeld(config)
+} catch (error) {
+  console.warn('[response-times-pilot] writer lease unavailable; response-time API remains read-only', {
+    code: error.code || 'RESPONSE_TIMES_PILOT_LEASE_UNAVAILABLE',
+  })
+}
+process.once('exit', releaseResponseTimesPilotLease)
+const responseTimesWritesAvailable = responseTimesAlfrescoReady && config.responseTimes.writesEnabled === true &&
+  responseTimesPilotLeaseReady
+const responseTimesRepository = responseTimesAlfrescoReady
+  ? createResponseTimesAlfrescoRepository(config, {
+    allowWrites: responseTimesWritesAvailable ? () => responseTimesPilotLeaseIsHeld(config) : false,
+  })
+  : undefined
+const responseTimesService = createResponseTimesService({
+  writesEnabled: responseTimesWritesAvailable,
+  repository: responseTimesRepository,
+  persistenceConfigurationInvalid: responseTimesPersistenceConfigured && !responseTimesAlfrescoReady,
+  onPendingOperation: (operation) => setResponseTimesPilotPendingOperation(config, operation),
 })
 const officialEmissionService = createOfficialEmissionService(config)
 process.once('exit', officialEmissionService.release)
@@ -474,6 +504,44 @@ function requireDeliveryLock(request, response, next) {
     }
     return true
   }
+
+  app.get('/api/settings/response-times', requireSession, requireInstitutionalIdentity, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    const session = request.session
+    if (!responseTimesReadAllowed(session)) {
+      return response.status(403).json({ error: 'RESPONSE_TIMES_READ_NOT_ALLOWED' })
+    }
+    const dependency = responseTimesDependency(session, config.groupMappings.dependencies)
+    if (!dependency) return response.status(403).json({ error: 'RESPONSE_TIMES_DEPENDENCY_NOT_CONFIGURED' })
+    try {
+      return response.json(await responseTimesService.read(dependency.toLowerCase()))
+    } catch (error) {
+      const code = error.code === 'RESPONSE_TIMES_ALFRESCO_CONFIGURATION_INVALID'
+        ? error.code : 'RESPONSE_TIMES_READ_UNAVAILABLE'
+      return response.status(503).json({ error: code })
+    }
+  })
+
+  app.put('/api/settings/response-times', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    const session = request.session
+    if (!responseTimesWriteAllowed(session)) {
+      return response.status(403).json({ error: 'RESPONSE_TIMES_DIRECTOR_REQUIRED' })
+    }
+    const dependency = responseTimesDependency(session, config.groupMappings.dependencies)
+    if (!dependency) return response.status(403).json({ error: 'RESPONSE_TIMES_DEPENDENCY_NOT_CONFIGURED' })
+    const actorId = session.alfresco?.id || session.user?.id || ''
+    try {
+      const result = await responseTimesService.update(dependency.toLowerCase(), actorId, request.body)
+      return response.json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'RESPONSE_TIMES_UPDATE_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+      })
+    }
+  })
 
   app.get('/api/hierarchy', requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')

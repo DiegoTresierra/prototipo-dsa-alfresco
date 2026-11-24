@@ -136,7 +136,17 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_HEAD_CHANGE_STATE_CONFLICT: 'El estado de las asignaciones no coincide con el cambio pendiente. Requiere reconciliación antes de continuar.',
       HIERARCHY_HEAD_CHANGE_FINAL_STATE_INVALID: 'Alfresco no confirmó un único Jefe activo con el resultado solicitado.',
       HIERARCHY_HEAD_CHANGE_COMPLETION_CONFLICT: 'El historial marca la operación como completada, pero el estado actual no coincide. Requiere reconciliación.',
-      HIERARCHY_REVISION_CONFLICT: 'La jerarquía cambió desde que se cargó la pantalla. Actualiza los datos antes de continuar.',
+      RESPONSE_TIMES_INVALID_INPUT: 'Revisa los valores y unidades; deben ser enteros positivos dentro de los limites permitidos.',
+      RESPONSE_TIMES_REVISION_CONFLICT: 'La configuracion cambio desde que la abriste. Consulta los valores actuales antes de volver a guardar.',
+      RESPONSE_TIMES_OPERATION_ID_CONFLICT: 'El identificador ya corresponde a otros valores. Recarga la configuracion antes de continuar.',
+      RESPONSE_TIMES_OPERATION_PENDING: 'Hay un guardado anterior sin confirmar. Reintenta esa misma operacion antes de iniciar otra.',
+      RESPONSE_TIMES_OPERATION_UNCERTAIN: 'No se pudo confirmar el resultado. Conserva el mismo intento y reintenta para conciliarlo; no cambies los valores.',
+      RESPONSE_TIMES_VERIFICATION_FAILED: 'Alfresco no confirmo el guardado. Reintenta la misma operacion para verificar su estado.',
+      RESPONSE_TIMES_PILOT_DSA_ONLY: 'La escritura esta habilitada unicamente para el piloto DSA.',
+      RESPONSE_TIMES_WRITE_PERMISSION_UNAVAILABLE: 'La cuenta tecnica no tiene los permisos efectivos necesarios para guardar.',
+      RESPONSE_TIMES_PILOT_LEASE_UNAVAILABLE: 'El bloqueo exclusivo del piloto no esta disponible. No se guardaron cambios.',
+      RESPONSE_TIMES_WRITES_DISABLED: 'El backend mantiene deshabilitada la escritura de tiempos de respuesta.',
+      RESPONSE_TIMES_READ_UNAVAILABLE: 'No se pudo consultar la configuracion de tiempos de respuesta en Alfresco.',      HIERARCHY_REVISION_CONFLICT: 'La jerarquía cambió desde que se cargó la pantalla. Actualiza los datos antes de continuar.',
       HIERARCHY_SPECIALIST_ALREADY_ASSIGNED: 'Este Especialista ya tiene una unidad principal activa.',
       HIERARCHY_UNIT_INACTIVE: 'No se puede asignar un Especialista a una unidad inactiva.',
       HIERARCHY_USER_DISABLED: 'El usuario seleccionado está deshabilitado en Alfresco.',
@@ -180,6 +190,12 @@ async function hierarchyRequest(url, options = {}) {
 }
 
 export const getHierarchy = () => hierarchyRequest('/api/hierarchy')
+export const getResponseTimes = () => hierarchyRequest('/api/settings/response-times')
+export const updateResponseTimes = ({ operationId, expectedRevision, values }, csrfToken) => hierarchyRequest('/api/settings/response-times', {
+  method: 'PUT',
+  csrfToken,
+  body: JSON.stringify({ operationId, ...(expectedRevision ? { expectedRevision } : {}), values }),
+})
 export const getHierarchyAudit = (filters = {}) => {
   const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== undefined && value !== ''))
   return hierarchyRequest(`/api/hierarchy/audit${query.size ? `?${query.toString()}` : ''}`)

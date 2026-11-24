@@ -119,6 +119,18 @@ export const config = {
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   organizationStorePath: process.env.ORGANIZATION_STORE_PATH || path.join(backendRoot, 'data', 'organization.json'),
   hierarchyReadStorage: process.env.HIERARCHY_READ_STORAGE || 'json',
+  responseTimes: {
+    storage: process.env.ALFRESCO_RESPONSE_TIMES_STORAGE || '',
+    username: process.env.ALFRESCO_RESPONSE_TIMES_SERVICE_USERNAME || '',
+    password: process.env.ALFRESCO_RESPONSE_TIMES_SERVICE_PASSWORD || '',
+    containerNodeId: process.env.ALFRESCO_RESPONSE_TIMES_CONTAINER_NODE_ID || '',
+    writesEnabled: process.env.ALFRESCO_RESPONSE_TIMES_WRITES_ENABLED === 'true',
+      singleInstancePilotEnabled: process.env.ALFRESCO_RESPONSE_TIMES_SINGLE_INSTANCE_PILOT_ENABLED === 'true',
+      pilotExpectedTarget: process.env.ALFRESCO_RESPONSE_TIMES_PILOT_EXPECTED_TARGET || '',
+      pilotAcknowledgement: process.env.ALFRESCO_RESPONSE_TIMES_PILOT_ACKNOWLEDGEMENT || '',
+      externalWritersDisabled: process.env.ALFRESCO_RESPONSE_TIMES_PILOT_NO_EXTERNAL_WRITERS_CONFIRMED === 'true',
+      pilotLeasePath: process.env.ALFRESCO_RESPONSE_TIMES_PILOT_LEASE_PATH || path.join(backendRoot, 'data', 'response-times-pilot.lock'),
+  },
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',
     password: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME

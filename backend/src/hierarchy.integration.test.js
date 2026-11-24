@@ -31,6 +31,11 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED: 'false',
     ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED: 'false',
     ALFRESCO_HIERARCHY_SPECIALIST_REASSIGNMENTS_ENABLED: 'false',
+    ALFRESCO_RESPONSE_TIMES_WRITES_ENABLED: 'false',
+    ALFRESCO_RESPONSE_TIMES_STORAGE: '',
+    ALFRESCO_RESPONSE_TIMES_SERVICE_USERNAME: '',
+    ALFRESCO_RESPONSE_TIMES_SERVICE_PASSWORD: '',
+    ALFRESCO_RESPONSE_TIMES_CONTAINER_NODE_ID: '',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DSA: 'GROUP_DSA', DTI: 'GROUP_DTI' }, functions: { direccion: 'GROUP_DIR', 'jefe-unidad': 'GROUP_HEAD', especialista: 'GROUP_STAFF' } }),
   })
   const groups = { DSA: ['director', 'head', 'staff'], DTI: ['foreign'], DIR: ['director'], HEAD: ['head'], STAFF: ['staff', 'foreign'] }
@@ -127,6 +132,26 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   const base = `http://127.0.0.1:${server.address().port}`
   assert.equal(config.hierarchyReadStorage, 'json')
   const director = headers('director', 'direccion'), head = headers('head', 'jefe-unidad')
+  const responseTimesUrl = `${base}/api/settings/response-times`
+  assert.equal((await realFetch(responseTimesUrl)).status, 401, 'response times require an authenticated session')
+  const responseTimesRead = await realFetch(`${responseTimesUrl}?dependency=DTI`, { headers: director })
+  assert.equal(responseTimesRead.status, 200)
+  const responseTimesBody = await responseTimesRead.json()
+  assert.equal(responseTimesBody.dependency, 'dsa', 'dependency comes from the session, not the query string')
+  assert.equal(responseTimesBody.source, 'DEFAULT')
+  assert.deepEqual(responseTimesBody.values, [
+    { priority: 'NORMAL', value: 5, unit: 'DIAS' },
+    { priority: 'ALTA', value: 3, unit: 'DIAS' },
+    { priority: 'URGENTE', value: 1, unit: 'DIAS' },
+  ])
+  assert.equal(responseTimesBody.capabilities.edit, false)
+  assert.equal((await realFetch(responseTimesUrl, { headers: head })).status, 200, 'active read-authorized users may consult settings')
+  const attemptedResponseTimeWrite = (auth) => realFetch(responseTimesUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ operationId: 'response-time-http-01', values: [] }) })
+  assert.equal((await attemptedResponseTimeWrite({ ...director, 'X-CSRF-Token': '' })).status, 403, 'response-time writes require CSRF')
+  assert.equal((await attemptedResponseTimeWrite(head)).status, 403, 'only Direction may edit response times')
+  const disabledResponseTimeWrite = await attemptedResponseTimeWrite(director)
+  assert.equal(disabledResponseTimeWrite.status, 409)
+  assert.equal((await disabledResponseTimeWrite.json()).error, 'RESPONSE_TIMES_WRITES_DISABLED')
   const assignments = [{ laneId: 'jefes', userId: 'head' }, { laneId: 'especialistas', userId: 'staff', unitHeadUserId: 'head' }]
   const put = (auth, values) => realFetch(`${base}/api/hierarchy`, { method: 'PUT', headers: auth, body: JSON.stringify({ assignments: values, dependency: 'DTI' }) })
   assert.equal((await realFetch(`${base}/api/hierarchy`)).status, 401)
