@@ -33,6 +33,7 @@ const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'D
 const records = [record('initial-fixture', [people[0]])]
 const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
 let officialFixture
+let closureEnabled = false, closureClosed = false, closurePosts = 0
 const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
   alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
   capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
@@ -41,6 +42,18 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const json = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)) }
   if (url.pathname.startsWith('/api/')) {
+    if (url.pathname === '/api/documents/closure') {
+      if (request.method === 'POST') {
+        let raw = ''; for await (const chunk of request) raw += chunk
+        const input = JSON.parse(raw)
+        assert.equal(request.headers['x-csrf-token'], session.csrfToken)
+        assert.deepEqual(Object.keys(input).sort(), ['documentId', 'expectedEnvelopeRevision', 'reason', 'requestKey'])
+        if (!closureEnabled) return json({ error: 'CLOSURE_WRITES_DISABLED' }, 503)
+        closureClosed = true; closurePosts++; return json({ process: { documentId: id, executionMode: 'ALFRESCO', state: 'CERRADA' } })
+      }
+      return json({ evaluation: { documentId: id, envelopeRevision: 10, preliminaryCompliance: 'MET', blockingReasons: [], knowledgeSummary: { exclusivelyKnowledge: false } },
+        writesEnabled: closureEnabled, closed: closureClosed, canClose: closureEnabled && !closureClosed, pendingOperation: null })
+    }
     if (url.pathname === '/api/auth/me') return json({ ...session, institutionalDocumentCode: session.functionalRole === 'direccion' ? session.dependency : '', unitVerified: false })
     if (url.pathname === '/api/auth/status') return json({ basicAuthEnabled: true })
     if (url.pathname === '/api/documents/emitted') {
@@ -287,7 +300,23 @@ try {
   await clickText('Emitidos')
   await until(() => evaluate("document.body.textContent.includes('No hay documentos emitidos') && !document.querySelector('.received-inbox__refresh button').disabled"), 'DSA emitted stays empty for received DTI original')
   assert.equal(await evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), false)
+  await clickText('Documentos recibidos')
+  await until(() => evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), 'closure fixture inbox')
+  await evaluate("document.querySelector('.received-inbox__subject').click()")
+  await clickText('Evaluar cierre de mi intervención')
+  await until(() => evaluate("document.body.textContent.includes('Cierre deshabilitado')"), 'closure disabled by backend')
+  assert.equal(await evaluate("[...document.querySelectorAll('button')].some(b=>b.textContent==='Cerrar intervención')"), false)
+  assert.equal(closurePosts, 0)
+  closureEnabled = true // API fixture only. Does not configure backend or Alfresco.
+  await clickText('Evaluar cierre de mi intervención')
+  await until(() => evaluate("Boolean(document.querySelector('section[aria-label=\"Cierre de intervención\"] textarea'))"), 'explicit reason')
+  await evaluate(`(()=>{const field=document.querySelector('section[aria-label="Cierre de intervención"] textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Constancia de prueba');field.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+  await until(() => evaluate("[...document.querySelectorAll('button')].some(b=>b.textContent==='Cerrar intervención'&&!b.disabled)"), 'explicit close available')
+  await clickText('Cerrar intervención')
+  await until(() => evaluate("document.body.textContent.includes('Intervención cerrada definitivamente.')"), 'verified closed UI')
+  assert.equal(closurePosts, 1)
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
+    closureChecks: ['backend disabled hides close', 'explicit reason and CSRF', 'one mocked close', 'read-after-close refresh'],
     checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
       'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],
     proposalChecks: ['available/inaccessible/invalid versions', 'verified version preview', 'no mutation buttons'], visual, counters }

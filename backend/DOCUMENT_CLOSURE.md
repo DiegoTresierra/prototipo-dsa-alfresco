@@ -1,16 +1,17 @@
 # Cierre documental V0.1
 
-Guía principal del evaluador, evidencias y motor interno simulado. La política
+Guía principal del evaluador, evidencias, motor simulado y adaptador Alfresco. La política
 funcional es preliminar; la aprobación institucional está pendiente.
 
 ## Estado operativo
 
-- No hay endpoints ni interfaz de cierre, anulación, conocimiento, archivo o reapertura.
-- No hay escritor Alfresco de cierre ni bandera para habilitarlo en DEV.
+- Hay endpoint de evaluación e interfaz Dirección; los POST de cierre y conciliación
+  están preparados, pero deshabilitados por defecto e independientemente del despacho.
+- No hay operaciones de anulación, confirmación de conocimiento, archivo ni reapertura.
 - Evaluar MET no autoriza ni ejecuta cierre. Todos los resultados del evaluador
   mantienen formalClosureAllowed, canRequestFormalClosure y writesEnabled en false.
-- El motor solo registra decisiones en memoria, con executionMode SIMULATED obligatorio.
-  Nunca deben importarse como decisiones institucionales ni proyectarse a gd:estado.
+- El motor simulado conserva V1/SIMULATED. El adaptador Alfresco usa exclusivamente
+  V2/ALFRESCO. Se rechaza promover registros simulados; no se proyecta gd:estado.
 - Se preservan UUID, PDF, ACL, ubicaciones, atención individual, respuestas y revisión.
 - Cierre integral, reapertura, propuestas mutables, emisión y derivaciones restringidas
   no se habilitan por instalar, probar o publicar este hito.
@@ -204,19 +205,21 @@ explícita de pruebas y mantiene SIMULATED. No hay durabilidad, reinicio operati
 conversión a cierre real ni transacciones distribuidas. La cola protege una instancia;
 GET sucesivos no protegen de escritores externos ni cambios posteriores.
 
-## Restricciones futuras después del cierre (no habilitadas)
+## Restricciones después del cierre
 
-Los controles por ámbito deberán incorporarse antes de los efectos en:
+Los controles por ámbito se incorporan antes de los efectos en:
 
 - createDispatch, attendAssignment y linkResponse del repositorio documental.
 - execute CREATE/REVISE y reviewTransaction del adaptador de propuestas; mediante
   este último, decisiones de revisión y emisión de respuesta aprobada.
 - issue/issueReviewed del servicio oficial, diferenciando nuevas operaciones de
   recuperación de emisiones legítimas ya iniciadas.
-- Mutaciones genéricas del proxy y distribución/reintento de asociaciones, cuando
-  afecten una intervención cerrada, sin bloquear lecturas ni otras dependencias.
+- El proxy ya rechaza mutaciones de nodos existentes; solo permite creación genérica
+  controlada y lectura. No se amplía esa allowlist. El reintento de distribución
+  comprueba la intervención destinataria, sin bloquear automáticamente otro ámbito.
 
-La guarda de preservación no es una política de bloqueo posterior al cierre. Antes
+La guarda de preservación se complementa con closedInterventionPolicy: solo una
+decisión V2/ALFRESCO bloquea su dependencia; SIMULATED no concede ese efecto. Antes
 de habilitar: aprobar competencias, proveedor real, ACL, resolución de pendientes,
 procedimiento excepcional y vínculo a versión/hash del PDF original. El contrato real
 no debe aceptar decisiones SIMULATED como evidencia institucional.
@@ -232,6 +235,237 @@ No publicar .env.local, evidencias DEV, manifiestos, bloqueos o artefactos. Esta
 no contiene inventarios ni identificadores operativos. El 502 anterior no tiene log
 persistido suficiente para identificar su causa; no se atribuye a un origen supuesto
 ni se oculta con reintentos automáticos.
+
+## Hito 6: autoridad y persistencia preparada, habilitación pendiente
+
+createClosureAuthority exige identidad real habilitada mediante people/-me-, grupos
+personales paginados, rol Dirección y dependencia exacta, revisión del sobre y ACL
+del documento. La competencia es la intersección del grupo funcional configurado
+con el grupo de dependencia; nunca el grupo funcional por sí solo. Las consultas
+GET realizadas confirmaron una función compartida y dependencias distintas en la
+API clásica; v1 de miembros mostró omisiones. La consulta de grupos personales con
+la cuenta técnica fue denegada: no sustituye la comprobación de la sesión del actor.
+No se incluyen identidades personales, UUID ni evidencias DEV en esta guía.
+
+Se preserva el resolvedor general: pertenencias ambiguas, incluidas múltiples
+dependencias sin contexto institucional resuelto, siguen rechazadas. No se amplían
+privilegios ni se interpreta organization.json como autoridad. El proveedor de cierre
+ordinario no acredita retrospectivamente anulaciones o confirmaciones: esa prueba
+histórica sigue pendiente y los casos incompletos continúan bloqueados.
+
+createAlfrescoClosureStore conserva el mismo JSON y mutex del repositorio documental.
+Lee con el actor y reautoriza antes de cada escritura. La identidad técnica debe
+coincidir con la configurada, estar habilitada y ser no administrativa, con update
+efectivo sobre el nodo. El PUT solo incluye gd:asignaciones. Compara el origen completo,
+respeta 256 KiB, conserva decisiones y extensiones, verifica mediante GET y no toca
+aspectos, ACL, PDF ni proyecciones. Se mantienen IDs, revisiones e idempotencia del motor.
+
+Los elementos de closureProcesses/closureOperations aceptan dos pares versionados:
+V1/SIMULATED y V2/ALFRESCO. Proceso y operación deben coincidir. Nunca se permite al
+adaptador REST guardar SIMULATED ni leerlo como cierre real. La revisión del sobre
+base permanece en schemaVersion 1; no hay CMM nuevo ni conversión automática.
+
+Endpoints protegidos:
+
+- GET /api/documents/closure?documentId=...: preflight y autoridad vigentes; expone
+  canClose solo con permisos, requisitos, ausencia de pendientes y habilitación completa.
+- POST /api/documents/closure: confirmación explícita. Entrada exacta: documentId,
+  expectedEnvelopeRevision, requestKey y reason. Dependencia y actor salen de sesión.
+- POST /api/documents/closure/reconcile: conciliación explícita con la misma entrada.
+
+Los POST exigen sesión, CSRF y guardas independientes. La UI de Dirección consulta
+requisitos y oculta la acción hasta canClose. Exige constancia, conserva clave en el
+intento y recupera los datos del diario pendiente en una nueva consulta. No decide
+por visibilidad del botón ni acepta respuesta incompleta como cierre confirmado.
+
+Variables nuevas, NO configuradas automáticamente ni en .env.local:
+
+- DOCUMENT_CLOSURE_WRITES_ENABLED=false por defecto.
+- DOCUMENT_CLOSURE_ENVIRONMENT: solo se admite dev; el piloto también debe ser dev.
+- DOCUMENT_CLOSURE_EXPECTED_TARGET: coincidencia exacta e independiente con el destino.
+- DOCUMENT_CLOSURE_ACKNOWLEDGEMENT: requiere la confirmación explícita de operador
+  single-instance-exclusive-writer-dev-closure. No habilitarla antes de revisión.
+
+También se exige piloto validado y lease de instancia única realmente adquirido en
+este proceso. Cambiar ALFRESCO_TARGET no basta. Preproducción no está habilitada.
+La exclusión local no protege de otra máquina, otro lease o escritores externos.
+
+La validación final añadió CLOSURE_REAL_READINESS_BLOCKED: aun con variables y lease
+correctos, los destinos reales NO pueden escribir hasta implementar y verificar el
+protocolo duradero de envío y la exclusividad. Solo los transportes de fixtures .invalid
+continúan ejercitando PUT simulados. No quitar esta guarda para realizar la prueba.
+
+Una escritura incierta se verifica por GET y nunca se repite ciegamente. Si el diario
+PREPARED/COMMITTED existe, puede conciliarse tras recrear los servicios desde Alfresco;
+se prueba con mocks. Si no se confirmó ni el primer diario, la instancia activa bloquea
+otro PUT mediante un registro volátil de incertidumbre. No hay prueba de ausencia de
+una petición tardía tras reinicio: se requiere detener escrituras y conciliación humana
+antes de reactivar. Esta limitación y la ausencia de compare-and-swap/transacción
+distribuida impiden declarar la habilitación real segura sin el procedimiento operativo.
+
+Estado de validación: implementación y PUT/GET, HTTP, concurrencia, recuperación y UI
+probados con mocks. En DEV solo se hicieron GET de grupos e identidades; no hay cierre
+real ni prueba de sesiones finales o update del actor/documento concreto.
+
+Antes del primer PUT autorizado debe presentarse un PDF de prueba expresamente
+designado en una bandeja institucional existente, su preflight MET, la sesión Dirección
+y sus grupos/ACL reales. Operaciones previstas: dos PUT del sobre (PREPARED y COMMITTED)
+y GET de verificación, sin mover PDF ni cambiar gd:estado. Conservar clave y registro;
+ante timeout detener otros cierres, leer/conciliar, nunca borrar la decisión ni
+reutilizar SIMULATED. No se ha elegido ni alterado un documento institucional para ello.
+No habilitar mientras estos controles o la conciliación del entorno no estén resueltos.
+
+## Evaluación final de preparación y recuperación
+
+No se dispone de una sesión real de Dirección accesible al proceso de validación;
+las sesiones del BFF son memoria de su proceso y no se importan desde la cuenta técnica.
+La prueba con actor requiere abrir la aplicación y verificar people/-me-, membresías,
+documento y GET /api/documents/closure en esa misma sesión, sin exportar cookies ni tokens.
+La cuenta técnica de lectura no acredita al actor. Pertenecer a varias dependencias
+continúa siendo ambiguo para el resolvedor general: se rechaza, no se infiere competencia
+global. Esa política de sesión múltiple necesita un contrato posterior explícito.
+
+El PDF de prueba seleccionado se identifica solo en la comunicación privada del trabajo,
+no en esta guía pública. Antes de proponer un cierre debe estar atendida su obligación
+vigente mediante el flujo legítimo y una evaluación nueva debe alcanzar MET. No se ha
+modificado su asignación ni autorizado esa atención como parte de esta validación.
+
+### Clasificación diagnóstica
+
+closureRecoveryAssessment.assessClosureRecovery es puro y no ejecuta ni autoriza
+escrituras. Solo recibe un sobre validado y una intención vinculada a documento,
+dependencia, ID de operación, huella de intención/origen y revisión esperada:
+
+| Resultado | Evidencia mínima |
+| --- | --- |
+| NOT_EXECUTED | Prueba positiva de transporte nunca enviado, vinculada a la intención y procedente de un diario duradero verificado; escritores anteriores detenidos |
+| APPLIED | Operación V2/ALFRESCO COMMITTED y proceso/evento estrictamente válidos, vinculados a la intención |
+| PENDING | PREPARED comprobado y origen/revisión coincidentes |
+| UNCERTAIN | No hay registro y no existe prueba positiva de no envío, aunque el documento parezca idéntico |
+| CONFLICT | Identidad/huella distintas, contrato inválido o modificación no atribuible |
+
+Todas devuelven mayAutomaticallyWrite e institutionalDecision en false. APPLIED es
+un diagnóstico del recibo, no una nueva decisión ni prueba criptográfica de autoría.
+La entrada dispatchProof del caso NOT_EXECUTED es un contrato para un lector de
+transporte futuro: schemaVersion 1, source durable-dispatch-journal, verified true,
+state NEVER_DISPATCHED, allPriorWritersStopped true, reference, documentId, operationId
+y payloadHash coincidentes. No existe todavía un lector que produzca esa prueba real;
+las pruebas positivas son sintéticas. Un flag del cliente no puede levantar la guarda.
+
+### Solución propuesta para la incertidumbre sin primer diario
+
+1. Antes de aceptar escrituras, aislar todos los escritores del UUID y conservar el
+   mismo mutex. Confirmar que no hay otros backends, herramientas administrativas o
+   clientes con update actuando sobre ese sobre. Un lease local no prueba esto.
+2. Preparar un diario operativo privado duradero, separado del repositorio público,
+   con identidad de instancia/arranque, destino, UUID, clave/ID estable, huellas,
+   revisión esperada e intento. No almacena tokens ni funciona como autoridad documental.
+   Es una propuesta pendiente; no se creó otro almacén ni base de datos en esta entrega.
+3. Persistir y sincronizar INTENT_DURABLE antes de cualquier red. Persistir y sincronizar
+   SEND_STARTED_DURABLE inmediatamente ANTES de enviar el PUT. Si no se puede garantizar
+   esa secuencia o recuperar el diario, no enviar ni reintentar.
+4. Tras respuesta, leer y validar en Alfresco y registrar el recibo. Un COMMITTED
+   vinculado se recupera sin otra decisión. Un PREPARED coincide con una preparación
+   observada; solo continúa mediante conciliación explícita y autoridad vigente.
+5. Si hubo SEND_STARTED sin registro visible, mantener UNCERTAIN, no NOT_EXECUTED.
+   Un timeout, varios GET iguales o una espera arbitraria no prueban ausencia. Exigir
+   evidencia de terminación/cancelación del intento en el repositorio o un mecanismo
+   de exclusión/idempotencia del repositorio que haga imposible una aplicación tardía.
+6. Al reiniciar, cargar todos los intentos sin recibo antes de aceptar mutaciones;
+   congelar los UUID afectados, conservar claves y evidencias y conciliar. No limpiar
+   automáticamente intentos ni iniciar otra clave para resolver una incertidumbre.
+
+El diario propuesto evita perder conocimiento del envío, pero NO añade compare-and-swap,
+transacciones distribuidas ni protección frente a un escritor externo. Si no es posible
+demostrar exclusividad y terminar/frenar intentos tardíos, se necesita un mecanismo
+atómico del repositorio, sujeto a diseño y autorización separados. No se implementa
+una extensión Alfresco ni se supone que un GET previo equivale a ese mecanismo.
+
+### Escritores y puntos de protección
+
+El repositorio de despacho/atención/respuestas y las rutas de cierre y recuperación
+de distribución comparten withDocument del repositorio. El adaptador de propuestas
+recibe esa misma cola y permanece restringido a mocks. La emisión oficial tiene su
+cola de numeración; no escribe el sobre original directamente y la integración de
+respuesta revisada entra por reviewTransaction. El proxy prohíbe PUT/DELETE de nodos
+existentes y propiedades privilegiadas en creación. Estos controles son del BFF.
+
+gd:asignaciones no es una propiedad protegida en el modelo consultado. Un cliente REST
+con update puede eludir el BFF; no se realizó una escritura para demostrarlo ni se
+cambiaron ACL. El control de otros escritores, las ACL de la sesión elegida, el origen
+de evidencia histórica y la recuperación duradera siguen siendo condiciones bloqueantes.
+
+### Procedimiento reservado para una futura primera prueba
+
+Después de resolver los bloqueos: confirmar PDF/ámbito y usuario mediante GET con su
+sesión, comprobar MET y autoridad, conservar en privado revisión y huella de origen,
+y aprobar expresamente el intento. La petición contendrá documentId,
+expectedEnvelopeRevision obtenido del GET actual, requestKey estable y constancia.
+El backend añadirá actor, dependencia, fecha, pruebas y procesos; no se envía autoridad
+desde el navegador. Se prevén solo PUT de PREPARED y COMMITTED y GET de verificación.
+Verificar mismo UUID/PDF, gd:estado y asignaciones inalterados y recibo de cierre propio,
+con otro ámbito intacto. Reinicio y repetición de la misma clave deben recuperar el
+recibo sin incrementar decisiones. Ante cualquier incertidumbre, detener escrituras
+y conservar evidencia privada; no borrar registros, cambiar clave o atender obligaciones
+para forzar MET. La ejecución real sigue sin autorizarse.
+
+### Ventana coordinada y precondición de escritura
+
+La coordinación con otros desarrolladores reduce el riesgo, pero no impide escrituras
+de otros clientes, otra instancia o la misma cuenta técnica. No se registra como
+exclusividad global y no levanta CLOSURE_REAL_READINESS_BLOCKED. No se incorpora otro
+contador, base de datos ni fuente documental local; el diario de transporte anterior
+sigue siendo una propuesta operativa no implementada, no una autoridad documental.
+
+La inspección GET separa ETag de metadatos y de contenido. Un ETag en /content no prueba
+que proteja PUT /nodes/{id} ni cambios a gd:asignaciones. cm:versionable y versionLabel
+permiten identificar versiones, pero no prueban una precondición de actualización.
+Tampoco se interpreta la transacción interna de un PUT como una comparación atómica
+con el GET anterior del cliente. No se añade If-Match sin soporte demostrado.
+
+Fuentes primarias consultadas, fijadas a un commit público (no se ha certificado que
+sea el código exacto del despliegue DEV):
+
+- [Actualización de propiedades](https://github.com/Alfresco/alfresco-community-repo/blob/43453686d21f25d0ef33bf060c693d3c9be272ad/remote-api/src/main/java/org/alfresco/rest/api/impl/NodesImpl.java#L2756).
+- [Recurso de actualización de nodos](https://github.com/Alfresco/alfresco-community-repo/blob/43453686d21f25d0ef33bf060c693d3c9be272ad/remote-api/src/main/java/org/alfresco/rest/api/nodes/NodesEntityResource.java).
+- [Despacho PUT del framework](https://github.com/Alfresco/alfresco-community-repo/blob/43453686d21f25d0ef33bf060c693d3c9be272ad/remote-api/src/main/java/org/alfresco/rest/framework/webscripts/ResourceWebScriptPut.java).
+
+En ese recorrido no se encontró validación If-Match o de versión esperada del sobre.
+No constituye prueba universal de ausencia: podría existir una personalización del
+despliegue. La condición pendiente es una precondición atómica, documentada y comprobada
+para las propiedades de este nodo, que rechace una escritura obsoleta sin alterar nada.
+Debe cubrir la carrera entre GET/PUT y los PUT tardíos tras timeout. La idempotencia
+del comando y su recibo deben conservarse frente a esos casos, no solo el estado final
+cuando todas las peticiones terminan normalmente. Un ensayo de escritura para comprobar
+este soporte necesitaría una autorización separada y no se realiza en esta etapa.
+
+Preparación de la ventana, todavía sin horario ni primera escritura autorizados:
+
+1. Acordar inicio/fin, operadores y compromiso de no escritura con el compañero;
+   mantener un único backend. Registrar expresamente los clientes que no se pueden
+   bloquear. El lease local no modifica esas limitaciones.
+2. Utilizar un PDF designado exclusivamente de ensayo. Confirmar mediante GET que
+   no quedan obligaciones exigibles pendientes ni operaciones inciertas. No atender,
+   anular o reclasificar obligaciones automáticamente para conseguir MET.
+3. Abrir una sesión auténtica de Dirección; verificar /api/auth/me y, con las mismas
+   credenciales del actor, identidad, grupos, lectura del nodo y contenido PDF no vacío.
+   No copiar cookies o tokens al informe. La cuenta técnica no sustituye al actor.
+4. Consultar GET /api/documents/closure?documentId=... en esa sesión y conservar en
+   privado ámbito, revisión y resultado. La carpeta primaria no reemplaza la prueba
+   de cm:contains institucional, incluidas asociaciones secundarias.
+5. Mantener escrituras deshabilitadas si falta el mecanismo atómico anterior o si no
+   puede verificarse la sesión, la integridad o el documento. La aceptación de riesgo
+   de una ventana coordinada no demuestra soporte de If-Match ni resuelve un PUT tardío.
+6. Solo después de resolver los bloqueos y obtener autorización específica: conservar
+   clave estable, constancia, huella/revisión inicial y ejecutar un único flujo de cierre
+   (PREPARED, COMMITTED y GET posteriores), sin alterar PDF, ACL o gd:estado.
+7. Ante timeout, detener los nuevos intentos del UUID; comprobar recibos y clasificar
+   PENDING/APPLIED/UNCERTAIN/CONFLICT. Un GET sin registro nunca prueba NOT_EXECUTED.
+   No usar otra clave ni reiniciar para borrar la incertidumbre. Conservar evidencia
+   privada y coordinar con los operadores antes de reactivar.
+
+Conclusión operativa: la prueba real sigue bloqueada hasta demostrar la precondición
+o un mecanismo equivalente del repositorio, y completar sesión y elegibilidad del PDF.
 
 ### Seguimiento de la prueba HTTP de despacho
 

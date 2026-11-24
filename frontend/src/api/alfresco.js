@@ -7,6 +7,22 @@ import { nodeToDocument } from '../utils/documentMapping.js'
 const coreApiPrefix = '/api/alfresco/api/-default-/public/alfresco/versions/1'
 const searchApiPrefix = '/api/alfresco/api/-default-/public/search/versions/1'
 
+export async function getClosureEvaluation(documentId) {
+  const r = await apiFetch(`/api/documents/closure?documentId=${encodeURIComponent(documentId)}`, { credentials: 'include', headers: { Accept: 'application/json' } })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || 'No se pudo evaluar el cierre.')
+  if (body.evaluation?.documentId !== documentId || !Array.isArray(body.evaluation?.blockingReasons) || typeof body.canClose !== 'boolean' || typeof body.writesEnabled !== 'boolean') throw new Error('Evaluación incompleta. Consulta nuevamente.')
+  return body
+}
+export async function confirmDocumentClosure(input, csrfToken, reconcile = false) {
+  const r = await apiFetch(`/api/documents/closure${reconcile ? '/reconcile' : ''}`, { method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(input) })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || 'Resultado no confirmado; consulta y concilia sin crear otra operación.')
+  if (body.process?.documentId !== input.documentId || body.process?.executionMode !== 'ALFRESCO' || body.process?.state !== 'CERRADA') throw new Error('Resultado de cierre incompleto. Consulta y concilia antes de continuar.')
+  return body
+}
+
 export async function listEligibleDocumentRecipients() {
   const response = await apiFetch('/api/directory/recipients', { credentials: 'include', headers: { Accept: 'application/json' } })
   if (!response.ok) {
@@ -75,18 +91,145 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_UNIT_HEAD_NOT_ALLOWED: 'La jefatura seleccionada para el especialista ya no pertenece a la jerarquía de la oficina.',
       INVALID_HIERARCHY_ASSIGNMENTS: 'La estructura enviada no tiene un formato válido.',
       HIERARCHY_DIRECTORY_UNAVAILABLE: 'No se pudo consultar el directorio institucional de Alfresco.',
+      HIERARCHY_ALFRESCO_READ_ONLY: 'La jerarquía se está consultando desde Alfresco, pero todavía no se pueden guardar cambios.',
+      HIERARCHY_ALFRESCO_REQUIRED: 'La creación de unidades solo está disponible cuando la jerarquía se consulta desde Alfresco.',
+      HIERARCHY_UNIT_WRITES_DISABLED: 'El servidor mantiene deshabilitada la creación de unidades.',
+      HIERARCHY_UNIT_EDITS_DISABLED: 'La edición de unidades está deshabilitada por el backend.',
+      HIERARCHY_UNIT_CHANGE_FIELDS_INVALID: 'La solicitud contiene propiedades que no se pueden editar.',
+      HIERARCHY_OPERATION_DUPLICATE_CONFLICT: 'Ese identificador de operación ya se usó con otros datos.',
+      HIERARCHY_OPERATION_RESULT_CONFLICT: 'La operación tiene un resultado parcial que requiere revisión antes de reintentar.',
+      HIERARCHY_UNIT_UPDATE_OUTCOME_UNKNOWN: 'Alfresco no confirmó el resultado de la edición. Reintenta con el mismo identificador de operación.',
+      HIERARCHY_UNIT_UPDATE_OUTCOME_PARTIAL: 'Alfresco aplicó solo parte de los cambios. Reintenta con los mismos datos para reconciliar.',
+      HIERARCHY_WRITE_VERIFICATION_FAILED: 'Alfresco no confirmó los valores actualizados. La operación requiere reconciliación.',
+      HIERARCHY_UNIT_NAME_REQUIRED: 'Escribe el nombre de la unidad.',
+      HIERARCHY_UNIT_NAME_DUPLICATE: 'Ya existe una unidad con ese nombre en esta dependencia.',
+      HIERARCHY_UNIT_CODE_DUPLICATE: 'Ya existe una unidad con ese código en esta dependencia.',
+      HIERARCHY_UNIT_CODE_INVALID: 'El código de la unidad no es válido.',
+      HIERARCHY_UNIT_DESCRIPTION_INVALID: 'La descripción supera el límite permitido.',
+      HIERARCHY_OPERATION_ID_INVALID: 'No se pudo preparar un identificador seguro para esta operación. Reintenta.',
+      HIERARCHY_AUDIT_RECORD_FAILED: 'La operación no se reportó como completada porque no se confirmó su auditoría.',
+      HIERARCHY_AUDIT_INITIATION_FAILED: 'No se registró el inicio de auditoría; por seguridad, no se realizó el cambio.',
+      HIERARCHY_UNIT_OPERATION_PARTIAL: 'La operación quedó parcial. Conserva el identificador para que el administrador pueda reconciliarla.',
+      HIERARCHY_HEAD_WRITES_DISABLED: 'El servidor mantiene deshabilitada la asignación de Jefes de Unidad.',
+      HIERARCHY_HEAD_ASSIGNMENT_PARTIAL: 'La asignación del Jefe quedó parcial. Conserva el identificador para reconciliarla.',
+      HIERARCHY_HEAD_CHANGES_DISABLED: 'El servidor mantiene deshabilitado el cambio de Jefe de Unidad.',
+      HIERARCHY_HEAD_CHANGE_PARTIAL: 'El cambio de Jefe quedó parcial. Conserva el identificador de operación para reconciliarlo.',
+      HIERARCHY_SPECIALIST_WRITES_DISABLED: 'El servidor mantiene deshabilitada la asignación de Especialistas.',
+      HIERARCHY_SPECIALIST_ASSIGNMENT_PARTIAL: 'La asignación del Especialista quedó parcial. Conserva el identificador para reconciliarla.',
+      HIERARCHY_SPECIALIST_REASSIGNMENTS_DISABLED: 'La reasignación de Especialistas está deshabilitada por el servidor.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_PARTIAL: 'La reasignación quedó parcial. Conserva el identificador de operación y reintenta con el mismo destino.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_PENDING_RECONCILIATION: 'Este Especialista tiene una reasignación pendiente; reintenta esa operación antes de iniciar otra.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_SAME_UNIT: 'Selecciona una unidad de destino distinta a la unidad actual.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_STATE_CONFLICT: 'El estado de las asignaciones no coincide con la operación pendiente; requiere reconciliación.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_FINAL_STATE_INVALID: 'Alfresco no confirmó una única unidad activa para el Especialista.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_COMPLETION_CONFLICT: 'El historial indica que la operación se completó, pero el estado actual no coincide.',
+      HIERARCHY_SPECIALIST_REASSIGNMENT_CROSS_DEPENDENCY_CONFLICT: 'El Especialista tiene una asignación activa incompatible en otra dependencia.',
+      HIERARCHY_SPECIALIST_ASSIGNMENT_NOT_FOUND: 'No se encontró una asignación activa de Especialista para trasladar.',
+      HIERARCHY_SPECIALIST_MULTIPLE_ACTIVE_UNITS: 'El Especialista tiene más de una asignación activa y requiere revisión antes de trasladarlo.',
+      HIERARCHY_ACTIVE_UNIT_HEAD_EXISTS: 'Esta unidad ya tiene un Jefe activo. El cambio de Jefe se habilitará en otra etapa.',
+      HIERARCHY_ACTIVE_UNIT_HEAD_CONFLICT: 'La unidad tiene más de un Jefe activo. Requiere reconciliación antes de cambiarlo.',
+      HIERARCHY_ACTIVE_UNIT_HEAD_REQUIRED: 'La unidad no tiene un Jefe activo para reemplazar.',
+      HIERARCHY_HEAD_UNCHANGED: 'Selecciona un Jefe distinto al actual.',
+      HIERARCHY_HEAD_ALREADY_ASSIGNED_TO_OTHER_UNIT: 'El usuario seleccionado ya es Jefe activo de otra unidad.',
+      HIERARCHY_USER_HAS_INCOMPATIBLE_ACTIVE_ASSIGNMENT: 'El usuario seleccionado ya tiene una asignación activa de Especialista.',
+      HIERARCHY_HEAD_CHANGE_PENDING_RECONCILIATION: 'Existe otro cambio de Jefe pendiente de reconciliación para esta unidad.',
+      HIERARCHY_HEAD_CHANGE_STATE_CONFLICT: 'El estado de las asignaciones no coincide con el cambio pendiente. Requiere reconciliación antes de continuar.',
+      HIERARCHY_HEAD_CHANGE_FINAL_STATE_INVALID: 'Alfresco no confirmó un único Jefe activo con el resultado solicitado.',
+      HIERARCHY_HEAD_CHANGE_COMPLETION_CONFLICT: 'El historial marca la operación como completada, pero el estado actual no coincide. Requiere reconciliación.',
+      RESPONSE_TIMES_INVALID_INPUT: 'Revisa los valores y unidades; deben ser enteros positivos dentro de los limites permitidos.',
+      RESPONSE_TIMES_REVISION_CONFLICT: 'La configuracion cambio desde que la abriste. Consulta los valores actuales antes de volver a guardar.',
+      RESPONSE_TIMES_OPERATION_ID_CONFLICT: 'El identificador ya corresponde a otros valores. Recarga la configuracion antes de continuar.',
+      RESPONSE_TIMES_OPERATION_PENDING: 'Hay un guardado anterior sin confirmar. Reintenta esa misma operacion antes de iniciar otra.',
+      RESPONSE_TIMES_OPERATION_UNCERTAIN: 'No se pudo confirmar el resultado. Conserva el mismo intento y reintenta para conciliarlo; no cambies los valores.',
+      RESPONSE_TIMES_VERIFICATION_FAILED: 'Alfresco no confirmo el guardado. Reintenta la misma operacion para verificar su estado.',
+      RESPONSE_TIMES_PILOT_DSA_ONLY: 'La escritura esta habilitada unicamente para el piloto DSA.',
+      RESPONSE_TIMES_WRITE_PERMISSION_UNAVAILABLE: 'La cuenta tecnica no tiene los permisos efectivos necesarios para guardar.',
+      RESPONSE_TIMES_PILOT_LEASE_UNAVAILABLE: 'El bloqueo exclusivo del piloto no esta disponible. No se guardaron cambios.',
+      RESPONSE_TIMES_WRITES_DISABLED: 'El backend mantiene deshabilitada la escritura de tiempos de respuesta.',
+      RESPONSE_TIMES_READ_UNAVAILABLE: 'No se pudo consultar la configuracion de tiempos de respuesta en Alfresco.',      HIERARCHY_REVISION_CONFLICT: 'La jerarquía cambió desde que se cargó la pantalla. Actualiza los datos antes de continuar.',
+      HIERARCHY_SPECIALIST_ALREADY_ASSIGNED: 'Este Especialista ya tiene una unidad principal activa.',
+      HIERARCHY_UNIT_INACTIVE: 'No se puede asignar un Especialista a una unidad inactiva.',
+      HIERARCHY_USER_DISABLED: 'El usuario seleccionado está deshabilitado en Alfresco.',
+      HIERARCHY_USER_NOT_FOUND: 'El usuario ya no existe en Alfresco.',
+      HIERARCHY_USER_MEMBERSHIP_INCOMPLETE: 'No se pudo confirmar la dependencia o función del usuario.',
+      HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE: 'La cuenta técnica no se puede asignar a una función organizacional.',
+      HIERARCHY_USER_DEPENDENCY_MISMATCH: 'El usuario no pertenece a la dependencia de esta sesión.',
+      HIERARCHY_USER_FUNCTION_MISMATCH: 'El usuario no pertenece al grupo funcional requerido para este rol.',
+      HIERARCHY_USER_MEMBERSHIP_AMBIGUOUS: 'La membresía del usuario no es inequívoca; solicita una revisión del directorio.',
+      HIERARCHY_USER_NOT_IN_CONFIGURED_GROUPS: 'El usuario no pertenece a los grupos institucionales configurados para este rol.',
+      HIERARCHY_UNIT_OUT_OF_SCOPE: 'La unidad no pertenece al contenedor autorizado de jerarquías.',
+      HIERARCHY_DEPENDENCY_MISMATCH: 'La unidad no pertenece a la dependencia de tu sesión.',
+      HIERARCHY_ALFRESCO_HTTP_401: 'La cuenta técnica no pudo autenticarse en Alfresco.',
+      HIERARCHY_ALFRESCO_HTTP_403: 'La cuenta técnica no tiene permiso para crear unidades o registrar auditoría.',
+      HIERARCHY_ALFRESCO_HTTP_409: 'Alfresco informó un conflicto al crear la unidad o el evento de auditoría.',
+      HIERARCHY_ALFRESCO_ACCESS_DENIED: 'La cuenta técnica no tiene permiso para consultar la jerarquía en Alfresco.',
+      HIERARCHY_ALFRESCO_CONFIGURATION_INVALID: 'La configuración del contenedor de jerarquías en Alfresco no es válida.',
+      HIERARCHY_ALFRESCO_READ_UNAVAILABLE: 'Alfresco no está disponible para consultar la jerarquía. No se cargaron datos locales como alternativa.',
+      HIERARCHY_ALFRESCO_DATA_INVALID: 'Alfresco devolvió datos de jerarquía inconsistentes. Solicita una revisión antes de continuar.',
       ORGANIZATION_STORE_UNAVAILABLE: 'No se pudo leer o guardar la estructura de la oficina en el BFF.',
       HIERARCHY_SAVE_FAILED: 'No se pudo guardar la estructura de la oficina.',
     }
     const error = new Error(messages[body.error] || body.error || `La consulta de oficina falló (HTTP ${response.status}).`)
     error.code = body.error
     error.status = response.status
+    error.operationId = body.operationId
+    error.operationStatus = body.operationStatus
+    error.unitId = body.unitId
+    error.userId = body.userId
+    error.assignmentId = body.assignmentId
+    error.currentHeadUserId = body.currentHeadUserId
+    error.newHeadUserId = body.newHeadUserId
+    error.sourceUnitId = body.sourceUnitId
+    error.destinationUnitId = body.destinationUnitId
+    error.sourceAssignmentId = body.sourceAssignmentId
+    error.destinationAssignmentId = body.destinationAssignmentId
+    error.uncertain = body.operationStatus === 'PARCIAL' || response.status >= 500
     throw error
   }
   return body
 }
 
 export const getHierarchy = () => hierarchyRequest('/api/hierarchy')
+export const getResponseTimes = () => hierarchyRequest('/api/settings/response-times')
+export const updateResponseTimes = ({ operationId, expectedRevision, values }, csrfToken) => hierarchyRequest('/api/settings/response-times', {
+  method: 'PUT',
+  csrfToken,
+  body: JSON.stringify({ operationId, ...(expectedRevision ? { expectedRevision } : {}), values }),
+})
+export const getHierarchyAudit = (filters = {}) => {
+  const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== undefined && value !== ''))
+  return hierarchyRequest(`/api/hierarchy/audit${query.size ? `?${query.toString()}` : ''}`)
+}
+export const createHierarchyUnit = ({ name, code, description, operationId }, csrfToken) => hierarchyRequest('/api/hierarchy/units', {
+  method: 'POST',
+  csrfToken,
+  body: JSON.stringify({ name, code, description, operationId }),
+})
+export const editHierarchyUnit = ({ unitId, name, code, description, operationId, expectedRevision }, csrfToken) => hierarchyRequest(`/api/hierarchy/units/${encodeURIComponent(unitId)}`, {
+  method: 'PATCH',
+  csrfToken,
+  body: JSON.stringify({ name, code, description, operationId, ...(expectedRevision ? { expectedRevision } : {}) }),
+})
+export const assignHierarchyHead = ({ unitId, userId, operationId }, csrfToken) => hierarchyRequest(`/api/hierarchy/units/${encodeURIComponent(unitId)}/head`, {
+  method: 'POST',
+  csrfToken,
+  body: JSON.stringify({ userId, operationId }),
+})
+export const assignHierarchySpecialist = ({ unitId, userId, operationId }, csrfToken) => hierarchyRequest(`/api/hierarchy/units/${encodeURIComponent(unitId)}/specialists`, {
+  method: 'POST',
+  csrfToken,
+  body: JSON.stringify({ userId, operationId }),
+})
+export const changeHierarchyHead = ({ unitId, newHeadUserId, operationId, expectedRevision }, csrfToken) => hierarchyRequest(`/api/hierarchy/units/${encodeURIComponent(unitId)}/change-head`, {
+  method: 'POST',
+  csrfToken,
+  body: JSON.stringify({ newHeadUserId, operationId, ...(expectedRevision ? { expectedRevision } : {}) }),
+})
+export const reassignHierarchySpecialist = ({ userId, destinationUnitId, operationId, expectedRevision }, csrfToken) => hierarchyRequest(`/api/hierarchy/specialists/${encodeURIComponent(userId)}/reassign`, {
+  method: 'POST',
+  csrfToken,
+  body: JSON.stringify({ destinationUnitId, operationId, ...(expectedRevision ? { expectedRevision } : {}) }),
+})
 export const saveHierarchy = (assignments, csrfToken) => hierarchyRequest('/api/hierarchy', {
   method: 'PUT',
   csrfToken,

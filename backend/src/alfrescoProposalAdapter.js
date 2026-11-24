@@ -8,6 +8,7 @@ import { officialEmissionName } from './officialEmissionService.js'
 import { belongsToFolder } from './dispatchPilotScope.js'
 import { canAttendSession, ownsAssignment, assignmentIsActive } from './attentionPolicy.js'
 import { assertEnvelopeExtensionsPreserved } from './envelopeExtensions.js'
+import { assertInterventionMutable } from './closedInterventionPolicy.js'
 
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status = 409) => { throw Object.assign(new Error(code), { status }) }
@@ -50,7 +51,9 @@ export function createAlfrescoProposalAdapter(settings, { fetchImpl = globalThis
   async function readOriginal(id, session) {
     const n = await node(id, session)
     if (n.id !== id || n.nodeType !== 'cm:content' || !n.isFile || n.content?.mimeType !== 'application/pdf' || !n.allowableOperations?.includes('update')) fail('PROPOSAL_ORIGINAL_FORBIDDEN', 403)
-    return { node: n, raw: n.properties?.['gd:asignaciones'], envelope: parseAssignments(n.properties?.['gd:asignaciones'], id) }
+    const envelope = parseAssignments(n.properties?.['gd:asignaciones'], id)
+    assertInterventionMutable(envelope, String(session.dependency).toLowerCase())
+    return { node: n, raw: n.properties?.['gd:asignaciones'], envelope }
   }
   async function save(id, envelope, raw, session) {
     const serialized = JSON.stringify(envelope)

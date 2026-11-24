@@ -9,6 +9,7 @@ import { allowedRecipientRoles } from './dispatchPolicy.js'
 import { validateReviewProcesses, assertReviewResponseLink } from './responseReview.js'
 import { validateProposalJournal } from './responseProposalJournal.js'
 import { assertEnvelopeExtensionsPreserved, validateEnvelopeExtensions } from './envelopeExtensions.js'
+import { assertInterventionMutable } from './closedInterventionPolicy.js'
 
 export const assignmentProperty = 'gd:asignaciones'
 export const responsibleProperty = 'gd:responsablesActuales'
@@ -195,6 +196,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     const actor = await read(input.documentId, session.authorization) // Actor ACL cannot be bypassed by the writer.
     await verifyPilotDocumentScope(settings, session, actor.node, request)
     const { node, envelope, raw } = await read(input.documentId)
+    assertInterventionMutable(envelope, input.senderDependency)
     if (!node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
     const existing = envelope.dispatches.find((record) => record.senderUserId === input.senderUserId && record.requestKey === input.requestKey)
     if (existing) {
@@ -257,6 +259,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     const actor = await read(input.documentId, session.authorization)
     await verifyAttentionDocumentScope(settings, session, actor.node, request)
     const stored = await read(input.documentId)
+    assertInterventionMutable(stored.envelope, String(session.dependency).toLowerCase())
     if (!stored.node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
     const record = stored.envelope.dispatches.find((dispatch) => dispatch.recipients.some((recipient) => recipient.id === input.assignmentId))
     const assignment = record?.recipients.find((recipient) => recipient.id === input.assignmentId)
@@ -369,6 +372,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
       }
       if (value.assignment && !assignmentIsActive(value.assignment)) fail('ASSIGNMENT_NOT_ACTIVE', 409)
       assertReviewResponseLink(value.envelope, input.responseDocumentId)
+      assertInterventionMutable(value.envelope, String(session.dependency).toLowerCase())
       const existing = [...(value.envelope.responses || []), ...value.envelope.dispatches.flatMap((dispatch) => dispatch.recipients).flatMap((assignment) => assignment.responses || [])]
       if (existing.some((response) => response.documentId === input.responseDocumentId)) fail('RESPONSE_ALREADY_LINKED', 409)
       const response = await validateResponse(input, session)

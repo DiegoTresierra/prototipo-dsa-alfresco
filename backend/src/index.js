@@ -24,8 +24,111 @@ import { buildGenericPdfForm } from './pdfCreation.js'
 import { genericActorGet, verifyGenericRecipient } from './genericCreation.js'
 import { createOfficialEmissionService, hasInstitutionalRead } from './officialEmissionService.js'
 import { listInstitutionalEmitted } from './emittedDocuments.js'
+import { createHierarchyDirectory } from './hierarchyDirectory.js'
+import { createHierarchyRepository } from './hierarchyRepository.js'
+import { createHierarchyAuditRepository } from './hierarchyAuditRepository.js'
+import { createHierarchyAuditReadService } from './hierarchyAuditReadService.js'
+import { createHierarchyUnitCreationService } from './hierarchyUnitCreationService.js'
+import { createHierarchyUnitEditService } from './hierarchyUnitEditService.js'
+import { createHierarchyHeadAssignmentService } from './hierarchyHeadAssignmentService.js'
+import { createHierarchySpecialistAssignmentService } from './hierarchySpecialistAssignmentService.js'
+import { createHierarchyHeadChangeService } from './hierarchyHeadChangeService.js'
+import { createHierarchySpecialistReassignmentService } from './hierarchySpecialistReassignmentService.js'
+import { createResponseTimesService, responseTimesDependency, responseTimesReadAllowed, responseTimesWriteAllowed } from './responseTimesService.js'
+import { createResponseTimesAlfrescoRepository, responseTimesAlfrescoConfigurationReady } from './responseTimesAlfrescoRepository.js'
+import { acquireResponseTimesPilotLease, responseTimesPilotLeaseIsHeld, setResponseTimesPilotPendingOperation } from './responseTimesPilot.js'
+import { assertHierarchyJsonWritesEnabled, createHierarchyReadService, hierarchyStorageMode, safeHierarchyReadError } from './hierarchyReadService.js'
+import { installClosureRoutes } from './closureRoutes.js'
+import { assertInterventionMutable } from './closedInterventionPolicy.js'
+import { parseAssignments } from './alfrescoDispatchRepository.js'
 
 const app = express()
+const hierarchyContainerIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
+const hierarchyServiceConfigurationReady = (() => {
+  const service = config.hierarchyService
+  const containerIds = [service.containerNodeId, service.labContainerNodeId, service.auditContainerNodeId]
+  return service.storage === 'alfresco' && Boolean(service.username && service.password) &&
+    containerIds.every((id) => hierarchyContainerIdPattern.test(id || '')) &&
+    new Set(containerIds.map((id) => id.toLowerCase())).size === containerIds.length
+})()
+const hierarchyUnitWritesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.unitWritesEnabled === true
+const hierarchyUnitEditsAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.unitEditsEnabled === true
+const hierarchyHeadWritesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.headWritesEnabled === true
+const hierarchySpecialistWritesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.specialistWritesEnabled === true
+const hierarchyHeadChangesAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.headChangesEnabled === true
+const hierarchySpecialistReassignmentsAvailable = hierarchyServiceConfigurationReady && config.hierarchyService.specialistReassignmentsEnabled === true
+const hierarchyAnyWritesAvailable = hierarchyUnitWritesAvailable || hierarchyUnitEditsAvailable || hierarchyHeadWritesAvailable || hierarchySpecialistWritesAvailable || hierarchyHeadChangesAvailable || hierarchySpecialistReassignmentsAvailable
+const hierarchyDirectory = createHierarchyDirectory(config)
+const hierarchyReadService = createHierarchyReadService({
+  repository: createHierarchyRepository(config),
+  directory: hierarchyDirectory,
+  groupMappings: config.groupMappings,
+})
+const hierarchyRepository = createHierarchyRepository(config, {
+  allowWrites: hierarchyAnyWritesAvailable,
+  validateAssignmentCandidate: hierarchyDirectory.validateAssignmentCandidate,
+})
+const hierarchyAuditRepository = createHierarchyAuditRepository(config, { allowWrites: hierarchyAnyWritesAvailable })
+const hierarchyAuditReadService = createHierarchyAuditReadService(hierarchyAuditRepository)
+const hierarchyUnitCreationService = createHierarchyUnitCreationService({
+  repository: hierarchyRepository,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchyUnitWritesAvailable,
+})
+const hierarchyUnitEditService = createHierarchyUnitEditService({
+  repository: hierarchyRepository,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchyUnitEditsAvailable,
+})
+const hierarchyHeadAssignmentService = createHierarchyHeadAssignmentService({
+  repository: hierarchyRepository,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchyHeadWritesAvailable,
+})
+const hierarchySpecialistAssignmentService = createHierarchySpecialistAssignmentService({
+  repository: hierarchyRepository,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchySpecialistWritesAvailable,
+})
+const hierarchyHeadChangeService = createHierarchyHeadChangeService({
+  repository: hierarchyRepository,
+  directory: hierarchyDirectory,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchyHeadChangesAvailable,
+})
+const hierarchySpecialistReassignmentService = createHierarchySpecialistReassignmentService({
+  repository: hierarchyRepository,
+  directory: hierarchyDirectory,
+  auditRepository: hierarchyAuditRepository,
+  writesEnabled: hierarchySpecialistReassignmentsAvailable,
+})
+const responseTimesAlfrescoReady = responseTimesAlfrescoConfigurationReady(config)
+const responseTimesPersistenceConfigured = config.responseTimes.writesEnabled === true || Boolean(config.responseTimes.storage || config.responseTimes.username ||
+  config.responseTimes.password || config.responseTimes.containerNodeId)
+let releaseResponseTimesPilotLease = () => {}
+let responseTimesPilotLeaseReady = false
+try {
+  releaseResponseTimesPilotLease = acquireResponseTimesPilotLease(config)
+  responseTimesPilotLeaseReady = responseTimesPilotLeaseIsHeld(config)
+} catch (error) {
+  console.warn('[response-times-pilot] writer lease unavailable; response-time API remains read-only', {
+    code: error.code || 'RESPONSE_TIMES_PILOT_LEASE_UNAVAILABLE',
+  })
+}
+process.once('exit', releaseResponseTimesPilotLease)
+const responseTimesWritesAvailable = responseTimesAlfrescoReady && config.responseTimes.writesEnabled === true &&
+  responseTimesPilotLeaseReady
+const responseTimesRepository = responseTimesAlfrescoReady
+  ? createResponseTimesAlfrescoRepository(config, {
+    allowWrites: responseTimesWritesAvailable ? () => responseTimesPilotLeaseIsHeld(config) : false,
+  })
+  : undefined
+const responseTimesService = createResponseTimesService({
+  writesEnabled: responseTimesWritesAvailable,
+  repository: responseTimesRepository,
+  persistenceConfigurationInvalid: responseTimesPersistenceConfigured && !responseTimesAlfrescoReady,
+  onPendingOperation: (operation) => setResponseTimesPilotPendingOperation(config, operation),
+})
 const officialEmissionService = createOfficialEmissionService(config)
 process.once('exit', officialEmissionService.release)
 const dispatchRepository = createDispatchRepository(config)
@@ -195,6 +298,8 @@ async function requireInstitutionalIdentity(request, response, next) {
     return response.status(error.status || 503).json({ error: error.message })
   }
 }
+
+installClosureRoutes(app, config, { repository: dispatchRepository, requireSession, requireCsrf })
 
 app.get('/api/auth/login', async (request, response) => {
   try {
@@ -400,18 +505,91 @@ function requireDeliveryLock(request, response, next) {
     return true
   }
 
+  app.get('/api/settings/response-times', requireSession, requireInstitutionalIdentity, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    const session = request.session
+    if (!responseTimesReadAllowed(session)) {
+      return response.status(403).json({ error: 'RESPONSE_TIMES_READ_NOT_ALLOWED' })
+    }
+    const dependency = responseTimesDependency(session, config.groupMappings.dependencies)
+    if (!dependency) return response.status(403).json({ error: 'RESPONSE_TIMES_DEPENDENCY_NOT_CONFIGURED' })
+    try {
+      return response.json(await responseTimesService.read(dependency.toLowerCase()))
+    } catch (error) {
+      const code = error.code === 'RESPONSE_TIMES_ALFRESCO_CONFIGURATION_INVALID'
+        ? error.code : 'RESPONSE_TIMES_READ_UNAVAILABLE'
+      return response.status(503).json({ error: code })
+    }
+  })
+
+  app.put('/api/settings/response-times', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    const session = request.session
+    if (!responseTimesWriteAllowed(session)) {
+      return response.status(403).json({ error: 'RESPONSE_TIMES_DIRECTOR_REQUIRED' })
+    }
+    const dependency = responseTimesDependency(session, config.groupMappings.dependencies)
+    if (!dependency) return response.status(403).json({ error: 'RESPONSE_TIMES_DEPENDENCY_NOT_CONFIGURED' })
+    const actorId = session.alfresco?.id || session.user?.id || ''
+    try {
+      const result = await responseTimesService.update(dependency.toLowerCase(), actorId, request.body)
+      return response.json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'RESPONSE_TIMES_UPDATE_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+      })
+    }
+  })
+
   app.get('/api/hierarchy', requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')
     if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
     try {
-      const dependency = String(request.session.dependency).toLowerCase()
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    const dependency = String(request.session.dependency).toLowerCase()
+    const director = {
+      id: request.session.alfresco?.id || request.session.user?.id || '',
+      displayName: request.session.alfresco?.displayName || request.session.user?.name || request.session.user?.id || 'Director',
+    }
+    if (storageMode === 'alfresco') {
+      try {
+        const directoryDependency = Object.keys(config.groupMappings.dependencies || {}).find((key) => key.toLowerCase() === dependency) || dependency.toUpperCase()
+        const [hierarchy, pendingHeadChanges, pendingSpecialistReassignments] = await Promise.all([
+          hierarchyReadService.readDependency(dependency),
+          hierarchyHeadChangesAvailable ? hierarchyHeadChangeService.listPendingChanges(directoryDependency) : [],
+          hierarchySpecialistReassignmentsAvailable ? hierarchySpecialistReassignmentService.listPendingReassignments(directoryDependency) : [],
+        ])
+        return response.json({
+          dependency,
+          director,
+          ...hierarchy,
+          pendingHeadChanges,
+          pendingSpecialistReassignments,
+          capabilities: {
+            createUnits: hierarchyUnitWritesAvailable,
+            editUnits: hierarchyUnitEditsAvailable,
+            assignHeads: hierarchyHeadWritesAvailable,
+            assignSpecialists: hierarchySpecialistWritesAvailable,
+            changeHeads: hierarchyHeadChangesAvailable,
+            reassignSpecialists: hierarchySpecialistReassignmentsAvailable,
+          },
+        })
+      } catch (error) {
+        const safe = safeHierarchyReadError(error)
+        return response.status(safe.status).json({ error: safe.error })
+      }
+    }
+    try {
       const directory = await loadDispatchDirectory(config)
       return response.json({
         dependency,
-        director: {
-          id: request.session.alfresco?.id || request.session.user?.id || '',
-          displayName: request.session.alfresco?.displayName || request.session.user?.name || request.session.user?.id || 'Director',
-        },
+        director,
         recipients: directory.recipients.filter((recipient) => recipient.dependency === dependency),
         assignments: getHierarchyAssignments(dependency),
       })
@@ -420,9 +598,286 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
+  app.get('/api/hierarchy/audit', requireSession, async (request, response) => {
+    response.set('Cache-Control', 'no-store')
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_AUDIT_ALFRESCO_REQUIRED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    try {
+      const result = await hierarchyAuditReadService.list({ dependency: dependencyKey, query: request.query })
+      return response.json(result)
+    } catch (error) {
+      const status = error.status === 400 ? 400 : error.status === 403 ? 403 : 503
+      const knownValidation = status === 400 || status === 403
+      return response.status(status).json({ error: knownValidation ? error.code : 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
+    }
+  })
+
+  app.patch('/api/hierarchy/units/:unitId', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchyUnitEditsAvailable) return response.status(403).json({ error: 'HIERARCHY_UNIT_EDITS_DISABLED' })
+    const dependency = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependency) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const allowedFields = new Set(['name', 'code', 'description', 'operationId', 'expectedRevision'])
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) ||
+        Object.keys(request.body).some((key) => !allowedFields.has(key))) {
+      return response.status(400).json({ error: 'HIERARCHY_UNIT_CHANGE_FIELDS_INVALID' })
+    }
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      const result = await hierarchyUnitEditService.editUnit({
+        unitId: request.params.unitId,
+        name: request.body.name,
+        code: request.body.code,
+        description: request.body.description,
+        operationId: request.body.operationId,
+        expectedRevision: request.body.expectedRevision,
+        dependency,
+        actorId,
+      })
+      return response.status(200).json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'HIERARCHY_UNIT_EDIT_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.unitId ? { unitId: error.unitId } : {}),
+        ...(error.causeCode ? { causeCode: error.causeCode } : {}),
+      })
+    }
+  })
+
+  app.post('/api/hierarchy/units', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchyUnitWritesAvailable) {
+      return response.status(403).json({ error: 'HIERARCHY_UNIT_WRITES_DISABLED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      const result = await hierarchyUnitCreationService.createUnit({
+        operationId: request.body?.operationId,
+        name: request.body?.name,
+        code: request.body?.code,
+        description: request.body?.description,
+        dependency: dependencyKey,
+        actorId,
+      })
+      return response.status(result.unit.reused ? 200 : 201).json(result)
+    } catch (error) {
+      const status = error.status || 503
+      const code = error.code || 'HIERARCHY_UNIT_CREATE_FAILED'
+      return response.status(status).json({
+        error: code,
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.unitId ? { unitId: error.unitId } : {}),
+      })
+    }
+  })
+
+  app.post('/api/hierarchy/units/:unitId/head', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchyHeadWritesAvailable) {
+      return response.status(403).json({ error: 'HIERARCHY_HEAD_WRITES_DISABLED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      await hierarchyHeadChangeService.assertNoPendingChange({ dependency: dependencyKey, unitId: request.params.unitId })
+      const result = await hierarchyHeadAssignmentService.assignHead({
+        operationId: request.body?.operationId,
+        unitId: request.params.unitId,
+        userId: request.body?.userId,
+        dependency: dependencyKey,
+        actorId,
+      })
+      return response.status(result.assignment.reused ? 200 : 201).json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'HIERARCHY_HEAD_ASSIGNMENT_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.unitId ? { unitId: error.unitId } : {}),
+        ...(error.userId ? { userId: error.userId } : {}),
+        ...(error.assignmentId ? { assignmentId: error.assignmentId } : {}),
+      })
+    }
+  })
+
+  app.post('/api/hierarchy/units/:unitId/specialists', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchySpecialistWritesAvailable) {
+      return response.status(403).json({ error: 'HIERARCHY_SPECIALIST_WRITES_DISABLED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      await hierarchySpecialistReassignmentService.assertNoPendingReassignment({ dependency: dependencyKey, userId: request.body?.userId })
+      const result = await hierarchySpecialistAssignmentService.assignSpecialist({
+        operationId: request.body?.operationId,
+        unitId: request.params.unitId,
+        userId: request.body?.userId,
+        dependency: dependencyKey,
+        actorId,
+      })
+      return response.status(result.assignment.reused ? 200 : 201).json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'HIERARCHY_SPECIALIST_ASSIGNMENT_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.unitId ? { unitId: error.unitId } : {}),
+        ...(error.userId ? { userId: error.userId } : {}),
+        ...(error.assignmentId ? { assignmentId: error.assignmentId } : {}),
+      })
+    }
+  })
+
+  app.post('/api/hierarchy/specialists/:userId/reassign', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchySpecialistReassignmentsAvailable) {
+      return response.status(403).json({ error: 'HIERARCHY_SPECIALIST_REASSIGNMENTS_DISABLED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      const result = await hierarchySpecialistReassignmentService.reassign({
+        operationId: request.body?.operationId,
+        userId: request.params.userId,
+        destinationUnitId: request.body?.destinationUnitId,
+        expectedRevision: request.body?.expectedRevision,
+        dependency: dependencyKey,
+        actorId,
+      })
+      return response.status(result.reused ? 200 : 201).json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'HIERARCHY_SPECIALIST_REASSIGNMENT_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.userId ? { userId: error.userId } : {}),
+        ...(error.sourceUnitId ? { sourceUnitId: error.sourceUnitId } : {}),
+        ...(error.destinationUnitId ? { destinationUnitId: error.destinationUnitId } : {}),
+        ...(error.sourceAssignmentId ? { sourceAssignmentId: error.sourceAssignmentId } : {}),
+        ...(error.destinationAssignmentId ? { destinationAssignmentId: error.destinationAssignmentId } : {}),
+      })
+    }
+  })
+
+  app.post('/api/hierarchy/units/:unitId/change-head', requireSession, requireCsrf, async (request, response) => {
+    if (!requireOfficeHierarchy(request, response)) return
+    let storageMode
+    try {
+      storageMode = hierarchyStorageMode(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_READ_STORAGE_INVALID' })
+    }
+    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+      return response.status(409).json({ error: 'HIERARCHY_ALFRESCO_REQUIRED' })
+    }
+    if (!hierarchyHeadChangesAvailable) {
+      return response.status(403).json({ error: 'HIERARCHY_HEAD_CHANGES_DISABLED' })
+    }
+    const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
+      key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
+    if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
+    const actorId = request.session.alfresco?.id || request.session.user?.id || ''
+    try {
+      const result = await hierarchyHeadChangeService.changeHead({
+        operationId: request.body?.operationId,
+        unitId: request.params.unitId,
+        newHeadUserId: request.body?.newHeadUserId,
+        expectedRevision: request.body?.expectedRevision,
+        dependency: dependencyKey,
+        actorId,
+      })
+      return response.status(result.reused ? 200 : 201).json(result)
+    } catch (error) {
+      return response.status(error.status || 503).json({
+        error: error.code || 'HIERARCHY_HEAD_CHANGE_FAILED',
+        ...(error.operationId ? { operationId: error.operationId } : {}),
+        ...(error.operationStatus ? { operationStatus: error.operationStatus } : {}),
+        ...(error.unitId ? { unitId: error.unitId } : {}),
+        ...(error.currentHeadUserId ? { currentHeadUserId: error.currentHeadUserId } : {}),
+        ...(error.newHeadUserId ? { newHeadUserId: error.newHeadUserId } : {}),
+        ...(error.assignmentId ? { assignmentId: error.assignmentId } : {}),
+      })
+    }
+  })
+
   app.put('/api/hierarchy', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) {
       return
+    }
+    try {
+      assertHierarchyJsonWritesEnabled(config)
+    } catch (error) {
+      return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_STORAGE_CONFIGURATION_INVALID' })
     }
     const assignments = request.body?.assignments
     if (!Array.isArray(assignments) || assignments.length > 500) {
@@ -804,6 +1259,7 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
 
   try {
     // Fail before creating a PDF if the configured distribution account cannot authenticate.
+    return await dispatchRepository.withDocument(request.body.nodeId, async () => {
     const distributionHeaders = { Accept: 'application/json', Authorization: await getDistributionAuthorization() }
     const upstreamHeaders = {
       Accept: 'application/json',
@@ -814,6 +1270,7 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
     if (payload?.entry?.properties?.['gd:identidadEmision']) return response.status(403).json({ error: 'OFFICIAL_RETRY_ENDPOINT_REQUIRED' })
     const emittedEntry = payload?.entry
     if (!existing.ok || !emittedEntry || emittedEntry.parentId !== emittedNodeId || emittedEntry.createdByUser?.id !== session.alfresco.id || emittedEntry.nodeType !== 'cm:content' || emittedEntry.isFile !== true || emittedEntry.content?.mimeType !== 'application/pdf') return response.status(403).json({ error: 'DIRECTOR_RETRY_NOT_ALLOWED' })
+    assertInterventionMutable(parseAssignments(emittedEntry.properties?.['gd:asignaciones'], emittedEntry.id), recipientDependency.toLowerCase())
     createdNodeId = emittedEntry.id
     const nodeUrl = buildAlfrescoUrl(
       config.alfrescoTarget,
@@ -893,7 +1350,9 @@ app.post(['/api/documents/send-to-director', '/api/documents/retry-director-deli
     // Alfresco returns the same node from both folders; the receiver must be able to read it
     // through an explicit node ACL because secondary parents do not confer permissions.
     return response.status(201).json({ emittedEntry, receivedEntry: emittedEntry })
+    })
   } catch (error) {
+    if (['DOCUMENT_INTERVENTION_CLOSED', 'DOCUMENT_INTERVENTION_CLOSURE_PENDING'].includes(error.message)) return response.status(409).json({ error: error.message })
     if (['DISTRIBUTION_SERVICE_NOT_CONFIGURED', 'DISTRIBUTION_SERVICE_AUTH_FAILED'].includes(error.code)) return response.status(503).json({ error: error.code })
     return response.status(502).json({ error: createdNodeId ? 'DIRECTOR_NODE_PERMISSION_PARTIAL' : 'ALFRESCO_PROXY_ERROR', ...(createdNodeId ? { emittedNodeId: createdNodeId } : {}) })
   } finally {
