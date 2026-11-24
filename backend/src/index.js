@@ -36,7 +36,7 @@ import { createHierarchyHeadAssignmentService } from './hierarchyHeadAssignmentS
 import { createHierarchySpecialistAssignmentService } from './hierarchySpecialistAssignmentService.js'
 import { createHierarchyHeadChangeService } from './hierarchyHeadChangeService.js'
 import { createHierarchySpecialistReassignmentService } from './hierarchySpecialistReassignmentService.js'
-import { assertHierarchyJsonWritesEnabled, createHierarchyReadService, hierarchyStorageMode, safeHierarchyReadError } from './hierarchyReadService.js'
+import { assertHierarchyJsonWritesEnabled, assertHierarchyReadConfiguration, createHierarchyReadService, hierarchyStorageMode, safeHierarchyReadError } from './hierarchyReadService.js'
 import { installClosureRoutes } from './closureRoutes.js'
 import { assertInterventionMutable } from './closedInterventionPolicy.js'
 import { parseAssignments } from './alfrescoDispatchRepository.js'
@@ -508,6 +508,7 @@ function requireDeliveryLock(request, response, next) {
     }
     if (storageMode === 'alfresco') {
       try {
+        assertHierarchyReadConfiguration(config)
         const directoryDependency = Object.keys(config.groupMappings.dependencies || {}).find((key) => key.toLowerCase() === dependency) || dependency.toUpperCase()
         const [hierarchy, pendingHeadChanges, pendingSpecialistReassignments] = await Promise.all([
           hierarchyReadService.readDependency(dependency),
@@ -531,7 +532,8 @@ function requireDeliveryLock(request, response, next) {
         })
       } catch (error) {
         const safe = safeHierarchyReadError(error)
-        return response.status(safe.status).json({ error: safe.error })
+        return response.status(safe.status).json({ error: safe.error,
+          ...(safe.missingConfiguration ? { missingConfiguration: safe.missingConfiguration } : {}) })
       }
     }
     try {
@@ -556,16 +558,21 @@ function requireDeliveryLock(request, response, next) {
     } catch (error) {
       return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
     }
-    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+    if (storageMode !== 'alfresco') {
       return response.status(409).json({ error: 'HIERARCHY_AUDIT_ALFRESCO_REQUIRED' })
     }
     const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
       key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
     if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
     try {
+      assertHierarchyReadConfiguration(config)
       const result = await hierarchyAuditReadService.list({ dependency: dependencyKey, query: request.query })
       return response.json(result)
     } catch (error) {
+      if (error.code === 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED') {
+        const safe = safeHierarchyReadError(error)
+        return response.status(safe.status).json(safe)
+      }
       const status = error.status === 400 ? 400 : error.status === 403 ? 403 : 503
       const knownValidation = status === 400 || status === 403
       return response.status(status).json({ error: knownValidation ? error.code : 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })

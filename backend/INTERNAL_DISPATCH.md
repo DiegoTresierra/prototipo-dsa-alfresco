@@ -80,3 +80,23 @@ visible no lo sustituyen. La cola no protege contra otros procesos ni contra una
 nueva asignación concurrente por otro escritor. Las comprobaciones GET tampoco
 son una transacción ni una precondición de escritura del repositorio. Estas
 limitaciones impiden habilitar cambios administrativos reales en esta entrega.
+
+La autenticación del lector de jerarquía usa la API de tickets y verifica mediante
+GET `/people/-me-` la identidad exacta, su habilitación y ausencia de privilegios
+administrativos. Un POST de autenticación compartido entre lectores obtiene el
+ticket; las consultas posteriores lo reutilizan. Un 401 permite renovar la
+autenticación; la revalidación periódica de identidad usa GET sin crear tickets
+adicionales. Las peticiones mutables de nodos no tienen reintentos automáticos.
+El ticket permanece en memoria del backend, separado de las sesiones de usuarios
+y de los datos institucionales.
+
+El verificador `scripts/check-hierarchy-service.mjs` usa el mismo cliente y el
+contrato clásico de grupos. Solo necesita los contenedores de jerarquía y auditoría
+para leer. El contenedor LAB no es requisito de lectura; los controles de escritura
+y aislamiento de los clientes administrativos y de laboratorio siguen separados.
+
+Los registros inactivos de cambios de Jefatura o reasignaciones son historia:
+no duplican relaciones vigentes ni conservan autoridad para su antiguo titular.
+La resolución por grupos y relaciones activas no convierte una unidad temporal de
+ensayo en unidad institucional aprobada. Los códigos y las relaciones destinados a
+emisión o decisiones reales requieren validación institucional independiente.

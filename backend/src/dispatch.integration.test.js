@@ -15,6 +15,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   }
   Object.assign(process.env, {
     DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false',
+    // This scenario injects its own verified provider after testing its absence.
+    // A developer's private hierarchy configuration must not alter the fixture.
+    ALFRESCO_HIERARCHY_STORAGE: '',
     PORT: '0', SESSION_SECRET: 'dispatch-test-secret', ALFRESCO_TARGET: 'https://alfresco.invalid',
     ALFRESCO_DIAGNOSTICS: 'true',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',

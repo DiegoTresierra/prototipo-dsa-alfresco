@@ -34,6 +34,7 @@ const records = [record('initial-fixture', [people[0]])]
 const counters = { assignments: 0, directory: 0, children: 0, closureInbox: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
 let officialFixture
 let closureEnabled = false, closureClosed = false, closurePosts = 0
+let hierarchyConfigurationMissing = false
 const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
   alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
   capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
@@ -44,6 +45,8 @@ const server = http.createServer(async (request, response) => {
   if (url.pathname.startsWith('/api/')) {
     if (url.pathname === '/api/hierarchy') {
       assert.equal(request.method, 'GET', 'hierarchy browser regression cannot perform administrative writes')
+      if (hierarchyConfigurationMissing) return json({ error: 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED',
+        missingConfiguration: ['ALFRESCO_HIERARCHY_STORAGE', 'ALFRESCO_HIERARCHY_SERVICE_USERNAME', 'ALFRESCO_HIERARCHY_CONTAINER_NODE_ID'] }, 503)
       return json({ dependency: 'dsa', director: { id: 'direction-fixture', displayName: 'Dirección de ensayo' },
         revision: 'a'.repeat(64), capabilities: {}, pendingHeadChanges: [], pendingSpecialistReassignments: [],
         units: [{ id: 'unit-fixture', name: 'Unidad de ensayo', code: 'TEST', dependency: 'dsa', status: 'ACTIVA' }],
@@ -221,6 +224,15 @@ try {
   assert.ok(await evaluate("document.body.textContent.includes('Unidad de ensayo') && document.body.textContent.includes('Especialista de ensayo') && document.body.textContent.includes('solo lectura')"))
   assert.equal(await evaluate("document.querySelector('button[form=\"alfresco-create-unit-form\"]').disabled"), true)
   assert.equal(await evaluate("[...document.querySelectorAll('.settings-detail button')].some(b => /Guardar unidad|Cambiar jef|Reasignar/.test(b.textContent) && !b.disabled)"), false)
+  hierarchyConfigurationMissing = true
+  await clickText('Actualizar datos')
+  await until(() => evaluate("document.body.textContent.includes('ALFRESCO_HIERARCHY_CONTAINER_NODE_ID')"), 'explicit hierarchy configuration error')
+  assert.ok(await evaluate("document.body.textContent.includes('Falta completar la configuración lectora')"))
+  assert.equal(await evaluate("document.querySelectorAll('.office-chart__unit').length"), 0, 'failed reads do not keep an apparently verified hierarchy')
+  assert.equal(await evaluate("document.querySelector('button[form=\"alfresco-create-unit-form\"]').disabled"), true)
+  hierarchyConfigurationMissing = false
+  await clickText('Actualizar datos')
+  await until(() => evaluate("Boolean(document.querySelector('.office-chart__unit'))"), 'hierarchy recovers through a fresh GET')
   await clickText('Documentos recibidos')
   await waitAssigned(1)
   await waitIdle()
@@ -373,6 +385,7 @@ try {
   await until(() => evaluate("Boolean(document.querySelector('section[aria-label=\"Cierre de intervención\"]'))"), 'fresh per-document closure evaluation')
   assert.equal(closurePosts, 1, 'discovery and preview do not create closure writes')
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
+    hierarchyChecks: ['Alfresco units and relations read-only', 'missing configuration names visible', 'failed reads remove stale structure', 'fresh GET recovery without administrative writes'],
     closureChecks: ['backend disabled hides close', 'explicit reason and CSRF', 'one mocked close', 'read-after-close refresh', 'closure discovery and refresh without known UUID', 'Aptas/Pendientes/Cerradas tabs', 'pending versus indeterminate', 'real receipt displayed for closed intervention'],
     checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
       'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'official response issuance remains Direction-only', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],

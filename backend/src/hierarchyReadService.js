@@ -130,8 +130,30 @@ export function assertHierarchyJsonWritesEnabled(config) {
   if (mode === 'alfresco') throw failure('HIERARCHY_ALFRESCO_READ_ONLY', 409)
 }
 
+// Read readiness is independent from write flags and from any laboratory folder.
+// Only parameter names are returned; configured values and credentials stay private.
+export function assertHierarchyReadConfiguration(config) {
+  const service = config?.hierarchyService || {}
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
+  const missingConfiguration = []
+  if (service.storage !== 'alfresco') missingConfiguration.push('ALFRESCO_HIERARCHY_STORAGE')
+  if (typeof service.username !== 'string' || !service.username.trim()) missingConfiguration.push('ALFRESCO_HIERARCHY_SERVICE_USERNAME')
+  if (typeof service.password !== 'string' || !service.password) missingConfiguration.push('ALFRESCO_HIERARCHY_SERVICE_PASSWORD')
+  if (!uuid.test(service.containerNodeId || '')) missingConfiguration.push('ALFRESCO_HIERARCHY_CONTAINER_NODE_ID')
+  if (!uuid.test(service.auditContainerNodeId || '') ||
+      service.auditContainerNodeId.toLowerCase() === String(service.containerNodeId).toLowerCase()) missingConfiguration.push('ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID')
+  if (missingConfiguration.length) throw Object.assign(failure('HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED'), { missingConfiguration })
+}
+
 export function safeHierarchyReadError(error) {
   const code = String(error?.code || error?.message || '')
+  if (code === 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED') return {
+    status: 503, error: code,
+    missingConfiguration: (error.missingConfiguration || []).filter(name => [
+      'ALFRESCO_HIERARCHY_STORAGE', 'ALFRESCO_HIERARCHY_SERVICE_USERNAME', 'ALFRESCO_HIERARCHY_SERVICE_PASSWORD',
+      'ALFRESCO_HIERARCHY_CONTAINER_NODE_ID', 'ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID',
+    ].includes(name)),
+  }
   if (/HTTP_401|HTTP_403|FORBIDDEN/.test(code)) return { status: 503, error: 'HIERARCHY_ALFRESCO_ACCESS_DENIED' }
   if (/HTTP_404|CONTAINER_INVALID|NODE_ID/.test(code)) return { status: 503, error: 'HIERARCHY_ALFRESCO_CONFIGURATION_INVALID' }
   if (/INVALID|MISMATCH|DUPLICATE|OUT_OF_SCOPE|RELATION/.test(code)) return { status: 409, error: 'HIERARCHY_ALFRESCO_DATA_INVALID' }

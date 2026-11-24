@@ -306,3 +306,9 @@ test('does not write by default and reports permission/authentication errors wit
     await assert.rejects(repo.listUnits(), (error) => error.status === status)
   }
 })
+
+test('a custom unit named like the hierarchy root is not the configured standard container', async () => {
+  const fake = fakeAlfresco()
+  fake.nodes.get(containerId).nodeType = 'gdo:unidad'
+  await assert.rejects(repository(fake).listUnits(), /HIERARCHY_CONTAINER_INVALID/)
+})

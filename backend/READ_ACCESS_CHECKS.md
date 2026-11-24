@@ -32,3 +32,64 @@ Una asociación secundaria no concede lectura. Un 403 de /parents puede impedir 
 Jefatura conserva la política de propios/Por conocimiento y asignaciones Por atender; leer no concede responsabilidad, derivación ni aprobación. Para revisores futuros, integrar autoridad institucional específica sin acceso global por UUID.
 
 Conservar evidencia fuera del repositorio: caso, fecha, actor, estados HTTP, tamaño, tipo y hash cuando proceda. No almacenar tokens ni PDF institucional en Git, capturas públicas o reportes de CI. Las ACL faltantes requieren decisión humana independiente.
+
+## Recorrido por rol sin escrituras
+
+Abrir el frontend e iniciar sesión manualmente con cada cuenta de ensayo. Repetir
+por separado con Dirección de cada dependencia, una Jefatura y un Especialista.
+No emplear las credenciales técnicas como si fueran esas sesiones. Usar siempre
+el mismo origen del navegador para conservar la sesión; no copiar cookies o tickets.
+
+| GET | Dirección | Jefatura | Especialista |
+| --- | --- | --- | --- |
+| `/api/auth/me` | Identidad de la sesión | Identidad de la sesión | Identidad de la sesión |
+| `/api/documents/emitted` | Originales de su dependencia | Emisiones propias autorizadas | Emisiones propias autorizadas |
+| `/api/documents/dispatches` | Asignaciones y despachos visibles | Encargos y derivaciones propias | Encargos propios |
+| `/api/documents/dispatches?include=documents` | No corresponde | Metadatos autorizados por UUID | Metadatos autorizados por UUID |
+| `/api/directory/dispatch-recipients` | Roles destinatarios permitidos | Especialistas con supervisión acreditada | 403: no deriva |
+| `/api/hierarchy` y `/api/hierarchy/audit` | Lectura administrativa institucional | 403 | 403 |
+| `/api/documents/closure` | Bandeja protegida por dependencia | 403 | 403 |
+
+Un 503 de jerarquía sin configuración no es prueba de que Alfresco esté caído.
+`HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED` enumera únicamente nombres de parámetros.
+Completar manualmente el almacenamiento `alfresco`, la identidad lectora autorizada,
+su secreto y los UUID verificados de los contenedores institucional y de auditoría.
+La consulta no requiere el contenedor LAB ni flags de escritura. Un 403 al consultar
+un contenedor candidato impide acreditarlo; no demuestra ausencia de relaciones.
+
+Este fragmento opcional se ejecuta en la consola del navegador ya autenticado.
+Solo efectúa GET y produce un resumen acotado, sin tokens, títulos ni UUID documentales:
+
+```js
+await (async () => {
+  const get = async path => {
+    const response = await fetch(path, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+    const body = await response.json().catch(() => ({}))
+    return { status: response.status, body }
+  }
+  const me = await get('/api/auth/me')
+  if (me.status !== 200) return { sessionStatus: me.status, authenticated: false }
+  const role = me.body.functionalRole
+  const paths = ['/api/documents/emitted', '/api/documents/dispatches', '/api/directory/dispatch-recipients',
+    '/api/hierarchy', '/api/hierarchy/audit', '/api/documents/closure']
+  if (['jefe-unidad', 'especialista'].includes(role)) paths.push('/api/documents/dispatches?include=documents')
+  const results = []
+  for (const path of paths) {
+    try {
+      const { status, body } = await get(path)
+      results.push({ path, status, error: body.error, persistence: body.persistence, source: body.source,
+        complete: body.complete, documents: body.documents?.length, assignments: body.dispatches?.length,
+        recipients: body.recipients?.length, closureCounts: body.counts, missingConfiguration: body.missingConfiguration })
+    } catch { results.push({ path, status: 'NETWORK_UNAVAILABLE' }) }
+  }
+  return { actor: { id: me.body.alfresco?.id, functionalRole: role, dependency: me.body.dependency,
+    authorizationStatus: me.body.authorizationStatus }, results }
+})()
+```
+
+Además, abrir un PDF de su bandeja y comprobar GET de metadatos y contenido no vacío.
+Para un caso ajeno usar un UUID de ensayo autorizado para la prueba negativa y exigir
+rechazo del backend y de Alfresco. La consulta de bandeja no sustituye ese control.
+En Aprobar cierres, seleccionar una fila solo para obtener una evaluación GET nueva;
+no pulsar botones de decisión. Las categorías, los contadores y sus bloqueos deben
+provenir del servicio protegido, nunca de una evaluación ejecutada como cuenta técnica.

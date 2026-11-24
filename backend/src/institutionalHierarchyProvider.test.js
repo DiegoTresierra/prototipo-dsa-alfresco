@@ -45,6 +45,18 @@ test('reviewers resolve from current unit assignment and exact live institutiona
   assert.deepEqual((await provider.resolveReviewers({ ...input, stage: 'direccion' })).reviewers.map(p => p.userId), ['director'])
 })
 
+test('historical reassignment records do not duplicate active duties or retain authority for the previous head', async () => {
+  const { state, provider } = fixture()
+  state.assignments.push({ ...state.assignments[1], unitId: 'unit-b', status: 'INACTIVA' })
+  assert.deepEqual((await provider.resolveSpecialists({ userId: 'head', dependency: 'dsa' })).members.map(p => p.userId), ['staff'])
+  state.assignments[0].status = 'INACTIVA'
+  state.assignments.push({ ...state.assignments[0], userId: 'replacement-head', status: 'ACTIVA' })
+  state.people.set('replacement-head', 'jefe-unidad')
+  const input = { authorUserId: 'staff', authorRole: 'especialista', dependency: 'dsa', stage: 'jefatura' }
+  assert.deepEqual((await provider.resolveReviewers(input)).reviewers.map(p => p.userId), ['replacement-head'])
+  await assert.rejects(provider.resolveSpecialists({ userId: 'head', dependency: 'dsa' }), /ACTIVE_RELATION_AMBIGUOUS/)
+})
+
 test('missing, duplicated, disabled or revoked supervisors never yield authority', async () => {
   for (const kind of ['missing', 'duplicate', 'revoked', 'changed', 'pending']) {
     const { state, provider } = fixture()

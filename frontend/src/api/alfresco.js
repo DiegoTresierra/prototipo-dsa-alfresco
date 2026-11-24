@@ -178,12 +178,17 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_ALFRESCO_HTTP_409: 'Alfresco informó un conflicto al crear la unidad o el evento de auditoría.',
       HIERARCHY_ALFRESCO_ACCESS_DENIED: 'La cuenta técnica no tiene permiso para consultar la jerarquía en Alfresco.',
       HIERARCHY_ALFRESCO_CONFIGURATION_INVALID: 'La configuración del contenedor de jerarquías en Alfresco no es válida.',
+      HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED: 'Falta completar la configuración lectora de jerarquía. No se cargaron datos locales como alternativa.',
       HIERARCHY_ALFRESCO_READ_UNAVAILABLE: 'Alfresco no está disponible para consultar la jerarquía. No se cargaron datos locales como alternativa.',
       HIERARCHY_ALFRESCO_DATA_INVALID: 'Alfresco devolvió datos de jerarquía inconsistentes. Solicita una revisión antes de continuar.',
       ORGANIZATION_STORE_UNAVAILABLE: 'No se pudo leer o guardar la estructura de la oficina en el BFF.',
       HIERARCHY_SAVE_FAILED: 'No se pudo guardar la estructura de la oficina.',
     }
     const error = new Error(messages[body.error] || body.error || `La consulta de oficina falló (HTTP ${response.status}).`)
+    if (body.error === 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED' && Array.isArray(body.missingConfiguration)) {
+      const names = body.missingConfiguration.filter(name => /^ALFRESCO_HIERARCHY_(STORAGE|SERVICE_USERNAME|SERVICE_PASSWORD|CONTAINER_NODE_ID|AUDIT_CONTAINER_NODE_ID)$/.test(name))
+      if (names.length) error.message += ` Parámetros: ${names.join(', ')}.`
+    }
     error.code = body.error
     error.status = response.status
     error.operationId = body.operationId

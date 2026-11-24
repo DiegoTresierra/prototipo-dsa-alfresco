@@ -44,7 +44,8 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     if (parsed.hostname === '127.0.0.1') return realFetch(url, options)
     assert.equal(parsed.hostname, 'hierarchy.invalid')
     const method = options.method || 'GET'
-    calls.push({ method, pathname: parsed.pathname })
+    calls.push({ method, pathname: parsed.pathname,
+      credentialScope: actors.has(options.headers?.Authorization) ? 'actor' : 'service' })
     if (method === 'POST' && parsed.pathname.endsWith('/authentication/versions/1/tickets')) return Response.json({ entry: { id: 'fixture-ticket' } }, { status: 201 })
     if (method === 'POST' && parsed.pathname.endsWith('/nodes/upload-folder/children')) {
       assert.ok(options.body instanceof FormData, 'the backend reconstructs the multipart body')
@@ -286,6 +287,20 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await failedRead.json()).error, 'HIERARCHY_ALFRESCO_READ_UNAVAILABLE')
   assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), jsonBeforeFailedRead)
   failAlfrescoRead = false
+  const readerConfiguration = config.hierarchyService
+  config.hierarchyService = {}
+  try {
+    const missingReader = await realFetch(`${base}/api/hierarchy`, { headers: director })
+    assert.equal(missingReader.status, 503)
+    const body = await missingReader.json()
+    assert.equal(body.error, 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED')
+    assert.ok(body.missingConfiguration.includes('ALFRESCO_HIERARCHY_SERVICE_USERNAME'))
+    assert.ok(body.missingConfiguration.includes('ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID'))
+    assert.equal(JSON.stringify(body).includes(readerConfiguration.password), false)
+    const missingAudit = await realFetch(`${base}/api/hierarchy/audit`, { headers: director })
+    assert.equal(missingAudit.status, 503)
+    assert.equal((await missingAudit.json()).error, 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED')
+  } finally { config.hierarchyService = readerConfiguration }
   const original = fs.readFileSync(config.organizationStorePath, 'utf8')
   const actor = actors.get('Basic director-fixture')
   actor.groups = ['GROUP_DSA', 'GROUP_STAFF']
@@ -321,4 +336,9 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await realFetch(uploadUrl, { method: 'POST', headers: uploadHeaders, body: form() })).status, 201)
   assert.deepEqual(creations[0], ['filedata', 'name', 'nodeType', 'cm:title'])
   assert.equal((await realFetch(uploadUrl.replace('upload-folder', 'dsa-emitted'), { method: 'POST', headers: { ...uploadHeaders, 'X-UAC-Recipient-User': 'forbidden' }, body: form() })).status, 403, 'generic upload never bypasses official Emitidos, even when the flag is disabled')
+  assert.ok(calls.some(call => call.pathname.endsWith(`/nodes/${containerId}`)), 'the service reader was exercised')
+  assert.ok(calls.filter(call => call.pathname.endsWith(`/nodes/${containerId}`)).every(call => call.credentialScope === 'service'))
+  assert.ok(calls.some(call => call.pathname.endsWith('/nodes/upload-folder')), 'the documentary actor was exercised')
+  assert.ok(calls.filter(call => /\/nodes\/upload-folder(?:\/children)?$/.test(call.pathname)).every(call => call.credentialScope === 'actor'),
+    'hierarchy credentials never replace the authenticated actor for documentary access or creation')
 })

@@ -190,18 +190,18 @@ export function createHierarchyAuditRepository(settings, {
   const auditContainerId = hierarchy.auditContainerNodeId
   let containerPromise
 
-  function assertConfigured() {
+  function assertConfigured({ writing = false } = {}) {
     if (hierarchy.storage !== 'alfresco') throw failure('HIERARCHY_STORAGE_MUST_BE_ALFRESCO', 503)
     if (!uuidPattern.test(auditContainerId || '') || !uuidPattern.test(hierarchy.containerNodeId || '') ||
-        !uuidPattern.test(hierarchy.labContainerNodeId || '')) {
+        writing && !uuidPattern.test(hierarchy.labContainerNodeId || '')) {
       throw failure('HIERARCHY_AUDIT_CONTAINER_CONFIGURATION_INVALID', 503)
     }
-    const ids = [auditContainerId, hierarchy.containerNodeId, hierarchy.labContainerNodeId].map((id) => id.toLowerCase())
+    const ids = [auditContainerId, hierarchy.containerNodeId, ...(writing ? [hierarchy.labContainerNodeId] : [])].map((id) => id.toLowerCase())
     if (new Set(ids).size !== ids.length) throw failure('HIERARCHY_CONTAINERS_MUST_BE_DISTINCT', 409)
   }
 
   function assertWritesEnabled() {
-    assertConfigured()
+    assertConfigured({ writing: true })
     if (allowWrites !== true) throw failure('HIERARCHY_AUDIT_WRITES_DISABLED', 403)
   }
 
@@ -210,7 +210,7 @@ export function createHierarchyAuditRepository(settings, {
     if (!containerPromise) {
       containerPromise = service.getNode(auditContainerId).then((entry) => {
         const name = entry.name || entry.properties?.['cm:name']
-        if (entry.id !== auditContainerId || name !== 'GD_JERARQUIAS_AUDITORIA' || entry.isFolder !== true) {
+        if (entry.id !== auditContainerId || name !== 'GD_JERARQUIAS_AUDITORIA' || entry.nodeType !== 'cm:folder' || entry.isFolder !== true) {
           throw failure('HIERARCHY_AUDIT_CONTAINER_INVALID', 409)
         }
         return entry

@@ -1,8 +1,12 @@
 import { readClassicInstitutionalGroup } from './dispatchDirectory.js'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 
 const corePath = '/alfresco/api/-default-/public/alfresco/versions/1'
 const authenticationPath = '/alfresco/api/-default-/public/authentication/versions/1'
+// Authentication state only: no institutional or documentary authority is cached.
+// Separate transports and credential scopes cannot share tickets.
+const authenticationPools = new WeakMap()
 const groupIdPattern = /^GROUP_[A-Za-z0-9_-]+$/
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const expectedTypes = {
@@ -38,8 +42,18 @@ function safePropertyName(value) {
 }
 
 export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fetch) {
-  let cachedAuthorization
-  let expiresAt = 0
+  function authenticationState() {
+    let pool = authenticationPools.get(fetchImpl)
+    if (!pool) { pool = new WeakMap(); authenticationPools.set(fetchImpl, pool) }
+    const service = settings.hierarchyService
+    const scope = createHash('sha256').update(JSON.stringify([settings.alfrescoTarget, service.username, service.password])).digest('hex')
+    let state = pool.get(service)
+    if (!state || state.scope !== scope) {
+      state = { scope, authorization: null, verifiedUntil: 0, pending: null }
+      pool.set(service, state)
+    }
+    return state
+  }
 
   function assertConfigured() {
     const service = settings?.hierarchyService
@@ -74,44 +88,58 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     }
   }
 
-  async function getAuthorization({ forceRefresh = false } = {}) {
+  async function getAuthorization({ forceRefresh = false, rejectedAuthorization } = {}) {
     assertConfigured()
-    if (!forceRefresh && cachedAuthorization && Date.now() < expiresAt) return cachedAuthorization
-    const service = settings.hierarchyService
-    const credentials = Buffer.from(`${service.username}:${service.password}`).toString('base64')
-    const ticketResponse = await request(`${authenticationPath}/tickets`, {
-      method: 'POST',
-      body: { userId: service.username, password: service.password },
-      authorization: `Basic ${credentials}`,
-    })
-    const ticket = ticketResponse?.entry?.id
-    if (typeof ticket !== 'string' || !ticket) throw failure('HIERARCHY_SERVICE_TICKET_INVALID', 502)
-    const authorization = `Basic ${Buffer.from(ticket, 'utf8').toString('base64')}`
-    const identity = (await request(`${corePath}/people/-me-`, { authorization }))?.entry
-    if (identity?.id !== service.username || identity.enabled !== true || identity.capabilities?.isAdmin !== false) {
-      cachedAuthorization = undefined
-      expiresAt = 0
-      throw failure('HIERARCHY_SERVICE_IDENTITY_INVALID', 403)
+    const state = authenticationState()
+    if (forceRefresh && state.authorization && (!rejectedAuthorization || rejectedAuthorization === state.authorization)) {
+      state.authorization = null
+      state.verifiedUntil = 0
     }
-    cachedAuthorization = authorization
-    expiresAt = Date.now() + 4 * 60 * 1000
-    return authorization
+    if (state.pending) return state.pending
+    if (state.authorization && Date.now() < state.verifiedUntil) return state.authorization
+    const service = settings.hierarchyService
+    state.pending = (async () => {
+      try {
+        let authorization = state.authorization
+        if (!authorization) {
+          const result = await request(`${authenticationPath}/tickets`, {
+            method: 'POST', body: { userId: service.username, password: service.password },
+            authorization: `Basic ${Buffer.from(`${service.username}:${service.password}`).toString('base64')}`,
+          })
+          if (typeof result?.entry?.id !== 'string' || !result.entry.id) throw failure('HIERARCHY_SERVICE_TICKET_INVALID', 502)
+          authorization = `Basic ${Buffer.from(result.entry.id, 'utf8').toString('base64')}`
+        }
+        const identity = (await request(`${corePath}/people/-me-`, { authorization }))?.entry
+        if (identity?.id !== service.username || identity.enabled !== true || identity.capabilities?.isAdmin !== false) {
+          throw failure('HIERARCHY_SERVICE_IDENTITY_INVALID', 403)
+        }
+        state.authorization = authorization
+        state.verifiedUntil = Date.now() + 4 * 60 * 1000
+        return authorization
+      } catch (error) {
+        state.authorization = null
+        state.verifiedUntil = 0
+        throw error
+      } finally { state.pending = null }
+    })()
+    return state.pending
   }
 
-  async function getWithTicketRetry(path, options = {}) {
-    let authorization = await getAuthorization()
+  async function getWithAuthorizationRetry(path, options = {}) {
+    let authorization
     try {
+      authorization = await getAuthorization()
       return await request(path, { ...options, authorization })
     } catch (error) {
       if (error.status !== 401) throw error
-      authorization = await getAuthorization({ forceRefresh: true })
+      authorization = await getAuthorization({ forceRefresh: true, rejectedAuthorization: authorization })
       return request(path, { ...options, authorization })
     }
   }
 
   async function getPerson(personId) {
     if (typeof personId !== 'string' || !personId.trim()) throw failure('HIERARCHY_PERSON_ID_REQUIRED', 400)
-    const payload = await getWithTicketRetry(`${corePath}/people/${encodeURIComponent(personId)}`)
+    const payload = await getWithAuthorizationRetry(`${corePath}/people/${encodeURIComponent(personId)}`)
     if (payload?.entry?.id !== personId || typeof payload.entry.enabled !== 'boolean') {
       throw failure('HIERARCHY_PERSON_RESPONSE_INVALID', 502)
     }
@@ -125,7 +153,7 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     let hasMoreItems = true
     while (hasMoreItems) {
       const query = new URLSearchParams({ where: "(memberType='PERSON')", maxItems: '100', skipCount: String(skipCount) })
-      const payload = await getWithTicketRetry(`${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`)
+      const payload = await getWithAuthorizationRetry(`${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`)
       const list = payload?.list
       if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') {
         throw failure('HIERARCHY_GROUP_RESPONSE_INVALID', 502)
@@ -141,13 +169,13 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
   }
 
   async function getInstitutionalGroupMembers(groupId) {
-    const members = await readClassicInstitutionalGroup(groupId, path => getWithTicketRetry(path))
+    const members = await readClassicInstitutionalGroup(groupId, path => getWithAuthorizationRetry(path))
     return [...members.values()]
   }
 
   async function getGroupDetails(groupId) {
     if (!groupIdPattern.test(groupId || '')) throw failure('HIERARCHY_GROUP_MAPPING_INVALID', 503)
-    const payload = await getWithTicketRetry(`${corePath}/groups/${encodeURIComponent(groupId)}`)
+    const payload = await getWithAuthorizationRetry(`${corePath}/groups/${encodeURIComponent(groupId)}`)
     if (payload?.entry?.id !== groupId) throw failure('HIERARCHY_GROUP_RESPONSE_INVALID', 502)
     return payload.entry
   }
@@ -159,7 +187,7 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     let hasMoreItems = true
     while (hasMoreItems) {
       const query = new URLSearchParams({ maxItems: '100', skipCount: String(skipCount) })
-      const payload = await getWithTicketRetry(`${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`)
+      const payload = await getWithAuthorizationRetry(`${corePath}/groups/${encodeURIComponent(groupId)}/members?${query}`)
       const list = payload?.list
       if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') {
         throw failure('HIERARCHY_GROUP_RESPONSE_INVALID', 502)
@@ -185,7 +213,7 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     let hasMoreItems = true
     while (hasMoreItems) {
       const query = new URLSearchParams({ maxItems: '100', skipCount: String(skipCount) })
-      const payload = await getWithTicketRetry(`${corePath}/people/${encodeURIComponent(personId)}/groups?${query}`)
+      const payload = await getWithAuthorizationRetry(`${corePath}/people/${encodeURIComponent(personId)}/groups?${query}`)
       const list = payload?.list
       if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') {
         throw failure('HIERARCHY_PERSON_GROUPS_INVALID', 502)
@@ -236,14 +264,14 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
 
   async function getNode(nodeId, { include = 'properties,permissions,allowableOperations,path' } = {}) {
     if (typeof nodeId !== 'string' || !nodeId.trim()) throw failure('HIERARCHY_NODE_ID_REQUIRED', 400)
-    const payload = await getWithTicketRetry(`${corePath}/nodes/${encodeURIComponent(nodeId)}?${new URLSearchParams({ include })}`)
+    const payload = await getWithAuthorizationRetry(`${corePath}/nodes/${encodeURIComponent(nodeId)}?${new URLSearchParams({ include })}`)
     if (payload?.entry?.id !== nodeId) throw failure('HIERARCHY_NODE_RESPONSE_INVALID', 502)
     return payload.entry
   }
 
   async function listNodeChildren(parentId, { maxItems = 100, skipCount = 0, include = 'properties,permissions,allowableOperations,path' } = {}) {
     const query = new URLSearchParams({ include, maxItems: String(maxItems), skipCount: String(skipCount) })
-    const payload = await getWithTicketRetry(`${corePath}/nodes/${encodeURIComponent(parentId)}/children?${query}`)
+    const payload = await getWithAuthorizationRetry(`${corePath}/nodes/${encodeURIComponent(parentId)}/children?${query}`)
     const list = payload?.list
     if (!Array.isArray(list?.entries) || list.entries.length > maxItems ||
         list.entries.some(item => typeof item?.entry?.id !== 'string' || !item.entry.id) ||
@@ -291,7 +319,7 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
 
   async function inspectType(type) {
     const expected = expectedTypes[type]
-    const payload = await getWithTicketRetry(`/alfresco/service/api/classes/${expected.endpointName}`)
+    const payload = await getWithAuthorizationRetry(`/alfresco/service/api/classes/${expected.endpointName}`)
     const propertiesValue = payload?.properties
     const propertyEntries = Array.isArray(propertiesValue)
       ? propertiesValue
@@ -308,21 +336,21 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     assertConfigured()
     const hierarchyService = settings.hierarchyService
     const auditContainerId = hierarchyService.auditContainerNodeId
-    const labContainerId = hierarchyService.labContainerNodeId
-    if (!uuidPattern.test(auditContainerId || '') || !uuidPattern.test(labContainerId || '')) {
-      throw failure('HIERARCHY_AUDIT_OR_LAB_CONTAINER_ID_INVALID', 503)
+    if (!uuidPattern.test(auditContainerId || '')) {
+      throw failure('HIERARCHY_AUDIT_CONTAINER_NODE_ID_INVALID', 503)
     }
-    if (new Set([hierarchyService.containerNodeId.toLowerCase(), auditContainerId.toLowerCase(), labContainerId.toLowerCase()]).size !== 3) {
+    if (hierarchyService.containerNodeId.toLowerCase() === auditContainerId.toLowerCase()) {
       throw failure('HIERARCHY_CONTAINERS_MUST_BE_DISTINCT', 409)
     }
     const authorization = await getAuthorization()
     const identity = (await request(`${corePath}/people/-me-`, { authorization }))?.entry
     const containerId = settings.hierarchyService.containerNodeId
-    const containerPayload = await getWithTicketRetry(`${corePath}/nodes/${encodeURIComponent(containerId)}?include=properties,permissions,path,allowableOperations`)
+    const containerPayload = await getWithAuthorizationRetry(`${corePath}/nodes/${encodeURIComponent(containerId)}?include=properties,permissions,path,allowableOperations`)
     const container = containerPayload?.entry
     if (container?.id !== containerId) throw failure('HIERARCHY_CONTAINER_ID_MISMATCH', 502)
     const name = container.name || container.properties?.['cm:name'] || null
     if (name !== 'GD_JERARQUIAS') throw failure('HIERARCHY_CONTAINER_NAME_MISMATCH', 409)
+    if (container.nodeType !== 'cm:folder' || container.isFolder !== true) throw failure('HIERARCHY_CONTAINER_INVALID', 409)
 
     const auditContainer = await getNode(auditContainerId)
     const auditName = auditContainer.name || auditContainer.properties?.['cm:name'] || null
@@ -335,7 +363,7 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     let hasMoreItems = true
     while (hasMoreItems) {
       const query = new URLSearchParams({ include: 'properties', maxItems: '100', skipCount: String(skipCount) })
-      const payload = await getWithTicketRetry(`${corePath}/nodes/${encodeURIComponent(containerId)}/children?${query}`)
+      const payload = await getWithAuthorizationRetry(`${corePath}/nodes/${encodeURIComponent(containerId)}/children?${query}`)
       const list = payload?.list
       if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') {
         throw failure('HIERARCHY_CONTAINER_CHILDREN_INVALID', 502)
@@ -355,8 +383,8 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
     const groups = []
     const people = new Map()
     for (const groupId of groupIds) {
-      const members = await getGroupMembers(groupId)
-      groups.push({ id: groupId, memberCount: members.length })
+      const members = await getInstitutionalGroupMembers(groupId)
+      groups.push({ id: groupId, memberCount: members.length, source: 'classic' })
       for (const member of members) people.set(member.id, member)
     }
     let enabledPeople = 0

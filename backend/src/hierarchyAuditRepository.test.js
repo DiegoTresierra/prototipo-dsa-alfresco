@@ -100,7 +100,8 @@ test('creates and verifies an event node with the service identity and functiona
   assert.equal(created.dependenciaEvento, 'DSA')
   assert.equal(created.accionEvento, 'ESPECIALISTA_ASIGNADO')
   assert.equal(created.fechaEvento, '2026-11-20T10:00:00.000Z')
-  assert.equal(fake.calls.find((call) => call.method === 'POST' && call.pathname.endsWith('/tickets')) !== undefined, true)
+  assert.equal(fake.calls.filter(call => call.pathname.endsWith('/tickets')).length, 1)
+  assert.ok(fake.calls.some(call => call.method === 'GET' && call.pathname.endsWith('/people/-me-')))
   const post = fake.calls.find((call) => call.method === 'POST' && call.pathname.endsWith('/children'))
   assert.equal(post.body.nodeType, eventType)
   assert.equal(post.body.properties['gdo:actorEvento'], 'director-dsa')
@@ -195,8 +196,20 @@ test('rejects identical container IDs and is append-only through its public API'
   const fake = fakeAlfresco()
   const invalidSettings = { ...settings, hierarchyService: { ...settings.hierarchyService, labContainerNodeId: auditId } }
   const invalidRepo = createHierarchyAuditRepository(invalidSettings, { fetchImpl: fake.fetchImpl, allowWrites: true })
-  await assert.rejects(invalidRepo.listEvents({ dependency: 'DSA' }), /HIERARCHY_CONTAINERS_MUST_BE_DISTINCT/)
+  await assert.rejects(invalidRepo.createEvent(event()), /HIERARCHY_CONTAINERS_MUST_BE_DISTINCT/)
   await assert.rejects(repository(fake, { allowWrites: false }).createEvent(event()), /HIERARCHY_AUDIT_WRITES_DISABLED/)
   await repository(fake).createEvent(event())
   assert.equal(fake.calls.some((call) => call.method === 'PUT' || call.method === 'DELETE'), false)
+})
+
+test('audit reads need no laboratory folder and never enable administrative writes', async () => {
+  const fake = fakeAlfresco()
+  const readSettings = { ...settings, hierarchyService: { ...settings.hierarchyService, labContainerNodeId: '' } }
+  const repo = createHierarchyAuditRepository(readSettings, { fetchImpl: async (url, options) => {
+    assert.ok(options.method === 'GET' || options.method === 'POST' && new URL(url).pathname.endsWith('/authentication/versions/1/tickets'))
+    return fake.fetchImpl(url, options)
+  } })
+  assert.equal((await repo.listEvents({ dependency: 'DSA' })).pagination.totalItems, 0)
+  await assert.rejects(repo.createEvent(event()), /HIERARCHY_AUDIT_CONTAINER_CONFIGURATION_INVALID/)
+  assert.ok(fake.calls.every(call => call.method === 'GET' || call.method === 'POST' && call.pathname.endsWith('/tickets')))
 })

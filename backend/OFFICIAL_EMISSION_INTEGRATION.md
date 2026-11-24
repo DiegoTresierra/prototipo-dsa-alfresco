@@ -70,6 +70,49 @@ Esto puede bloquear documentos independientes mientras no exista una política b
 
 ## Preflight y puesta en servicio
 
+### Primera emisión de ensayo, después de autorización separada
+
+1. Confirmar una sesión auténtica de Dirección mediante `/api/auth/me` y los GET
+   de [lectura por rol](READ_ACCESS_CHECKS.md). Verificar membresías vigentes, lectura
+   y permiso efectivo de creación en su Emitidos; la cuenta técnica no sustituye
+   al actor. Una carpeta vacía observada por la cuenta lectora no acredita esos permisos.
+2. Preferir un documento nuevo sin destinatario para el primer ensayo. Así se prueba
+   una única emisión en su carpeta institucional sin añadir asociaciones ni ACL.
+   Una futura prueba distribuida requiere verificar aparte la lectura del destinatario
+   sobre el nodo y contenido; la asociación secundaria no concede Consumer.
+3. Comprobar los cuatro campos de identificación en el modelo y el inventario directo
+   de esa secuencia. Si Emitidos está vacío y completamente acreditado, el máximo es
+   cero y el primer número será uno. Un código/ciclo distinto no consume números;
+   numeración histórica incompatible dentro del ámbito exige conciliación aprobada.
+4. Obtener el código desde el backend. Dirección utiliza su dependencia revalidada.
+   Jefatura y Especialista requieren `ALFRESCO_DOCUMENT_ISSUER_ASSIGNMENTS_JSON` y
+   relación activa comprobada en Alfresco; no derivar siglas desde nombres. El ciclo
+   se calcula en America/Lima con inicio el 2 de enero, no desde un campo de React.
+5. Preparar un PDF de ensayo no vacío, con firma `%PDF-`, y registrar su SHA-256 en
+   evidencia privada. Mantener una única `requestKey` para el contenido y metadatos
+   elegidos. Revisar título, descripción, tipo documental, período y prioridad; no
+   enviar código, correlativo, carpeta, aspectos, permisos ni identidad oficial.
+6. Antes de habilitar cualquier flag, obtener autorización explícita, coordinar la
+   ventana sin otros escritores y confirmar una única instancia. Esto reduce el
+   riesgo y no constituye exclusión distribuida. Verificar destino exacto, leases y
+   confirmaciones del piloto y de emisión. No retirar bloqueos huérfanos automáticamente.
+7. Solo tras esa autorización, usar el endpoint existente y CSRF de la sesión. El
+   backend crea `gd:numero`, `gd:codigoDocumental`, `gd:cicloDocumental` e
+   `gd:identidadEmision`; conserva el bloqueo hasta completar la comprobación GET.
+8. Verificar UUID distinto de cualquier propuesta/original previo, ubicación Emitidos,
+   identidad idempotente, código, ciclo, correlativo decimal y hash del contenido.
+   Sin destinatario deben resultar `distributed: false` y `receivedEntry: null`, sin
+   obligaciones ficticias. Período y prioridad conservan sus advertencias de no persistencia.
+9. Ante timeout o resultado parcial, conservar PDF, campos, clave, UUID y correlativo
+   si se conocen. Conciliar antes de otra solicitud; no sustituir la clave ni reservar
+   otro número. Reanudar únicamente la misma operación cuando su estado esté acreditado.
+10. Tras una operación confirmada, reiniciar de manera controlada y repetir GET de
+    Emitidos, metadatos y contenido. Verificar la identidad desde Alfresco y que la
+    aplicación continúa rechazando mover o eliminar el oficial. No borrar locks de
+    resultados inciertos para forzar un reinicio; requieren revisión y conciliación.
+
+Esta lista no habilita escrituras ni demuestra que el ensayo real ya se haya realizado.
+
 Con destino privado y credenciales autorizadas, los scripts siguientes son GET-only:
 
 ```powershell

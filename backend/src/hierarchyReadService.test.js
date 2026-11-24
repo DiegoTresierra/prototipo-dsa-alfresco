@@ -2,10 +2,30 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   assertHierarchyJsonWritesEnabled,
+  assertHierarchyReadConfiguration,
   createHierarchyReadService,
   hierarchyStorageMode,
   safeHierarchyReadError,
 } from './hierarchyReadService.js'
+
+test('missing reader configuration is explicit and never presented as an Alfresco outage', () => {
+  assert.throws(() => assertHierarchyReadConfiguration({}), error => {
+    const safe = safeHierarchyReadError(error)
+    assert.equal(safe.error, 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED')
+    assert.equal(safe.status, 503)
+    assert.deepEqual(safe.missingConfiguration, ['ALFRESCO_HIERARCHY_STORAGE', 'ALFRESCO_HIERARCHY_SERVICE_USERNAME',
+      'ALFRESCO_HIERARCHY_SERVICE_PASSWORD', 'ALFRESCO_HIERARCHY_CONTAINER_NODE_ID', 'ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID'])
+    return true
+  })
+  const config = { hierarchyService: { storage: 'alfresco', username: 'reader-fixture', password: 'fixture-only',
+    containerNodeId: '11111111-1111-4111-8111-111111111111', auditContainerNodeId: '22222222-2222-4222-8222-222222222222' } }
+  assert.doesNotThrow(() => assertHierarchyReadConfiguration(config), 'read access does not require lab folders or write flags')
+  config.hierarchyService.auditContainerNodeId = config.hierarchyService.containerNodeId
+  assert.throws(() => assertHierarchyReadConfiguration(config), error =>
+    error.missingConfiguration.length === 1 && error.missingConfiguration[0] === 'ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID')
+  const safe = safeHierarchyReadError({ code: 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED', missingConfiguration: ['fixture-private-value'] })
+  assert.deepEqual(safe.missingConfiguration, [], 'diagnostics expose only parameter names from the allowlist')
+})
 
 const dsaUnitId = '11111111-1111-4111-8111-111111111111'
 const dtiUnitId = '22222222-2222-4222-8222-222222222222'
