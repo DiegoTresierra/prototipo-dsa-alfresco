@@ -5,12 +5,22 @@ import { createHierarchyDirectory } from './hierarchyDirectory.js'
 const serviceUsername = 'gd_jerarquias_servicio'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
-  hierarchyService: { username: serviceUsername, password: 'not-a-real-secret', containerNodeId: 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93', storage: 'alfresco' },
+  hierarchyService: { username: serviceUsername, password: 'not-a-real-secret', containerNodeId: '11111111-1111-4111-8111-111111111111', storage: 'alfresco' },
   groupMappings: {
     dependencies: { DSA: 'GROUP_GD_DSA', DTI: 'GROUP_GD_DTI' },
     functions: { direccion: 'GROUP_GD_DIRECCION', 'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD', especialista: 'GROUP_GD_ESPECIALISTA' },
   },
 }
+
+test('classic institutional membership recovers both heads without relying on the incomplete v1 listing or unit mapping', async () => {
+  const fake = fakeDirectory({ memberships: {
+    GROUP_GD_DSA: ['head-one', 'head-two'], GROUP_GD_JEFE_UNIDAD: ['head-one', 'head-two'],
+  }, people: { 'head-one': {}, 'head-two': {} } })
+  const candidates = await createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl }).listCandidates({ dependency: 'DSA', role: 'jefe-unidad' })
+  assert.deepEqual(candidates.map(person => person.id), ['head-one', 'head-two'])
+  assert.equal(fake.calls.some(call => call.pathname.endsWith('/members')), false)
+  assert.ok(candidates.every(person => person.groups.includes('GROUP_GD_DSA') && person.groups.includes('GROUP_GD_JEFE_UNIDAD')))
+})
 
 function response(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -24,12 +34,12 @@ function fakeDirectory({ groupFailures = {}, people = {}, memberships = {} } = {
     calls.push({ method, pathname: parsed.pathname })
     if (parsed.pathname.endsWith('/authentication/versions/1/tickets')) return response(201, { entry: { id: 'fake-ticket' } })
     if (parsed.pathname.endsWith('/people/-me-')) return response(200, { entry: { id: serviceUsername, enabled: true, capabilities: { isAdmin: false } } })
-    const groupMatch = parsed.pathname.match(/\/groups\/([^/]+)\/members$/)
+    const groupMatch = parsed.pathname.match(/\/service\/api\/groups\/([^/]+)\/children$/)
     if (groupMatch) {
-      const groupId = decodeURIComponent(groupMatch[1])
+      const groupId = `GROUP_${decodeURIComponent(groupMatch[1])}`
       if (groupFailures[groupId]) return response(groupFailures[groupId], { error: 'group access denied' })
-      const page = (memberships[groupId] || []).map((id) => ({ entry: { id, memberType: 'PERSON' } }))
-      return response(200, { list: { entries: page, pagination: { hasMoreItems: false } } })
+      const page = (memberships[groupId] || []).map((id) => ({ shortName: id, authorityType: 'USER' }))
+      return response(200, { data: page, paging: { skipCount: 0, totalItems: page.length } })
     }
     const personMatch = parsed.pathname.match(/\/people\/([^/]+)$/)
     if (personMatch) {
@@ -67,7 +77,7 @@ test('lists only enabled, unambiguous, nontechnical candidates belonging to the 
   assert.deepEqual(candidates.map((person) => person.id), ['dsa-specialist'])
   assert.equal(candidates[0].dependency, 'DSA')
   assert.equal(candidates[0].role, 'especialista')
-  assert.ok(fake.calls.some((call) => call.pathname.endsWith('/groups/GROUP_GD_DTI/members')))
+  assert.ok(fake.calls.some((call) => call.pathname.endsWith('/groups/GD_DTI/children')))
 })
 
 test('validates enabled status, dependency, exact function group and rejects ambiguous memberships', async () => {

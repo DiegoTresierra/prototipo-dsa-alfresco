@@ -63,7 +63,9 @@ test('generic frontend contract sends a business type and exact recipient select
     const { DocumentForm } = await server.ssrLoadModule('/src/components/DocumentForm.jsx')
     const html = renderToStaticMarkup(createElement(DocumentForm, { user: { userId: 'head', roleId: 'jefe-unidad-dsa' }, allowAlfrescoUpload: true }))
     assert.ok(html.match(/<select[^>]*name="documentType"[^>]*>/)[0].includes('required'))
-    for (const name of ['documentPeriod', 'priority']) assert.ok(!html.match(new RegExp('<select[^>]*name="' + name + '"[^>]*>'))[0].includes('required'))
+    // Generic API remains compatible, but the institutional form now uses own
+    // official emission for Head/Specialist, with the existing official inputs.
+    for (const name of ['documentPeriod', 'priority']) assert.ok(html.match(new RegExp('<select[^>]*name="' + name + '"[^>]*>'))[0].includes('required'))
   } finally {
     globalThis.fetch = realFetch
     if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow

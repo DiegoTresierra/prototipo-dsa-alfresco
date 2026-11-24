@@ -340,6 +340,7 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
   const unitLabel = (unitId) => units.find((unit) => unit.id === unitId)?.name || unitId
   const activeHeadsElsewhere = new Set(assignments.filter((assignment) => assignment.laneId === 'jefes').map((assignment) => assignment.userId))
   const enabledActions = [unitCreationEnabled && 'creación de unidades', headAssignmentEnabled && 'asignación de Jefes', headChangeEnabled && 'cambio de Jefes', specialistAssignmentEnabled && 'asignación de Especialistas'].filter(Boolean)
+  const unitDraftLocked = !unitCreationEnabled || loading || creationPending || Boolean(pendingUnitOperation)
 
   return (
     <div className="settings-detail">
@@ -360,9 +361,9 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
         <div><h2 id="alfresco-unit-form-title">Crear una unidad organizacional</h2><p className="hierarchy-card__intro">El alta requiere un nombre institucional confirmado. El servidor valida duplicados antes de crearla.</p></div>
         <form id="alfresco-create-unit-form" onSubmit={createUnit}>
           <div className="form-grid hierarchy-unit-preparation__fields">
-            <label className="form-field"><span>Nombre de la unidad</span><input autoComplete="off" disabled={Boolean(pendingUnitOperation)} maxLength={240} onChange={(event) => setUnitDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nombre institucional confirmado" required value={unitDraft.name} /></label>
-            <label className="form-field"><span>Código institucional</span><input autoComplete="off" disabled={Boolean(pendingUnitOperation)} maxLength={80} onChange={(event) => setUnitDraft((current) => ({ ...current, code: event.target.value }))} placeholder="Código confirmado (opcional)" value={unitDraft.code} /></label>
-            <label className="form-field form-field--full"><span>Descripción</span><textarea disabled={Boolean(pendingUnitOperation)} maxLength={1000} onChange={(event) => setUnitDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Descripción opcional" value={unitDraft.description} /></label>
+            <label className="form-field"><span>Nombre de la unidad</span><input autoComplete="off" disabled={unitDraftLocked} maxLength={240} onChange={(event) => setUnitDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nombre institucional confirmado" required value={unitDraft.name} /></label>
+            <label className="form-field"><span>Código institucional</span><input autoComplete="off" disabled={unitDraftLocked} maxLength={80} onChange={(event) => setUnitDraft((current) => ({ ...current, code: event.target.value }))} placeholder="Código confirmado (opcional)" value={unitDraft.code} /></label>
+            <label className="form-field form-field--full"><span>Descripción</span><textarea disabled={unitDraftLocked} maxLength={1000} onChange={(event) => setUnitDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Descripción opcional" value={unitDraft.description} /></label>
           </div>
           <button className="button-primary" disabled={!unitCreationEnabled || creationPending || loading || !unitDraft.name.trim()} type="submit">{creationPending ? 'Procesando unidad…' : pendingUnitOperation ? 'Reintentar operación pendiente' : unitCreationEnabled ? 'Guardar unidad' : 'Guardar unidad · no disponible'}</button>
         </form>

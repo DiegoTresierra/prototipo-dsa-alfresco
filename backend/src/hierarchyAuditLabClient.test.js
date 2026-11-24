@@ -2,9 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchyAuditLabClient } from './hierarchyAuditLabClient.js'
 
-const definitiveId = 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93'
-const labId = '284caaa3-8187-4af3-8caa-a38187aaf30b'
-const auditId = '097bf6f7-af28-4de1-bbf6-f7af28ede134'
+const definitiveId = '11111111-1111-4111-8111-111111111111'
+const labId = '33333333-3333-4333-8333-333333333333'
+const auditId = '22222222-2222-4222-8222-222222222222'
 const eventType = 'gdo:eventoJerarquia'
 const runId = 'LAB-AUDIT-TEST-01'
 const settings = {

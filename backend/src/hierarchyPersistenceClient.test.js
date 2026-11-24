@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchyPersistenceClient } from './hierarchyPersistenceClient.js'
 
-const productionContainerId = 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93'
+const productionContainerId = '11111111-1111-4111-8111-111111111111'
 const labContainerId = 'a0c78bf2-35f2-4f7c-878b-f235f21f7c94'
 const unitId = 'b0c78bf2-35f2-4787-878b-f235f21f7c95'
 const assignmentId = 'c0c78bf2-35f2-4787-878b-f235f21f7c96'
@@ -226,4 +226,3 @@ test('rejects a lab folder with the wrong name or a non-folder node', async () =
   fake.nodes.set(labContainerId, makeNode({ id: labContainerId, name: 'GD_JERARQUIAS_LAB', nodeType: 'cm:content', folder: false }))
   await assert.rejects(clientFor(fake).getLabContainer(), /HIERARCHY_LAB_CONTAINER_INVALID/)
 })
-

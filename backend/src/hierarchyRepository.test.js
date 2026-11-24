@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchyRepository } from './hierarchyRepository.js'
 
-const containerId = 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93'
+const containerId = '11111111-1111-4111-8111-111111111111'
 const unitId = 'b0c78bf2-35f2-4787-878b-f235f21f7c95'
 const headA = 'c0c78bf2-35f2-4787-878b-f235f21f7c96'
 const headB = 'e0c78bf2-35f2-4787-878b-f235f21f7c97'
@@ -91,6 +91,19 @@ function repository(fake, options = {}) {
     ...options,
   })
 }
+
+test('a repeated child across pages invalidates the inventory instead of claiming complete hierarchy coverage', async () => {
+  const fake = fakeAlfresco()
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith(`/nodes/${containerId}/children`)) return response(200, { list: {
+      entries: [{ entry: { id: 'same-node-fixture', nodeType: 'cm:content' } }],
+      pagination: { hasMoreItems: parsed.searchParams.get('skipCount') === '0' },
+    } })
+    return fake.fetchImpl(url, options)
+  }
+  await assert.rejects(createHierarchyRepository(settings, { fetchImpl }).listUnits(), /HIERARCHY_PAGINATION_INVALID/)
+})
 
 async function setupUnit(repo, operationId = 'unit-op-initial') {
   return repo.createUnit({ operationId, dependency: 'DSA', name: 'Unidad de laboratorio', code: 'LAB-01', actorId: 'director-dsa' })
@@ -292,4 +305,10 @@ test('does not write by default and reports permission/authentication errors wit
     const repo = repository(fake)
     await assert.rejects(repo.listUnits(), (error) => error.status === status)
   }
+})
+
+test('a custom unit named like the hierarchy root is not the configured standard container', async () => {
+  const fake = fakeAlfresco()
+  fake.nodes.get(containerId).nodeType = 'gdo:unidad'
+  await assert.rejects(repository(fake).listUnits(), /HIERARCHY_CONTAINER_INVALID/)
 })

@@ -31,18 +31,55 @@ const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'D
     dispatchId: key, status: 'ASIGNADO', createdAt: node.createdAt })) })
 // Same response shape and active recipient observed by GET in DEV; content is synthetic.
 const records = [record('initial-fixture', [people[0]])]
-const counters = { assignments: 0, directory: 0, children: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
+const counters = { assignments: 0, directory: 0, children: 0, closureInbox: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
 let officialFixture
 let closureEnabled = false, closureClosed = false, closurePosts = 0
+let hierarchyConfigurationMissing = false
 const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
   alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
   capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
-  canAttendAssignments: true, canIssueInstitutionalResponse: true }
+  canAttendAssignments: true, canIssueInstitutionalResponse: true, canLinkOfficialResponse: true }
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const json = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)) }
   if (url.pathname.startsWith('/api/')) {
+    if (url.pathname === '/api/hierarchy') {
+      assert.equal(request.method, 'GET', 'hierarchy browser regression cannot perform administrative writes')
+      if (hierarchyConfigurationMissing) return json({ error: 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED',
+        missingConfiguration: ['ALFRESCO_HIERARCHY_STORAGE', 'ALFRESCO_HIERARCHY_SERVICE_USERNAME', 'ALFRESCO_HIERARCHY_CONTAINER_NODE_ID'] }, 503)
+      return json({ dependency: 'dsa', director: { id: 'direction-fixture', displayName: 'Dirección de ensayo' },
+        revision: 'a'.repeat(64), capabilities: {
+          createUnits: false, editUnits: false, assignHeads: false, changeHeads: false,
+          assignSpecialists: false, reassignSpecialists: false,
+        },
+        pendingHeadChanges: [], pendingSpecialistReassignments: [],
+        units: [
+          { id: 'unit-fixture', name: 'Unidad de ensayo', code: 'TEST', dependency: 'dsa', status: 'ACTIVA' },
+          { id: 'unit-without-head', name: 'Unidad sin jefatura', code: 'TEST2', dependency: 'dsa', status: 'ACTIVA' },
+        ],
+        recipients: [{ id: 'head-fixture', displayName: 'Jefatura de ensayo', functionalRole: 'jefe-unidad', dependency: 'dsa' },
+          { id: 'staff-fixture', displayName: 'Especialista de ensayo', functionalRole: 'especialista', dependency: 'dsa' }],
+        assignments: [{ laneId: 'jefes', userId: 'head-fixture', unitId: 'unit-fixture', dependency: 'dsa' },
+          { laneId: 'especialistas', userId: 'staff-fixture', unitId: 'unit-fixture', unitHeadUserId: 'head-fixture', dependency: 'dsa' }],
+      })
+    }
+    if (url.pathname === '/api/hierarchy/audit') return json({ events: [], pagination: { totalItems: 0, totalPages: 0, hasMoreItems: false } })
     if (url.pathname === '/api/documents/closure') {
+      if (request.method === 'GET' && !url.searchParams.has('documentId')) {
+        counters.closureInbox++
+        const row = (documentId, compliance, reasons, category) => ({ ...node, id: documentId, closure: {
+          key: `${documentId}:dsa`, dependency: 'dsa', responsibleUserIds: ['head-fixture'], compliance, category,
+          closed: documentId === id && closureClosed, writesEnabled: false, canClose: false,
+          ...(documentId === id && closureClosed ? { closedAt: '2026-11-23T15:00:00Z', closedBy: 'direction-fixture', closureProcessId: 'closure-fixture',
+            closureReceipt: { schemaVersion: 2, executionMode: 'ALFRESCO', documentId, dependency: 'dsa' } } : {}),
+          evaluation: { documentId, scope: { dependency: 'dsa' }, blockingReasons: reasons, summary: { pending: compliance === 'BLOCKED' ? 1 : 0, attended: 2 } } } })
+        return json({ source: 'alfresco', semantics: 'dependency-closure-interventions', dependency: 'dsa', complete: true,
+          counts: { APTAS: closureClosed ? 0 : 1, PENDIENTES: 2, CERRADAS: closureClosed ? 1 : 0 }, documentErrors: [], documents: [
+            row(id, 'MET', [], closureClosed ? 'CERRADAS' : 'APTAS'),
+            row('00000000-0000-4000-8000-000000000071', 'BLOCKED', ['OBLIGATIONS_PENDING'], 'PENDIENTES'),
+            row('00000000-0000-4000-8000-000000000072', 'INDETERMINATE', ['EVIDENCE_INCOMPLETE'], 'PENDIENTES'),
+          ] })
+      }
       if (request.method === 'POST') {
         let raw = ''; for await (const chunk of request) raw += chunk
         const input = JSON.parse(raw)
@@ -187,6 +224,30 @@ try {
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await command('Page.navigate', { url: origin + '/prototipo-dsa-alfresco/' })
   await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'React application')
+  await clickText('Ajustes')
+  await until(() => evaluate("Boolean(document.querySelector('.settings-entry-card'))"), 'hierarchy settings menu')
+  await evaluate("[...document.querySelectorAll('.settings-entry-card')].find(b => b.textContent.includes('Administrar mi oficina')).click()")
+  await until(() => evaluate("Boolean(document.querySelector('.office-chart__unit'))"), 'Alfresco hierarchy rendering')
+  assert.ok(await evaluate("document.body.textContent.includes('Unidad de ensayo') && document.body.textContent.includes('Especialista de ensayo') && document.body.textContent.includes('solo lectura')"))
+  assert.equal(await evaluate("document.querySelector('button[form=\"alfresco-create-unit-form\"]').disabled"), true)
+  const creationFields = await evaluate("[...document.querySelectorAll('#alfresco-create-unit-form input, #alfresco-create-unit-form textarea, #alfresco-create-unit-form button')].map(control => control.disabled)")
+  assert.deepEqual(creationFields, [true, true, true, true], 'the read-only creation form disables all its controls')
+  const unitButtons = await evaluate("[...document.querySelectorAll('.office-chart__unit button')].map(button => ({ label: button.textContent.trim(), disabled: button.disabled }))")
+  for (const label of ['Editar unidad', 'Asignar Jefe', 'Cambio de Jefe', 'Asignación', 'Reasignación']) {
+    assert.ok(unitButtons.some(button => button.label.startsWith(label)), label)
+  }
+  assert.ok(unitButtons.every(button => button.disabled), 'unit editing and assignment controls follow the write capabilities')
+  assert.equal(await evaluate("document.querySelectorAll('.office-chart__unit select:enabled').length"), 0)
+  await until(() => evaluate("document.body.textContent.includes('Historial de movimientos')"), 'hierarchy history is available in read-only mode')
+  hierarchyConfigurationMissing = true
+  await clickText('Actualizar datos')
+  await until(() => evaluate("document.body.textContent.includes('ALFRESCO_HIERARCHY_CONTAINER_NODE_ID')"), 'explicit hierarchy configuration error')
+  assert.ok(await evaluate("document.body.textContent.includes('Falta completar la configuración lectora')"))
+  assert.equal(await evaluate("document.querySelectorAll('.office-chart__unit').length"), 0, 'failed reads do not keep an apparently verified hierarchy')
+  assert.equal(await evaluate("document.querySelector('button[form=\"alfresco-create-unit-form\"]').disabled"), true)
+  hierarchyConfigurationMissing = false
+  await clickText('Actualizar datos')
+  await until(() => evaluate("Boolean(document.querySelector('.office-chart__unit'))"), 'hierarchy recovers through a fresh GET')
   await clickText('Documentos recibidos')
   await waitAssigned(1)
   await waitIdle()
@@ -269,7 +330,10 @@ try {
     await until(() => evaluate("Boolean(document.querySelector('.received-inbox__subject'))"), 'own assignment')
     await evaluate("document.querySelector('.received-inbox__subject').click()")
     await until(() => evaluate("Boolean([...document.querySelectorAll('button')].find(x=>x.textContent==='Marcar como atendido'))"), 'attention action')
-    assert.equal(await evaluate("[...document.querySelectorAll('button')].some(x=>x.textContent==='Responder con documento')"), false)
+    assert.equal(await evaluate("[...document.querySelectorAll('button')].some(x=>x.textContent==='Responder con documento')"), true)
+    await clickText('Responder con documento')
+    await until(() => evaluate("Boolean(document.querySelector('select option[value=\"\"]'))"), 'official reuse selector')
+    assert.equal(await evaluate("[...document.querySelectorAll('button')].some(x=>x.textContent==='Generar nueva emisión')"), false)
     assert.ok(await evaluate("document.body.textContent.includes('Emisor documental original: DTI') && document.body.textContent.includes('Despachado por: DSA_T')"))
     await clickText('Marcar como atendido')
     await until(() => evaluate("document.body.textContent.includes('Mi asignación: ATENDIDO')"), 'completed own obligation')
@@ -294,6 +358,10 @@ try {
   await clickText('Actualizar bandeja')
   await until(() => counters.emitted > beforeEmittedRefresh && evaluate("!document.querySelector('.received-inbox__refresh button').disabled"), 'emitted refresh')
   assert.equal(counters.emitted, beforeEmittedRefresh + 1)
+  await evaluate("document.querySelector('.received-inbox__subject').click()")
+  await until(() => evaluate("document.body.textContent.includes('UUID del original al que responder')"), 'reuse existing Emitidos UUID')
+  assert.equal(await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Vincular este documento oficial como respuesta').disabled"), true)
+  await clickText('Cerrar vista previa')
   Object.assign(session, { roleId: 'director-dsa', dependency: 'DSA', alfresco: { id: 'DSA_T' }, user: { id: 'DSA_T', name: 'Direction DSA' } })
   await command('Page.reload', { ignoreCache: true })
   await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'DSA workspace')
@@ -315,10 +383,27 @@ try {
   await clickText('Cerrar intervención')
   await until(() => evaluate("document.body.textContent.includes('Intervención cerrada definitivamente.')"), 'verified closed UI')
   assert.equal(closurePosts, 1)
+  closureEnabled = false
+  await clickText('Aprobar cierres')
+  await until(() => evaluate("Boolean(document.querySelector('[role=tablist]'))"), 'closure discovery tabs')
+  await until(() => evaluate("[...document.querySelectorAll('[role=tab]')].some(t=>t.textContent==='Pendientes (2)')"), 'verified category counts')
+  await evaluate("[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent.startsWith('Pendientes')).click()")
+  await until(() => evaluate("document.querySelectorAll('section[aria-label=\"Aprobar cierres\"] tbody tr').length===2"), 'pending and indeterminate interventions')
+  assert.ok(await evaluate("document.body.textContent.includes('Indeterminada') && document.body.textContent.includes('Pendiente de atención')"))
+  await evaluate("[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent.startsWith('Cerradas')).click()")
+  await until(() => evaluate("Boolean(document.querySelector('section[aria-label=\"Aprobar cierres\"] tbody tr'))"), 'verified closed intervention')
+  assert.equal(await evaluate("document.querySelectorAll('section[aria-label=\"Aprobar cierres\"] tbody tr').length"), 1)
+  const closureReadsBeforeRefresh = counters.closureInbox
+  await clickText('Actualizar bandeja')
+  await until(() => counters.closureInbox > closureReadsBeforeRefresh, 'closure discovery refresh')
+  await clickText('Abrir y evaluar')
+  await until(() => evaluate("Boolean(document.querySelector('section[aria-label=\"Cierre de intervención\"]'))"), 'fresh per-document closure evaluation')
+  assert.equal(closurePosts, 1, 'discovery and preview do not create closure writes')
   const report = { browser: 'Edge headless', application: 'real production bundle', api: 'isolated fixtures; no Alfresco requests',
-    closureChecks: ['backend disabled hides close', 'explicit reason and CSRF', 'one mocked close', 'read-after-close refresh'],
+    hierarchyChecks: ['Alfresco units and relations read-only', 'missing configuration names visible', 'failed reads remove stale structure', 'fresh GET recovery without administrative writes'],
+    closureChecks: ['backend disabled hides close', 'explicit reason and CSRF', 'one mocked close', 'read-after-close refresh', 'closure discovery and refresh without known UUID', 'Aptas/Pendientes/Cerradas tabs', 'pending versus indeterminate', 'real receipt displayed for closed intervention'],
     checks: ['assigned labels by ID', 'refresh loads assignments once', 'selection does not rescan', 'post refresh', 'navigation', 'reload', '11px computed width', 'three distinct equal segments', 'desktop/mobile capture',
-      'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'issuance denied in Jefatura/Especialista UI', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],
+      'Dirección reuses existing emission form', 'draft does not attend', 'formal emission timeout reuses key and PDF', 'one formal UUID after retry', 'emission and link do not attend', 'Jefatura attends own assignment', 'Especialista attends own assignment', 'attended history survives reload', 'DTI original issuer separated from DSA dispatcher', 'official response issuance remains Direction-only', 'DTI Emitidos loads without browser cache', 'Emitidos refreshes repository', 'DSA never lists received DTI original as its own emission'],
     proposalChecks: ['available/inaccessible/invalid versions', 'verified version preview', 'no mutation buttons'], visual, counters }
   fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))

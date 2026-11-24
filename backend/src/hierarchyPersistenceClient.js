@@ -1,7 +1,6 @@
 import { createHierarchyServiceClient } from './hierarchyServiceClient.js'
 
 const corePath = '/alfresco/api/-default-/public/alfresco/versions/1'
-const definitiveContainerId = 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93'
 const expectedLabContainerName = 'GD_JERARQUIAS_LAB'
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const runIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{2,47}$/
@@ -38,8 +37,7 @@ export function createHierarchyPersistenceClient(settings, {
     if (confirmLabWrites !== true) throw failure('HIERARCHY_LAB_CONFIRMATION_REQUIRED', 400)
     if (!runIdPattern.test(runId || '')) throw failure('HIERARCHY_LAB_RUN_ID_INVALID', 400)
     if (!uuidPattern.test(labContainerNodeId || '')) throw failure('HIERARCHY_LAB_CONTAINER_REQUIRED', 503)
-    if (labContainerNodeId.toLowerCase() === definitiveContainerId.toLowerCase() ||
-        labContainerNodeId.toLowerCase() === String(settings?.hierarchyService?.containerNodeId || '').toLowerCase()) {
+    if (labContainerNodeId.toLowerCase() === String(settings?.hierarchyService?.containerNodeId || '').toLowerCase()) {
       throw failure('HIERARCHY_LAB_CONTAINER_MUST_BE_SEPARATE', 400)
     }
     if (settings?.hierarchyService?.storage !== 'alfresco') throw failure('HIERARCHY_STORAGE_MUST_BE_ALFRESCO', 503)
@@ -251,4 +249,3 @@ export function createHierarchyPersistenceClient(settings, {
 
   return { getLabContainer, listChildren, getNode, createUnit, createAssignment, updateAssignmentStatus }
 }
-

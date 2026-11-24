@@ -91,7 +91,7 @@ test('response has independent UUID, existing cm:references, verified institutio
   assert.equal(done.assignment.status, 'ATENDIDO')
   assert.equal(f.envelope().history.at(-1).mode, 'response')
   assert.equal((await f.repository.relatedResponses(originalId, actor('director', 'direccion'))).responses[0].available, true)
-  await assert.rejects(f.repository.linkResponse({ ...input, requestKey: 'staff-cannot-emit' }, actor('staff', 'especialista')), /EMISSION_NOT_ALLOWED/)
+  await assert.rejects(f.repository.linkResponse({ ...input, requestKey: 'staff-cannot-link-foreign-assignment' }, actor('staff', 'especialista')), /NOT_OWNED/)
 })
 
 test('write errors preserve state, lost confirmation is idempotent, and partial response linkage can be recovered without emitting again', async () => {

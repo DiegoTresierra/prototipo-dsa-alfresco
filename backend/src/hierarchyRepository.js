@@ -97,7 +97,7 @@ export function createHierarchyRepository(settings, {
     if (!containerPromise) {
       containerPromise = service.getNode(containerId).then((entry) => {
         const name = entry.name || entry.properties?.['cm:name']
-        if (entry.id !== containerId || name !== 'GD_JERARQUIAS' || entry.isFolder !== true) {
+        if (entry.id !== containerId || name !== 'GD_JERARQUIAS' || entry.nodeType !== 'cm:folder' || entry.isFolder !== true) {
           throw failure('HIERARCHY_CONTAINER_INVALID', 409)
         }
         return entry
@@ -111,10 +111,15 @@ export function createHierarchyRepository(settings, {
 
   async function listAllChildren(parentId) {
     const entries = []
+    const ids = new Set()
     let skipCount = 0
     let hasMoreItems = true
     while (hasMoreItems) {
       const page = await service.listNodeChildren(parentId, { maxItems: 100, skipCount })
+      for (const entry of page.entries) {
+        if (ids.has(entry.id)) throw failure('HIERARCHY_PAGINATION_INVALID', 502)
+        ids.add(entry.id)
+      }
       entries.push(...page.entries)
       hasMoreItems = page.hasMoreItems
       if (hasMoreItems && page.entries.length === 0) throw failure('HIERARCHY_PAGINATION_INVALID', 502)

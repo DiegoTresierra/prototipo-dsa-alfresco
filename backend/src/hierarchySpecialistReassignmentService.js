@@ -1,3 +1,4 @@
+import { assertNoDocumentResponsibilities, withHierarchyChange } from './hierarchyResponsibilityGuard.js'
 function failure(code, status = 503, extra = {}) {
   return Object.assign(new Error(code), { code, status, ...extra })
 }
@@ -19,7 +20,7 @@ function jsonObject(value) {
   }
 }
 
-export function createHierarchySpecialistReassignmentService({ repository, directory, auditRepository, writesEnabled = false } = {}) {
+export function createHierarchySpecialistReassignmentService({ repository, directory, auditRepository, responsibilityCheck, writesEnabled = false } = {}) {
   if (!repository || !directory || !auditRepository) throw failure('HIERARCHY_SPECIALIST_REASSIGNMENT_DEPENDENCIES_REQUIRED', 500)
 
   async function listOperationEvents(dependency, operationId) {
@@ -217,6 +218,8 @@ export function createHierarchySpecialistReassignmentService({ repository, direc
     }
 
     const context = { operationId: operation, userId: user, sourceUnitId, destinationUnitId: destinationId, dependency: scope, actorId: actor }
+    const responsibilityScope = { unitId: sourceUnitId, userId: user, dependency: scope, revision: revisionBefore }
+    await assertNoDocumentResponsibilities(responsibilityCheck, responsibilityScope)
     const sourceAssignmentId = sourceAssignment.id
     let destinationAssignment
     if (!start) {
@@ -238,6 +241,7 @@ export function createHierarchySpecialistReassignmentService({ repository, direc
       const currentSource = currentAssignments.find((item) => item.id === sourceAssignmentId)
       if (!currentSource) throw failure('HIERARCHY_SPECIALIST_REASSIGNMENT_STATE_CONFLICT', 409)
       if (currentSource.status === 'ACTIVA') {
+        await assertNoDocumentResponsibilities(responsibilityCheck, responsibilityScope)
         await repository.deactivateAssignment({ assignmentId: sourceAssignmentId, dependency: scope, actorId: actor, operationId: `${operation}:deactivate` })
       } else if (currentSource.status !== 'INACTIVA') {
         throw failure('HIERARCHY_SPECIALIST_REASSIGNMENT_STATE_CONFLICT', 409)
@@ -280,5 +284,5 @@ export function createHierarchySpecialistReassignmentService({ repository, direc
     }
   }
 
-  return { reassign, listPendingReassignments, assertNoPendingReassignment }
+  return { reassign: input => withHierarchyChange(String(input?.dependency || '').toLowerCase(), () => reassign(input)), listPendingReassignments, assertNoPendingReassignment }
 }

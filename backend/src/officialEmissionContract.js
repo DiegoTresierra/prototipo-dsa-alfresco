@@ -1,5 +1,5 @@
 // Final pilot contract: existing gd:numero is canonical positive decimal text.
-// Three additional properties remain pending deployment. Never activate here.
+// Verify the deployed properties in each target repository. Never activate here.
 export const proposedEmissionProperties = Object.freeze({
   documentCode: 'gd:codigoDocumental', cycle: 'gd:cicloDocumental',
   number: 'gd:numero', identity: 'gd:identidadEmision',

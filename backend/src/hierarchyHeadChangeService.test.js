@@ -7,7 +7,7 @@ const oldAssignmentId = 'c0c78bf2-35f2-4787-878b-f235f21f7c96'
 const specialistAssignmentId = 'd0c78bf2-35f2-4787-878b-f235f21f7c97'
 const input = { operationId: 'change-head-operation-01', unitId, newHeadUserId: 'head-dsa-2', dependency: 'DSA', actorId: 'DSA_T' }
 
-function fixture({ writesEnabled = true, unitStatus = 'ACTIVA', unitDependency = 'DSA', candidateError, initialAssignments, repositoryFailure, auditFailure } = {}) {
+function fixture({ responsibilityCheck = async () => ({ status: 'NO_PENDING' }), writesEnabled = true, unitStatus = 'ACTIVA', unitDependency = 'DSA', candidateError, initialAssignments, repositoryFailure, auditFailure } = {}) {
   const units = new Map([[unitId, { id: unitId, name: 'Unidad DSA', dependency: unitDependency, status: unitStatus }]])
   const assignments = new Map((initialAssignments || [
     { id: oldAssignmentId, unitId, userId: 'head-dsa-1', dependency: 'DSA', role: 'jefe-unidad', status: 'ACTIVA', assignedBy: 'director' },
@@ -104,7 +104,7 @@ function fixture({ writesEnabled = true, unitStatus = 'ACTIVA', unitDependency =
     },
   }
   return {
-    service: createHierarchyHeadChangeService({ repository, directory, auditRepository, writesEnabled }),
+    service: createHierarchyHeadChangeService({ repository, directory, auditRepository, writesEnabled, responsibilityCheck }),
     units, assignments, mutationCalls, auditEvents, auditCalls,
     setCandidateError(error) { failCandidate = error },
   }
@@ -274,4 +274,34 @@ test('keeps the independent write flag disabled by default', async () => {
   await assert.rejects(state.service.changeHead(input), (error) => error.code === 'HIERARCHY_HEAD_CHANGES_DISABLED' && error.status === 403)
   assert.deepEqual(state.mutationCalls, [])
   assert.deepEqual(state.auditCalls, [])
+})
+
+test('document pending or incomplete coverage blocks head changes before any audit or mutation', async () => {
+  for (const status of ['HAS_PENDING', 'INDETERMINATE', undefined]) {
+    const state = fixture({ responsibilityCheck: async () => ({ status }) })
+    await assert.rejects(state.service.changeHead(input), /HIERARCHY_DOCUMENT_/)
+    assert.deepEqual(state.mutationCalls, [])
+    assert.deepEqual(state.auditCalls, [])
+  }
+})
+
+test('a new responsibility before deactivation blocks the change and requires reconciliation', async () => {
+  let checks = 0
+  const state = fixture({ responsibilityCheck: async scope => {
+    assert.equal(scope.userId, 'head-dsa-1')
+    assert.equal(scope.unitId, unitId)
+    return { status: ++checks === 1 ? 'NO_PENDING' : 'HAS_PENDING' }
+  } })
+  await assert.rejects(state.service.changeHead(input), error => error.operationStatus === 'PARCIAL')
+  assert.equal(checks, 2)
+  assert.deepEqual(state.mutationCalls, [])
+  assert.equal(state.assignments.get(oldAssignmentId).status, 'ACTIVA')
+})
+
+test('concurrent head requests serialize locally and a completed replay never repeats mutations', async () => {
+  const state = fixture()
+  const [first, second] = await Promise.all([state.service.changeHead(input), state.service.changeHead(input)])
+  assert.equal(first.status, 'COMPLETADA')
+  assert.equal(second.reused, true)
+  assert.equal(state.mutationCalls.filter(call => call.action === 'create').length, 1)
 })

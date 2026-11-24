@@ -8,6 +8,7 @@ import path from 'node:path'
 import { once } from 'node:events'
 
 test('HTTP Alfresco pilot authorizes secondary membership, persists all readers, and rejects forged scope/ACL/roles', async (t) => {
+  process.env.ALFRESCO_HIERARCHY_STORAGE = '' // Provider absence is an explicit fixture, independent of private DEV configuration.
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'alfresco-dispatch-http-'))
   const documentId = '11111111-2222-4333-8444-2a29efcb482b'
   const foreignId = '00000000-0000-0000-0000-000000000001'

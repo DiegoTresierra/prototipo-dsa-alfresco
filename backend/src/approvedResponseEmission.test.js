@@ -41,6 +41,7 @@ async function integrated(t, { approved = true, typed = true, legacy = false } =
     const auth = options.headers.Authorization
     const actor = f.actors.get(auth)
     const translated = { ...options, headers: { ...options.headers, Authorization: auth === serviceAuth ? auth : `actor:${actor?.dependency}|${actor?.id}` } }
+    if (auth === serviceAuth && u.pathname.endsWith('/people/-me-')) return e.fetch(url, translated)
     if (u.pathname.includes('/people/')) return f.fetchImpl(url, options)
     if (u.pathname.endsWith('/classes/gd_identificacion') || u.pathname.endsWith('/classes/gd_clasificacion')) return e.fetch(url, translated)
     if (e.nodes.has(id)) {

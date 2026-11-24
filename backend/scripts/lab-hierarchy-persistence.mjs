@@ -73,4 +73,3 @@ try {
   console.error(JSON.stringify({ ok: false, ...safeError(error) }, null, 2))
   process.exitCode = 1
 }
-

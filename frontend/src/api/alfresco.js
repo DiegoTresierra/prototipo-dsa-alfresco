@@ -14,6 +14,28 @@ export async function getClosureEvaluation(documentId) {
   if (body.evaluation?.documentId !== documentId || !Array.isArray(body.evaluation?.blockingReasons) || typeof body.canClose !== 'boolean' || typeof body.writesEnabled !== 'boolean') throw new Error('Evaluación incompleta. Consulta nuevamente.')
   return body
 }
+export async function getClosureInbox() {
+  const r = await apiFetch('/api/documents/closure', { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } })
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(body.error || 'No se pudo consultar la bandeja de cierre.')
+  if (body.source !== 'alfresco' || body.semantics !== 'dependency-closure-interventions' || !Array.isArray(body.documents) ||
+      body.documents.some(n => n.closure?.evaluation?.documentId !== n.id || n.closure.dependency !== body.dependency || n.closure.key !== `${n.id}:${body.dependency}` ||
+        !Array.isArray(n.closure.responsibleUserIds) || !Array.isArray(n.closure.evaluation.blockingReasons) || !['APTAS', 'PENDIENTES', 'CERRADAS'].includes(n.closure.category) ||
+        n.closure.category === 'CERRADAS' && (!n.closure.closed || !n.closure.closedAt || !n.closure.closedBy || !n.closure.closureProcessId || n.closure.uncertain ||
+          n.closure.closureReceipt?.schemaVersion !== 2 || n.closure.closureReceipt.executionMode !== 'ALFRESCO' ||
+          n.closure.closureReceipt.documentId !== n.id || n.closure.closureReceipt.dependency !== body.dependency) ||
+        !['MET', 'BLOCKED', 'INDETERMINATE'].includes(n.closure?.compliance))) throw new Error('Bandeja de cierre incompleta o inválida.')
+  return { ...body, documents: body.documents.map(n => ({ ...nodeToDocument(n), closure: n.closure })),
+    warning: body.complete !== true ? 'La consulta es parcial o tiene evaluaciones no verificadas; no se acreditan contadores completos.' : '' }
+}
+export async function getResponseOriginals(documentId) {
+  const r = await apiFetch(`/api/documents/assignment-responses?documentId=${encodeURIComponent(documentId)}&direction=originals`, { credentials: 'include', cache: 'no-store' })
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok || body.responseDocumentId !== documentId || !Array.isArray(body.originals) || typeof body.complete !== 'boolean' ||
+      body.originals.some(o => o.relationType !== 'response' || o.direction !== 'response-to-original' || o.documentId !== documentId || o.node?.id !== o.originalDocumentId) ||
+      new Set(body.originals.map(o => o.originalDocumentId)).size !== body.originals.length) throw new Error(body.error || 'No se pudieron verificar los originales relacionados.')
+  return body
+}
 export async function confirmDocumentClosure(input, csrfToken, reconcile = false) {
   const r = await apiFetch(`/api/documents/closure${reconcile ? '/reconcile' : ''}`, { method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(input) })
@@ -136,17 +158,20 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_HEAD_CHANGE_STATE_CONFLICT: 'El estado de las asignaciones no coincide con el cambio pendiente. Requiere reconciliación antes de continuar.',
       HIERARCHY_HEAD_CHANGE_FINAL_STATE_INVALID: 'Alfresco no confirmó un único Jefe activo con el resultado solicitado.',
       HIERARCHY_HEAD_CHANGE_COMPLETION_CONFLICT: 'El historial marca la operación como completada, pero el estado actual no coincide. Requiere reconciliación.',
-      RESPONSE_TIMES_INVALID_INPUT: 'Revisa los valores y unidades; deben ser enteros positivos dentro de los limites permitidos.',
-      RESPONSE_TIMES_REVISION_CONFLICT: 'La configuracion cambio desde que la abriste. Consulta los valores actuales antes de volver a guardar.',
-      RESPONSE_TIMES_OPERATION_ID_CONFLICT: 'El identificador ya corresponde a otros valores. Recarga la configuracion antes de continuar.',
-      RESPONSE_TIMES_OPERATION_PENDING: 'Hay un guardado anterior sin confirmar. Reintenta esa misma operacion antes de iniciar otra.',
-      RESPONSE_TIMES_OPERATION_UNCERTAIN: 'No se pudo confirmar el resultado. Conserva el mismo intento y reintenta para conciliarlo; no cambies los valores.',
-      RESPONSE_TIMES_VERIFICATION_FAILED: 'Alfresco no confirmo el guardado. Reintenta la misma operacion para verificar su estado.',
-      RESPONSE_TIMES_PILOT_DSA_ONLY: 'La escritura esta habilitada unicamente para el piloto DSA.',
-      RESPONSE_TIMES_WRITE_PERMISSION_UNAVAILABLE: 'La cuenta tecnica no tiene los permisos efectivos necesarios para guardar.',
-      RESPONSE_TIMES_PILOT_LEASE_UNAVAILABLE: 'El bloqueo exclusivo del piloto no esta disponible. No se guardaron cambios.',
+      HIERARCHY_REVISION_CONFLICT: 'La jerarquía cambió desde que se cargó la pantalla. Actualiza los datos antes de continuar.',
+      HIERARCHY_DOCUMENT_RESPONSIBILITIES_PENDING: 'El usuario conserva responsabilidades documentales pendientes. No se transferirán automáticamente.',
+      HIERARCHY_DOCUMENT_COVERAGE_INCOMPLETE: 'No se ha acreditado una cobertura documental completa. El cambio permanece bloqueado.',
+      RESPONSE_TIMES_INVALID_INPUT: 'Revisa los valores y las unidades. Los valores deben ser enteros positivos dentro de los límites permitidos.',
+      RESPONSE_TIMES_REVISION_CONFLICT: 'La configuración cambió desde que la abriste. Consulta los valores actuales antes de volver a guardar.',
+      RESPONSE_TIMES_OPERATION_ID_CONFLICT: 'El identificador ya corresponde a otros valores. Recarga la configuración antes de continuar.',
+      RESPONSE_TIMES_OPERATION_PENDING: 'Hay un guardado anterior sin confirmar. Reintenta esa misma operación antes de iniciar otra.',
+      RESPONSE_TIMES_OPERATION_UNCERTAIN: 'No se pudo confirmar el resultado. Reintenta el guardado con los mismos valores para verificarlo.',
+      RESPONSE_TIMES_VERIFICATION_FAILED: 'Alfresco no confirmó el guardado. Reintenta la misma operación para verificar su estado.',
+      RESPONSE_TIMES_PILOT_DSA_ONLY: 'La escritura está habilitada únicamente para el piloto DSA.',
+      RESPONSE_TIMES_WRITE_PERMISSION_UNAVAILABLE: 'La cuenta técnica no tiene los permisos efectivos necesarios para guardar.',
+      RESPONSE_TIMES_PILOT_LEASE_UNAVAILABLE: 'El bloqueo exclusivo del piloto no está disponible. No se guardaron cambios.',
       RESPONSE_TIMES_WRITES_DISABLED: 'El backend mantiene deshabilitada la escritura de tiempos de respuesta.',
-      RESPONSE_TIMES_READ_UNAVAILABLE: 'No se pudo consultar la configuracion de tiempos de respuesta en Alfresco.',      HIERARCHY_REVISION_CONFLICT: 'La jerarquía cambió desde que se cargó la pantalla. Actualiza los datos antes de continuar.',
+      RESPONSE_TIMES_READ_UNAVAILABLE: 'No se pudo consultar la configuración de tiempos de respuesta en Alfresco.',
       HIERARCHY_SPECIALIST_ALREADY_ASSIGNED: 'Este Especialista ya tiene una unidad principal activa.',
       HIERARCHY_UNIT_INACTIVE: 'No se puede asignar un Especialista a una unidad inactiva.',
       HIERARCHY_USER_DISABLED: 'El usuario seleccionado está deshabilitado en Alfresco.',
@@ -164,12 +189,17 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_ALFRESCO_HTTP_409: 'Alfresco informó un conflicto al crear la unidad o el evento de auditoría.',
       HIERARCHY_ALFRESCO_ACCESS_DENIED: 'La cuenta técnica no tiene permiso para consultar la jerarquía en Alfresco.',
       HIERARCHY_ALFRESCO_CONFIGURATION_INVALID: 'La configuración del contenedor de jerarquías en Alfresco no es válida.',
+      HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED: 'Falta completar la configuración lectora de jerarquía. No se cargaron datos locales como alternativa.',
       HIERARCHY_ALFRESCO_READ_UNAVAILABLE: 'Alfresco no está disponible para consultar la jerarquía. No se cargaron datos locales como alternativa.',
       HIERARCHY_ALFRESCO_DATA_INVALID: 'Alfresco devolvió datos de jerarquía inconsistentes. Solicita una revisión antes de continuar.',
       ORGANIZATION_STORE_UNAVAILABLE: 'No se pudo leer o guardar la estructura de la oficina en el BFF.',
       HIERARCHY_SAVE_FAILED: 'No se pudo guardar la estructura de la oficina.',
     }
     const error = new Error(messages[body.error] || body.error || `La consulta de oficina falló (HTTP ${response.status}).`)
+    if (body.error === 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED' && Array.isArray(body.missingConfiguration)) {
+      const names = body.missingConfiguration.filter(name => /^ALFRESCO_HIERARCHY_(STORAGE|SERVICE_USERNAME|SERVICE_PASSWORD|CONTAINER_NODE_ID|AUDIT_CONTAINER_NODE_ID)$/.test(name))
+      if (names.length) error.message += ` Parámetros: ${names.join(', ')}.`
+    }
     error.code = body.error
     error.status = response.status
     error.operationId = body.operationId
@@ -355,6 +385,7 @@ export async function getEmittedDocuments() {
   if (!response.ok) throw new Error(response.status === 403 ? 'Tu sesión no tiene autorización para consultar Emitidos.' : 'No se pudo consultar Emitidos en Alfresco. Actualiza la bandeja para reintentar.')
   if (!Array.isArray(body.documents) || body.source !== 'alfresco' || body.semantics !== 'institutional-originals') throw new Error('La respuesta de Emitidos no tiene un formato válido.')
   return { ...body, documents: body.documents.map(nodeToDocument),
+    scopeNotice: body.scopeNotice === 'UNIT_COMPETENCE_NOT_VERIFIED_OWN_ONLY' ? 'Se muestran solo documentos propios. El acceso por unidad requiere jerarquía institucional verificada.' : '',
     warning: body.documentErrors?.length ? `${body.documentErrors.length} documentos no pudieron verificarse por permisos u origen institucional. La lista es parcial.` : '' }
 }
 
@@ -607,13 +638,18 @@ export async function emitOfficialDocument(file, fields, csrfToken) {
       OFFICIAL_RECONCILIATION_CHANGED: 'Cambio un documento excluido; se requiere revisar la conciliacion administrativa.',
       NUMBERING_RETRY_CONFLICT: 'La misma clave ya corresponde a otro contenido o parametros. No se ha creado otro PDF.',
       NUMBERING_RESULT_UNCERTAIN: 'La emision quedo incierta. Reintenta con la misma clave, PDF y datos; no generes otra emision.',
+      DOCUMENT_ISSUER_CONFIGURATION_REQUIRED: 'Falta configurar tu unidad y código documental propio. No se ha creado ni numerado el PDF.',
+      DOCUMENT_ISSUER_UNIT_NOT_VERIFIED: 'No se pudo acreditar la unidad institucional en Alfresco. No se ha emitido.',
+      DOCUMENT_ISSUER_MEMBERSHIP_NOT_VERIFIED: 'Alfresco no acredita una asignación vigente a esa unidad y función.',
+      DOCUMENT_ISSUER_CODE_CONFLICT: 'El código documental configurado es incompatible o está duplicado. Requiere revisión institucional.',
+      DOCUMENT_DISTRIBUTION_AUTHORITY_PENDING: 'La distribución de documentos de Jefatura o Especialista requiere un circuito autorizado. Puedes emitir sin destinatario.',
     }
     const error = new Error(messages[body.error] || body.error || 'No se pudo confirmar la emision oficial.')
     error.uncertain = body.uncertain === true
     error.emittedNodeId = body.emittedNodeId || ''
     throw error
   }
-  if (!body.officialEmission || !body.emittedEntry?.id || body.receivedEntry?.id !== body.emittedEntry.id) {
+  if (!body.officialEmission || !body.emittedEntry?.id || (body.distributed === false ? body.receivedEntry !== null || Boolean(fields.recipientDependency) : body.receivedEntry?.id !== body.emittedEntry.id)) {
     const error = new Error('No se pudo verificar el resultado de la emision. Conserva la misma clave para conciliar.'); error.uncertain = true; throw error
   }
   return body

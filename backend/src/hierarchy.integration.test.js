@@ -25,13 +25,14 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     ALFRESCO_HIERARCHY_CONTAINER_NODE_ID: containerId, ALFRESCO_HIERARCHY_STORAGE: 'alfresco', HIERARCHY_READ_STORAGE: 'json',
     ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID: auditContainerId,
     ALFRESCO_HIERARCHY_LAB_CONTAINER_NODE_ID: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-    ALFRESCO_HIERARCHY_UNIT_WRITES_ENABLED: 'false',
-    ALFRESCO_HIERARCHY_UNIT_EDITS_ENABLED: 'false',
-    ALFRESCO_HIERARCHY_HEAD_WRITES_ENABLED: 'false',
-    ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED: 'false',
-    ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED: 'false',
-    ALFRESCO_HIERARCHY_SPECIALIST_REASSIGNMENTS_ENABLED: 'false',
+    ALFRESCO_HIERARCHY_UNIT_WRITES_ENABLED: 'true',
+    ALFRESCO_HIERARCHY_UNIT_EDITS_ENABLED: 'true',
+    ALFRESCO_HIERARCHY_HEAD_WRITES_ENABLED: 'true',
+    ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED: 'true',
+    ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED: 'true',
+    ALFRESCO_HIERARCHY_SPECIALIST_REASSIGNMENTS_ENABLED: 'true',
     ALFRESCO_RESPONSE_TIMES_WRITES_ENABLED: 'false',
+    ALFRESCO_RESPONSE_TIMES_SINGLE_INSTANCE_PILOT_ENABLED: 'false',
     ALFRESCO_RESPONSE_TIMES_STORAGE: '',
     ALFRESCO_RESPONSE_TIMES_SERVICE_USERNAME: '',
     ALFRESCO_RESPONSE_TIMES_SERVICE_PASSWORD: '',
@@ -49,7 +50,8 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     if (parsed.hostname === '127.0.0.1') return realFetch(url, options)
     assert.equal(parsed.hostname, 'hierarchy.invalid')
     const method = options.method || 'GET'
-    calls.push({ method, pathname: parsed.pathname })
+    calls.push({ method, pathname: parsed.pathname,
+      credentialScope: actors.has(options.headers?.Authorization) ? 'actor' : 'service' })
     if (method === 'POST' && parsed.pathname.endsWith('/authentication/versions/1/tickets')) return Response.json({ entry: { id: 'fixture-ticket' } }, { status: 201 })
     if (method === 'POST' && parsed.pathname.endsWith('/nodes/upload-folder/children')) {
       assert.ok(options.body instanceof FormData, 'the backend reconstructs the multipart body')
@@ -116,6 +118,12 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   const { server } = await import('./index.js')
   const { config } = await import('./config.js')
   const { createSession } = await import('./sessionStore.js')
+  const { createInstitutionalHierarchyProvider } = await import('./institutionalHierarchyProvider.js')
+  const { createHierarchyRepository } = await import('./hierarchyRepository.js')
+  const { createHierarchyDirectory } = await import('./hierarchyDirectory.js')
+  const { createHierarchyAuditRepository } = await import('./hierarchyAuditRepository.js')
+  const { createHierarchyHeadChangeService } = await import('./hierarchyHeadChangeService.js')
+  const { createHierarchySpecialistReassignmentService } = await import('./hierarchySpecialistReassignmentService.js')
   if (!server.listening) await once(server, 'listening')
   t.after(async () => {
     server.closeAllConnections()
@@ -181,7 +189,7 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await dispatch.json()).error, 'ORGANIZATIONAL_HIERARCHY_PENDING')
   assert.ok(calls.length > 0)
 
-  // Alfresco mode is opt-in, read-only, and must not fall back to the JSON saved above.
+  // Alfresco mode is read-only and must not fall back to the JSON saved above.
   config.hierarchyReadStorage = 'alfresco'
   assert.equal((await realFetch(`${base}/api/hierarchy`)).status, 401)
   const alfrescoUnitWritesBeforeEdit = calls.filter((call) => call.method === 'PUT' ||
@@ -198,16 +206,35 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: head })).status, 403)
   const alfrescoRead = await (await realFetch(`${base}/api/hierarchy`, { headers: director })).json()
   assert.equal(alfrescoRead.dependency, 'dsa')
-  assert.equal(alfrescoRead.capabilities.createUnits, false)
-  assert.equal(alfrescoRead.capabilities.editUnits, false)
-  assert.equal(alfrescoRead.capabilities.assignHeads, false)
-  assert.equal(alfrescoRead.capabilities.assignSpecialists, false)
-  assert.equal(alfrescoRead.capabilities.changeHeads, false)
-  assert.equal(alfrescoRead.capabilities.reassignSpecialists, false)
+  for (const [flag, capability] of [
+    ['unitWritesEnabled', 'createUnits'],
+    ['unitEditsEnabled', 'editUnits'],
+    ['headWritesEnabled', 'assignHeads'],
+    ['specialistWritesEnabled', 'assignSpecialists'],
+    ['headChangesEnabled', 'changeHeads'],
+    ['specialistReassignmentsEnabled', 'reassignSpecialists'],
+  ]) {
+    assert.equal(config.hierarchyService[flag], true)
+    assert.equal(alfrescoRead.capabilities[capability], false, `${flag} cannot bypass institutional write readiness`)
+  }
   assert.deepEqual(alfrescoRead.units.map((unit) => unit.id), [dsaUnitId])
   assert.deepEqual(alfrescoRead.assignments.map((assignment) => assignment.userId), ['head', 'staff'])
   assert.equal(alfrescoRead.assignments[1].unitHeadUserId, 'head')
   assert.deepEqual(alfrescoRead.recipients.map((recipient) => recipient.id), ['head', 'staff'])
+  const repository = createHierarchyRepository(config)
+  const directory = createHierarchyDirectory(config)
+  const auditRepository = createHierarchyAuditRepository(config)
+  const headChanges = createHierarchyHeadChangeService({ repository, directory, auditRepository })
+  const reassignments = createHierarchySpecialistReassignmentService({ repository, directory, auditRepository })
+  config.organizationalHierarchyProvider = createInstitutionalHierarchyProvider({ repository, directory,
+    groupMappings: config.groupMappings, pendingOperations: async dependency => [
+      ...await headChanges.listPendingChanges(dependency), ...await reassignments.listPendingReassignments(dependency),
+    ],
+  })
+  const managed = await realFetch(`${base}/api/directory/dispatch-recipients`, { headers: head })
+  assert.equal(managed.status, 200)
+  assert.deepEqual((await managed.json()).recipients.map(person => person.id), ['staff'], 'the actual Alfresco adapter, not provisional JSON, resolves specialists')
+  delete config.organizationalHierarchyProvider
   assert.equal((await realFetch(`${base}/api/hierarchy/audit`)).status, 401)
   assert.equal((await realFetch(`${base}/api/hierarchy/audit`, { headers: head })).status, 403)
   const auditRead = await realFetch(`${base}/api/hierarchy/audit?page=1&pageSize=25&dependency=DTI`, { headers: director })
@@ -290,14 +317,31 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await failedRead.json()).error, 'HIERARCHY_ALFRESCO_READ_UNAVAILABLE')
   assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), jsonBeforeFailedRead)
   failAlfrescoRead = false
+  const readerConfiguration = config.hierarchyService
+  config.hierarchyService = {}
+  try {
+    const missingReader = await realFetch(`${base}/api/hierarchy`, { headers: director })
+    assert.equal(missingReader.status, 503)
+    const body = await missingReader.json()
+    assert.equal(body.error, 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED')
+    assert.ok(body.missingConfiguration.includes('ALFRESCO_HIERARCHY_SERVICE_USERNAME'))
+    assert.ok(body.missingConfiguration.includes('ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID'))
+    assert.equal(JSON.stringify(body).includes(readerConfiguration.password), false)
+    const missingAudit = await realFetch(`${base}/api/hierarchy/audit`, { headers: director })
+    assert.equal(missingAudit.status, 503)
+    assert.equal((await missingAudit.json()).error, 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED')
+  } finally { config.hierarchyService = readerConfiguration }
   const original = fs.readFileSync(config.organizationStorePath, 'utf8')
   const actor = actors.get('Basic director-fixture')
   actor.groups = ['GROUP_DSA', 'GROUP_STAFF']
   assert.equal((await put(director, assignments)).status, 403, 'role revoked after login')
+  assert.equal((await patchUnit(director)).status, 403, 'administrative unit edits revalidate a revoked role')
+  assert.equal((await realFetch(`${base}/api/hierarchy/audit`, { headers: director })).status, 403, 'audit reads revalidate role too')
   actor.groups = undefined; actor.enabled = false
   assert.equal((await put(director, assignments)).status, 403, 'disabled actor')
   actor.enabled = true; identityUnavailable = true
   assert.equal((await put(director, assignments)).status, 503, 'unavailable Alfresco fails closed')
+  assert.equal((await patchUnit(director)).status, 503, 'write-disabled routes must still reject unconfirmed identity')
   assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), original, 'no rejected operation changes the organigram')
   identityUnavailable = false
   config.userInboxNodeIds = { staff: 'upload-folder', forbidden: 'dsa-emitted' }
@@ -322,4 +366,9 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await realFetch(uploadUrl, { method: 'POST', headers: uploadHeaders, body: form() })).status, 201)
   assert.deepEqual(creations[0], ['filedata', 'name', 'nodeType', 'cm:title'])
   assert.equal((await realFetch(uploadUrl.replace('upload-folder', 'dsa-emitted'), { method: 'POST', headers: { ...uploadHeaders, 'X-UAC-Recipient-User': 'forbidden' }, body: form() })).status, 403, 'generic upload never bypasses official Emitidos, even when the flag is disabled')
+  assert.ok(calls.some(call => call.pathname.endsWith(`/nodes/${containerId}`)), 'the service reader was exercised')
+  assert.ok(calls.filter(call => call.pathname.endsWith(`/nodes/${containerId}`)).every(call => call.credentialScope === 'service'))
+  assert.ok(calls.some(call => call.pathname.endsWith('/nodes/upload-folder')), 'the documentary actor was exercised')
+  assert.ok(calls.filter(call => /\/nodes\/upload-folder(?:\/children)?$/.test(call.pathname)).every(call => call.credentialScope === 'actor'),
+    'hierarchy credentials never replace the authenticated actor for documentary access or creation')
 })

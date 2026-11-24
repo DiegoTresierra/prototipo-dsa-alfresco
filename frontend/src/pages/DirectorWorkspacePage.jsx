@@ -46,7 +46,7 @@ function DirectorHome({ office, sent, received, emittedError }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, office, localScopeId, allowAlfresco = false, inbox, emittedInbox, csrfToken }) {
+export function DirectorWorkspacePage({ title, description, activePanel, office, localScopeId, allowAlfresco = false, inbox, emittedInbox, csrfToken, canLinkExisting = false }) {
   const sent = emittedInbox?.documents || []
   const received = inbox?.documents || []
 
@@ -57,7 +57,7 @@ export function DirectorWorkspacePage({ title, description, activePanel, office,
   }
 
   if (activePanel === 'documentos-enviados' || activePanel === 'mis-documentos') {
-    return <DirectorPage key={activePanel} title={title} description={description} allowAlfresco={allowAlfresco} mode="sent" inbox={{ ...emittedInbox,
+    return <DirectorPage key={activePanel} title={title} description={description} allowAlfresco={allowAlfresco} mode="sent" userId={office.userId} csrfToken={csrfToken} canLinkExisting={canLinkExisting} inbox={{ ...emittedInbox,
       documents: activePanel === 'mis-documentos' ? ownSentDocuments(sent, office.userId) : sent,
       error: emittedInbox?.error || emittedInbox?.warning || '',
     }} />

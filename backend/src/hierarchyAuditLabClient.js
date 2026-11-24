@@ -1,9 +1,6 @@
 import { createHierarchyServiceClient } from './hierarchyServiceClient.js'
 
-const expectedLabContainerId = '284caaa3-8187-4af3-8caa-a38187aaf30b'
 const expectedLabContainerName = 'GD_JERARQUIAS_LAB'
-const definitiveContainerId = 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93'
-const auditContainerId = '097bf6f7-af28-4de1-bbf6-f7af28ede134'
 const eventType = 'gdo:eventoJerarquia'
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const runIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{2,47}$/
@@ -68,7 +65,7 @@ export function createHierarchyAuditLabClient(settings, {
   function assertLabSetup() {
     if (confirmLabWrites !== true) throw failure('HIERARCHY_AUDIT_LAB_CONFIRMATION_REQUIRED', 400)
     if (!runIdPattern.test(runId || '')) throw failure('HIERARCHY_AUDIT_LAB_RUN_ID_INVALID', 400)
-    if (!uuidPattern.test(labContainerNodeId || '') || labContainerNodeId.toLowerCase() !== expectedLabContainerId) {
+    if (!uuidPattern.test(labContainerNodeId || '') || labContainerNodeId.toLowerCase() !== String(settings?.hierarchyService?.labContainerNodeId || '').toLowerCase()) {
       throw failure('HIERARCHY_AUDIT_LAB_CONTAINER_ID_INVALID', 400)
     }
     const hierarchy = settings?.hierarchyService || {}
@@ -76,7 +73,7 @@ export function createHierarchyAuditLabClient(settings, {
         !uuidPattern.test(hierarchy.labContainerNodeId || '')) {
       throw failure('HIERARCHY_AUDIT_LAB_CONTAINER_CONFIGURATION_INVALID', 503)
     }
-    const protectedIds = [definitiveContainerId, auditContainerId, hierarchy.containerNodeId, hierarchy.auditContainerNodeId]
+    const protectedIds = [hierarchy.containerNodeId, hierarchy.auditContainerNodeId]
       .map((id) => id.toLowerCase())
     if (protectedIds.includes(labContainerNodeId.toLowerCase()) ||
         hierarchy.labContainerNodeId.toLowerCase() !== labContainerNodeId.toLowerCase()) {
@@ -90,7 +87,7 @@ export function createHierarchyAuditLabClient(settings, {
     if (!labContainerPromise) {
       labContainerPromise = service.getNode(labContainerNodeId).then((entry) => {
         const name = entry.name || entry.properties?.['cm:name']
-        if (entry.id !== expectedLabContainerId || name !== expectedLabContainerName || entry.isFolder !== true) {
+        if (entry.id !== labContainerNodeId || name !== expectedLabContainerName || entry.isFolder !== true) {
           throw failure('HIERARCHY_AUDIT_LAB_CONTAINER_INVALID', 409)
         }
         return entry
@@ -200,4 +197,4 @@ export function createHierarchyAuditLabClient(settings, {
   return { getLabContainer, listChildren, getEvent, createEvent }
 }
 
-export { expectedLabContainerId as HIERARCHY_AUDIT_LAB_CONTAINER_ID, eventType as HIERARCHY_AUDIT_EVENT_TYPE }
+export { eventType as HIERARCHY_AUDIT_EVENT_TYPE }

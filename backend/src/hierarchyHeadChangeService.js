@@ -1,3 +1,4 @@
+import { assertNoDocumentResponsibilities, withHierarchyChange } from './hierarchyResponsibilityGuard.js'
 function failure(code, status = 503, extra = {}) {
   return Object.assign(new Error(code), { code, status, ...extra })
 }
@@ -19,7 +20,7 @@ function jsonObject(value) {
   }
 }
 
-export function createHierarchyHeadChangeService({ repository, directory, auditRepository, writesEnabled = false } = {}) {
+export function createHierarchyHeadChangeService({ repository, directory, auditRepository, responsibilityCheck, writesEnabled = false } = {}) {
   if (!repository || !directory || !auditRepository) throw failure('HIERARCHY_HEAD_CHANGE_DEPENDENCIES_REQUIRED', 500)
 
   async function listOperationEvents(dependency, operationId) {
@@ -211,6 +212,8 @@ export function createHierarchyHeadChangeService({ repository, directory, auditR
       throw failure('HIERARCHY_USER_HAS_INCOMPATIBLE_ACTIVE_ASSIGNMENT', 409)
     }
 
+    const responsibilityScope = { unitId: unitIdValue, userId: currentHead.userId, dependency: scope, revision: revisionBefore }
+    await assertNoDocumentResponsibilities(responsibilityCheck, responsibilityScope)
     const beforeData = { unitId: unitIdValue, currentHeadUserId: currentHead.userId }
     const afterData = { kind: 'cambio-jefe', unitId: unitIdValue, currentHeadUserId: currentHead.userId, newHeadUserId: newHead }
     const operationRevisionBefore = startEvent?.revisionAntesEvento || revisionBefore
@@ -229,6 +232,7 @@ export function createHierarchyHeadChangeService({ repository, directory, auditR
       let replacement = activeAssignments.find((item) => item.role === 'jefe-unidad' && item.userId === newHead)
 
       if (current?.status === 'ACTIVA') {
+        await assertNoDocumentResponsibilities(responsibilityCheck, responsibilityScope)
         await repository.deactivateAssignment({ assignmentId: current.id, dependency: scope, actorId: actor, operationId: `${operation}:deactivate` })
       } else if (!current || current.status !== 'INACTIVA') {
         throw failure('HIERARCHY_HEAD_CHANGE_STATE_CONFLICT', 409)
@@ -275,5 +279,5 @@ export function createHierarchyHeadChangeService({ repository, directory, auditR
     }
   }
 
-  return { changeHead, listPendingChanges, assertNoPendingChange }
+  return { changeHead: input => withHierarchyChange(String(input?.dependency || '').toLowerCase(), () => changeHead(input)), listPendingChanges, assertNoPendingChange }
 }

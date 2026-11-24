@@ -1,3 +1,5 @@
+import { createHierarchyResponsibilityGuard } from './hierarchyResponsibilityGuard.js'
+import { createInstitutionalHierarchyProvider, readPendingHierarchyOperations } from './institutionalHierarchyProvider.js'
 import express from 'express'
 import { createResponseProposalReader } from './responseProposalReader.js'
 import { getDistributionAuthorization, invalidateDistributionAuthorization } from './distributionService.js'
@@ -18,7 +20,7 @@ import { resolveRole } from './roleResolver.js'
 import { loadDispatchDirectory, loadInstitutionalDirectory } from './dispatchDirectory.js'
 import { resolveManagedRecipients } from './organizationalHierarchy.js'
 import { authorizeNodeRead, filterDocumentCollection, validateDocumentReadRequest } from './documentReadPolicy.js'
-import { canAttendSession, canIssueResponse, validateAttentionInput } from './attentionPolicy.js'
+import { canAttendSession, canIssueResponse, canLinkResponse, validateAttentionInput } from './attentionPolicy.js'
 import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { buildGenericPdfForm } from './pdfCreation.js'
 import { genericActorGet, verifyGenericRecipient } from './genericCreation.js'
@@ -37,7 +39,7 @@ import { createHierarchySpecialistReassignmentService } from './hierarchySpecial
 import { createResponseTimesService, responseTimesDependency, responseTimesReadAllowed, responseTimesWriteAllowed } from './responseTimesService.js'
 import { createResponseTimesAlfrescoRepository, responseTimesAlfrescoConfigurationReady } from './responseTimesAlfrescoRepository.js'
 import { acquireResponseTimesPilotLease, responseTimesPilotLeaseIsHeld, setResponseTimesPilotPendingOperation } from './responseTimesPilot.js'
-import { assertHierarchyJsonWritesEnabled, createHierarchyReadService, hierarchyStorageMode, safeHierarchyReadError } from './hierarchyReadService.js'
+import { assertHierarchyJsonWritesEnabled, assertHierarchyReadConfiguration, createHierarchyReadService, hierarchyStorageMode, safeHierarchyReadError } from './hierarchyReadService.js'
 import { installClosureRoutes } from './closureRoutes.js'
 import { assertInterventionMutable } from './closedInterventionPolicy.js'
 import { parseAssignments } from './alfrescoDispatchRepository.js'
@@ -47,7 +49,9 @@ const hierarchyContainerIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-
 const hierarchyServiceConfigurationReady = (() => {
   const service = config.hierarchyService
   const containerIds = [service.containerNodeId, service.labContainerNodeId, service.auditContainerNodeId]
-  return service.storage === 'alfresco' && Boolean(service.username && service.password) &&
+  // Administrative writes remain fenced until coverage, fencing and recovery are verified.
+  const institutionalWriteReadiness = false
+  return institutionalWriteReadiness && service.storage === 'alfresco' && Boolean(service.username && service.password) &&
     containerIds.every((id) => hierarchyContainerIdPattern.test(id || '')) &&
     new Set(containerIds.map((id) => id.toLowerCase())).size === containerIds.length
 })()
@@ -90,18 +94,28 @@ const hierarchySpecialistAssignmentService = createHierarchySpecialistAssignment
   auditRepository: hierarchyAuditRepository,
   writesEnabled: hierarchySpecialistWritesAvailable,
 })
+const responsibilityGuard = createHierarchyResponsibilityGuard()
 const hierarchyHeadChangeService = createHierarchyHeadChangeService({
+  responsibilityCheck: responsibilityGuard.checkHead,
   repository: hierarchyRepository,
   directory: hierarchyDirectory,
   auditRepository: hierarchyAuditRepository,
   writesEnabled: hierarchyHeadChangesAvailable,
 })
 const hierarchySpecialistReassignmentService = createHierarchySpecialistReassignmentService({
+  responsibilityCheck: responsibilityGuard.checkSpecialist,
   repository: hierarchyRepository,
   directory: hierarchyDirectory,
   auditRepository: hierarchyAuditRepository,
   writesEnabled: hierarchySpecialistReassignmentsAvailable,
 })
+const institutionalHierarchyProvider = createInstitutionalHierarchyProvider({
+  repository: hierarchyRepository, directory: hierarchyDirectory, groupMappings: config.groupMappings,
+  pendingOperations: dependency => readPendingHierarchyOperations(hierarchyAuditRepository, dependency),
+})
+// Provisional JSON can render an organigram, but can never resolve authority.
+if (hierarchyStorageMode(config) === 'alfresco' && config.hierarchyService.storage === 'alfresco') config.organizationalHierarchyProvider = institutionalHierarchyProvider
+
 const responseTimesAlfrescoReady = responseTimesAlfrescoConfigurationReady(config)
 const responseTimesPersistenceConfigured = config.responseTimes.writesEnabled === true || Boolean(config.responseTimes.storage || config.responseTimes.username ||
   config.responseTimes.password || config.responseTimes.containerNodeId)
@@ -207,6 +221,7 @@ function publicSession(session) {
     dispatchRecipientRoles: allowedRecipientRoles(session),
     canAttendAssignments: canAttendSession(session),
     canIssueInstitutionalResponse: canIssueResponse(session),
+    canLinkOfficialResponse: canLinkResponse(session),
     csrfToken: session.csrfToken,
     expiresAt: session.expiresAt,
   }
@@ -413,7 +428,10 @@ app.get('/api/directory/recipients', requireSession, async (request, response) =
 app.get('/api/documents/emitted', requireSession, async (request, response) => {
   response.set('Cache-Control', 'no-store')
   if (Object.keys(request.query).length) return response.status(400).json({ error: 'EMITTED_QUERY_NOT_ALLOWED' })
-  try { return response.json(await listInstitutionalEmitted(config, request.session)) }
+  try {
+    await revalidateInstitutionalIdentity(config, request.session)
+    return response.json(await listInstitutionalEmitted(config, request.session))
+  }
   catch (error) { return response.status(error.status || 502).json({ error: error.message || 'EMITTED_READ_FAILED' }) }
 })
 
@@ -559,11 +577,12 @@ function requireDeliveryLock(request, response, next) {
     }
     if (storageMode === 'alfresco') {
       try {
+        assertHierarchyReadConfiguration(config)
         const directoryDependency = Object.keys(config.groupMappings.dependencies || {}).find((key) => key.toLowerCase() === dependency) || dependency.toUpperCase()
         const [hierarchy, pendingHeadChanges, pendingSpecialistReassignments] = await Promise.all([
           hierarchyReadService.readDependency(dependency),
-          hierarchyHeadChangesAvailable ? hierarchyHeadChangeService.listPendingChanges(directoryDependency) : [],
-          hierarchySpecialistReassignmentsAvailable ? hierarchySpecialistReassignmentService.listPendingReassignments(directoryDependency) : [],
+          hierarchyHeadChangeService.listPendingChanges(directoryDependency),
+          hierarchySpecialistReassignmentService.listPendingReassignments(directoryDependency),
         ])
         return response.json({
           dependency,
@@ -582,7 +601,8 @@ function requireDeliveryLock(request, response, next) {
         })
       } catch (error) {
         const safe = safeHierarchyReadError(error)
-        return response.status(safe.status).json({ error: safe.error })
+        return response.status(safe.status).json({ error: safe.error,
+          ...(safe.missingConfiguration ? { missingConfiguration: safe.missingConfiguration } : {}) })
       }
     }
     try {
@@ -598,7 +618,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.get('/api/hierarchy/audit', requireSession, async (request, response) => {
+  app.get('/api/hierarchy/audit', requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
@@ -607,23 +627,28 @@ function requireDeliveryLock(request, response, next) {
     } catch (error) {
       return response.status(error.status || 503).json({ error: error.code || 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
     }
-    if (storageMode !== 'alfresco' || config.hierarchyService.storage !== 'alfresco') {
+    if (storageMode !== 'alfresco') {
       return response.status(409).json({ error: 'HIERARCHY_AUDIT_ALFRESCO_REQUIRED' })
     }
     const dependencyKey = Object.keys(config.groupMappings.dependencies || {}).find((key) =>
       key.toLowerCase() === String(request.session.dependency || '').toLowerCase())
     if (!dependencyKey) return response.status(403).json({ error: 'HIERARCHY_DEPENDENCY_MAPPING_UNAVAILABLE' })
     try {
+      assertHierarchyReadConfiguration(config)
       const result = await hierarchyAuditReadService.list({ dependency: dependencyKey, query: request.query })
       return response.json(result)
     } catch (error) {
+      if (error.code === 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED') {
+        const safe = safeHierarchyReadError(error)
+        return response.status(safe.status).json(safe)
+      }
       const status = error.status === 400 ? 400 : error.status === 403 ? 403 : 503
       const knownValidation = status === 400 || status === 403
       return response.status(status).json({ error: knownValidation ? error.code : 'HIERARCHY_AUDIT_READ_UNAVAILABLE' })
     }
   })
 
-  app.patch('/api/hierarchy/units/:unitId', requireSession, requireCsrf, async (request, response) => {
+  app.patch('/api/hierarchy/units/:unitId', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
     try {
@@ -667,7 +692,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.post('/api/hierarchy/units', requireSession, requireCsrf, async (request, response) => {
+  app.post('/api/hierarchy/units', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
     try {
@@ -707,7 +732,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.post('/api/hierarchy/units/:unitId/head', requireSession, requireCsrf, async (request, response) => {
+  app.post('/api/hierarchy/units/:unitId/head', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
     try {
@@ -747,7 +772,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.post('/api/hierarchy/units/:unitId/specialists', requireSession, requireCsrf, async (request, response) => {
+  app.post('/api/hierarchy/units/:unitId/specialists', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
     try {
@@ -787,7 +812,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.post('/api/hierarchy/specialists/:userId/reassign', requireSession, requireCsrf, async (request, response) => {
+  app.post('/api/hierarchy/specialists/:userId/reassign', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
     try {
@@ -829,7 +854,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.post('/api/hierarchy/units/:unitId/change-head', requireSession, requireCsrf, async (request, response) => {
+  app.post('/api/hierarchy/units/:unitId/change-head', requireSession, requireCsrf, requireInstitutionalIdentity, async (request, response) => {
     if (!requireOfficeHierarchy(request, response)) return
     let storageMode
     try {
@@ -980,7 +1005,7 @@ function requireDeliveryLock(request, response, next) {
     }
   })
 
-  app.get('/api/documents/response-candidates', requireSession, async (request, response) => {
+  app.get('/api/documents/response-candidates', requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')
     try {
       if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
@@ -988,7 +1013,7 @@ function requireDeliveryLock(request, response, next) {
     } catch (error) { return response.status(error.status || 502).json({ error: error.message || 'RESPONSE_READ_FAILED' }) }
   })
 
-  app.get(['/api/documents/assignment-responses', '/api/documents/response-content'], requireSession, async (request, response) => {
+  app.get(['/api/documents/assignment-responses', '/api/documents/response-content'], requireSession, requireInstitutionalIdentity, async (request, response) => {
     response.set('Cache-Control', 'no-store')
     try {
       if (dispatchRepository.kind !== 'alfresco') return response.status(503).json({ error: 'ALFRESCO_ATTENTION_REQUIRED' })
@@ -996,6 +1021,11 @@ function requireDeliveryLock(request, response, next) {
       if (typeof documentId !== 'string' || !/^[A-Za-z0-9-]+$/.test(documentId) || request.session.authorizationStatus !== 'active' || !request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
       const context = createReadContext(request.session)
       if (['jefe-unidad', 'especialista'].includes(request.session.functionalRole) && !await authorizeNodeRead(context, documentId)) return response.status(403).json({ error: 'DOCUMENT_READ_NOT_ALLOWED' })
+      if (request.query.direction !== undefined) {
+        if (request.query.direction !== 'originals' || !request.path.endsWith('/assignment-responses') || Object.keys(request.query).sort().join(',') !== 'direction,documentId') return response.status(400).json({ error: 'INVALID_RESPONSE_QUERY' })
+        return response.json(await dispatchRepository.relatedOriginals(documentId, request.session, id =>
+          ['jefe-unidad', 'especialista'].includes(request.session.functionalRole) ? authorizeNodeRead(context, id) : true))
+      }
       const bundle = await dispatchRepository.relatedResponses(documentId, request.session)
       if (request.path.endsWith('/assignment-responses')) return response.json(bundle)
       const linked = bundle.responses.find((entry) => entry.documentId === request.query.responseDocumentId && entry.available)
@@ -1173,6 +1203,12 @@ function requireDeliveryLock(request, response, next) {
       if (dispatchRepository.kind === 'local' && existing && ['ASIGNADO', 'DESPACHADO'].includes(existing.status)) return response.status(200).json({ dispatch: existing, persistence: 'local' })
 
       if (dispatchRepository.kind === 'alfresco') {
+        if (request.session.functionalRole === 'jefe-unidad') {
+          const currentRecipients = await resolveManagedRecipients(request.session, (await loadDispatchDirectory(config)).recipients, config.organizationalHierarchyProvider)
+          if (input.recipients.some(recipient => !currentRecipients.some(current => current.id === recipient.id))) {
+            return dispatchError(response, 409, 'HIERARCHY_RECIPIENTS_CHANGED')
+          }
+        }
         dispatch = await createDispatch({ ...input, senderUserId: userId }, request.session)
         return response.status(existing ? 200 : 201).json({ dispatch, persistence: 'alfresco' })
       }
@@ -1196,12 +1232,19 @@ function requireDeliveryLock(request, response, next) {
         return dispatchError(response, 503, error.code, dispatch)
       }
       if (dispatch?.id && dispatchRepository.kind === 'local') {
-        const updated = updateDispatch(dispatch.id, (current) => ({
-          ...current,
-          status: 'PARCIAL',
-          error: error.code || 'DISPATCH_FAILED',
-        }))
-        return dispatchError(response, error.status === 403 ? 403 : 502, error.code || 'DISPATCH_FAILED', updated)
+        // Safe diagnostics: no paths, payloads, credentials or upstream messages.
+        console.warn('[dispatch-failure]', JSON.stringify({ code: error.code || 'DISPATCH_FAILED',
+          phase: error.storagePhase || 'dispatch', causeCode: error.cause?.code || null }))
+        try {
+          const updated = updateDispatch(dispatch.id, (current) => ({
+            ...current, status: 'PARCIAL', error: error.code || 'DISPATCH_FAILED',
+          }))
+          return dispatchError(response, error.status === 403 ? 403 : 502, error.code || 'DISPATCH_FAILED', updated)
+        } catch (journalError) {
+          console.warn('[dispatch-journal-failure]', JSON.stringify({ code: journalError.code || 'DISPATCH_FAILED',
+            phase: journalError.storagePhase || 'journal', causeCode: journalError.cause?.code || null }))
+          return dispatchError(response, 502, journalError.code || 'DISPATCH_FAILED', dispatch)
+        }
       }
       return dispatchError(response, error.status || 502, error.message || 'DISPATCH_FAILED')
     } finally {
@@ -1210,7 +1253,7 @@ function requireDeliveryLock(request, response, next) {
   })
 app.post('/api/documents/official-emissions', requireSession, requireCsrf, async (request, response) => {
   try {
-    if (request.session.functionalRole !== 'direccion') return response.status(403).json({ error: 'OFFICIAL_DIRECTION_REQUIRED' })
+    if (!['direccion', 'jefe-unidad', 'especialista'].includes(request.session.functionalRole)) return response.status(403).json({ error: 'OFFICIAL_DIRECTION_REQUIRED' })
     if (!config.officialEmission.writesEnabled) return response.status(503).json({ error: 'OFFICIAL_EMISSION_WRITES_DISABLED' })
     const body = await requestBody(request)
     let form

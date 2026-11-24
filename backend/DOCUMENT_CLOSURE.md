@@ -5,6 +5,14 @@ funcional es preliminar; la aprobación institucional está pendiente.
 
 ## Estado operativo
 
+La bandeja «Aprobar cierres» usa `GET /api/documents/closure` sin parámetros para descubrir intervenciones por dependencia. Enumera por GET las bandejas institucionales configuradas, incluidas asociaciones secundarias `cm:contains`, pagina y deduplica UUID/ámbito. Cada fila reutiliza la evaluación protegida existente. Muestra cumplimiento, pendientes, responsables, cierres ya registrados y errores indeterminados; un PDF en Emitidos sin intervención no se convierte automáticamente en candidato. Una lectura denegada genera advertencia parcial y no publica los metadatos del nodo. Un fallo de paginación rechaza la consulta; no representa bandeja vacía.
+
+Al abrir una fila se obtiene una evaluación nueva mediante `GET /api/documents/closure?documentId=...`; ninguna evaluación de lista autoriza una escritura. La interfaz refresca tras atención/cierre y conserva el bloqueo `CLOSURE_REAL_READINESS_BLOCKED`. La bandeja no otorga autoridad para cerrar a Jefatura o Especialista, no cambia `gd:estado`, no mueve documentos y no confunde `MET` con un cierre formal.
+
+Las pestañas son Aptas, Pendientes y Cerradas. Aptas requiere cumplimiento documental MET sin bloqueos, operación pendiente ni incertidumbre; no habilita la escritura por sí misma. Pendientes distingue obligaciones sin atender de evidencia indeterminada. Cerradas exige un proceso V2/ALFRESCO/CERRADA validado junto con su operación COMMITTED y evento, leído del original y correspondiente a la dependencia consultada. El GET devuelve un recibo de lectura con UUID, proceso, operación, actor y fecha; los registros SIMULATED no producen ese recibo. Una operación incierta nunca basta para declarar cierre. Solo se muestran fecha y actor en la categoría acreditada. Los contadores se publican únicamente con cobertura completa de las bandejas configuradas y evaluaciones disponibles; en otro caso son null y la interfaz avisa de consulta parcial. No se afirma cobertura de ubicaciones ajenas al ámbito configurado.
+
+La evaluación devuelve la huella de las propiedades leídas; la bandeja la compara con su instantánea de metadatos y responsabilidades. Si cambiaron, la fila queda indeterminada y se retiran los contadores completos hasta actualizar, sin afirmar atomicidad frente a escritores externos.
+
 - Hay endpoint de evaluación e interfaz Dirección; los POST de cierre y conciliación
   están preparados, pero deshabilitados por defecto e independientemente del despacho.
 - No hay operaciones de anulación, confirmación de conocimiento, archivo ni reapertura.
@@ -481,3 +489,13 @@ o un mecanismo equivalente del repositorio, y completar sesión y elegibilidad d
   intermitencia ni acreditan comportamiento real de Alfresco.
 - Causa no determinada. Pendiente capturar el diagnóstico si vuelve a reproducirse,
   sin añadir reintentos ni cambios funcionales para ocultarlo.
+
+En la integración de jerarquía se añadió diagnóstico seguro del almacenamiento
+local de la prueba: código de error, fase (`read`, `write-temporary`, `rename`) y
+código de sistema, sin rutas, credenciales ni contenido documental. Un fallo al
+registrar el resultado parcial devuelve 502 explícito y no oculta el error inicial.
+Una prueba de fallo simulado de `rename` comprueba que el registro anterior conserva
+su identidad y no se reintenta la escritura automáticamente. Esto no demuestra que
+ese fallo sea la causa del 502 histórico. Las ejecuciones de integración posteriores
+no lo reprodujeron. La persistencia institucional continúa en Alfresco; no se añadió
+un almacén documental ni un contador local.

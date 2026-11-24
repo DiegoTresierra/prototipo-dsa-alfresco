@@ -6,11 +6,16 @@ export function canAttendSession(session) {
 }
 // The institutional issuance endpoint currently authorizes Dirección only.
 export const canIssueResponse = (session) => canAttendSession(session) && session.functionalRole === 'direccion'
+// Reusing an already official document is distinct from generating a new response.
+export const canLinkResponse = session => canAttendSession(session)
 export function ownsAssignment(assignment, session) {
   return assignment.userId === (session.alfresco?.id || session.user?.id) && assignment.functionalRole === session.functionalRole &&
     assignment.dependency === String(session.dependency || '').toLowerCase()
 }
 export function validateAttentionInput(body = {}, allowDocumentResponse = false) {
+  if (body.relationType !== undefined && body.relationType !== 'response') {
+    throw Object.assign(new Error('DOCUMENT_RELATION_TYPE_NOT_SUPPORTED'), { status: 400 })
+  }
   const { documentId, assignmentId, requestKey } = body
   if (![documentId, requestKey].every((value) => typeof value === 'string' && value.trim() && value.length <= 250) ||
       !/^[A-Za-z0-9-]+$/.test(documentId) ||

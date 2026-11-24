@@ -18,13 +18,14 @@ test('GET emitted endpoint enforces session and dependency, rejects client scope
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); globalThis.fetch = realFetch })
   const { createSession } = await import('./sessionStore.js')
   const cookie = (dependency, role = 'direccion') => {
-    const session = createSession({ ...f.session(dependency), functionalRole: role })
+    const session = createSession(f.session(dependency, role))
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(session.id).digest('base64url')
     return { Cookie: `gd_session=${session.id}.${signature}` }
   }
   const url = `http://127.0.0.1:${server.address().port}/api/documents/emitted`
   assert.equal((await realFetch(url)).status, 401)
-  assert.equal((await realFetch(url, { headers: cookie('DSA', 'especialista') })).status, 403)
+  const staff = await realFetch(url, { headers: cookie('DSA', 'especialista') })
+  assert.equal(staff.status, 200); assert.equal((await staff.json()).documents.length, 0)
   assert.equal((await realFetch(url + '?dependency=DTI', { headers: cookie('DSA') })).status, 400)
   const dti = await realFetch(url, { headers: cookie('DTI') })
   assert.equal(dti.status, 200)

@@ -31,7 +31,26 @@ test('Alfresco ACL rejects root access and individual denials are visible partia
   assert.equal(snapshot.documents.length, 2)
   assert.equal(snapshot.documentErrors[0].documentId, 'dti-legacy')
   assert.equal(snapshot.documentErrors[0].status, 403)
-  await assert.rejects(listInstitutionalEmitted(f.settings, { ...f.session('DTI'), functionalRole: 'jefe-unidad' }, f.fetch), { status: 403 })
+  assert.equal((await listInstitutionalEmitted(f.settings, f.session('DTI', 'jefe-unidad'), f.fetch)).documents.length, 0)
+})
+
+for (const role of ['jefe-unidad', 'especialista']) test(`${role} sees own originals only, without recipient or provisional unit authority`, async () => {
+  const f = emittedFixture(), session = f.session('DTI', role)
+  f.nodes.get('dti-unit').createdByUser.id = session.alfresco.id
+  f.children.get('dti-root').push('dti-unit')
+  const r = await listInstitutionalEmitted(f.settings, session, f.fetch)
+  assert.deepEqual(r.documents.map(n => n.id), ['dti-unit'])
+  assert.equal(r.accessScope, 'own'); assert.equal(r.scopeNotice, 'UNIT_COMPETENCE_NOT_VERIFIED_OWN_ONLY')
+  assert.equal(r.documents[0].properties['gd:destinatario'], undefined)
+  f.denied.add('dti-unit')
+  const denied = await listInstitutionalEmitted(f.settings, session, f.fetch)
+  assert.equal(denied.documents.length, 0); assert.equal(denied.documentErrors.length, 1)
+})
+
+test('a later page failure is never returned as an empty successful Emitidos list', async () => {
+  const f = emittedFixture()
+  await assert.rejects(listInstitutionalEmitted(f.settings, f.session('DTI'), (url, options) =>
+    url.includes('skipCount=2') ? Response.json({}, { status: 503 }) : f.fetch(url, options)), /EMITTED_REPOSITORY_READ_REJECTED/)
 })
 
 test('conflicting declared origin is reported and never rewritten or assigned to the dispatcher', async () => {

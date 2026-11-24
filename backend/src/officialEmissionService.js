@@ -8,6 +8,7 @@ import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { stableJson, sha256, validateReconciliation } from './emissionReconciliation.js'
 import { parseAssignments } from './alfrescoDispatchRepository.js'
 import { assertInterventionMutable } from './closedInterventionPolicy.js'
+import { resolveDocumentIssuer } from './documentIssuer.js'
 
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status = 503) => Object.assign(new Error(code), { status })
@@ -17,8 +18,8 @@ export const officialEmissionName = (actorId, requestKey) => `emission-${sha256(
 export const reviewedEmissionKey = (originalId, processId, approvalEventId) => `review-${sha256(stableJson([originalId, processId, approvalEventId]))}`
 export function officialEmissionPayload(actorId, code, input, review = null) {
   return { version: 1, actorId, code, title: input.title.trim(), description: input.description.trim(), documentType: input.documentType.trim(),
-    documentPeriod: input.documentPeriod.trim(), priority: input.priority, recipientDependency: String(input.recipientDependency).toUpperCase(),
-    receiptCategory: input.receiptCategory, pdfSha256: sha256(input.file), ...(review ? { review } : {}) }
+    documentPeriod: input.documentPeriod.trim(), priority: input.priority, recipientDependency: String(input.recipientDependency || '').toUpperCase(),
+    receiptCategory: input.receiptCategory || '', pdfSha256: sha256(input.file), ...(review ? { review } : {}) }
 }
 export const officialEmissionPayloadHash = (actorId, code, input, review = null) => sha256(stableJson(officialEmissionPayload(actorId, code, input, review)))
 
@@ -98,7 +99,7 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
     },
   })
   async function issue(session, input, reviewed = null) {
-    if (session?.authorizationStatus !== 'active' || session.functionalRole !== 'direccion' ||
+    if (session?.authorizationStatus !== 'active' || !['direccion', 'jefe-unidad', 'especialista'].includes(session.functionalRole) ||
         !session.capabilities?.includes('documents:write') || !session.capabilities?.includes('documents:read')) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
     if (!pilot.writesEnabled) throw fail('OFFICIAL_EMISSION_WRITES_DISABLED')
     if (!reviewed && Object.keys(input).some((k) => /review|approv|proposal|originalDocument|responseDocument/i.test(k))) throw fail('OFFICIAL_REVIEW_SERVICE_REQUIRED', 403)
@@ -123,18 +124,22 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
     }
     const identity = await revalidateInstitutionalIdentity(settings, session, fetchImpl)
     const serviceMe = (await request('/people/-me-', serviceAuthorization)).entry
-    if (serviceMe?.id !== service.username || serviceMe.enabled !== true || ['admin', 'administrator'].includes(service.username.toLowerCase())) throw fail('OFFICIAL_SERVICE_IDENTITY_REJECTED', 403)
+    if (serviceMe?.id !== service.username || serviceMe.enabled !== true || serviceMe.capabilities?.isAdmin !== false ||
+        ['admin', 'administrator'].includes(service.username.toLowerCase())) throw fail('OFFICIAL_SERVICE_IDENTITY_REJECTED', 403)
     const dependency = String(session.dependency || '').toUpperCase()
-    if (identity.authorizationStatus !== 'active' || identity.functionalRole !== 'direccion' || identity.dependency !== dependency || !['DTI', 'DSA'].includes(dependency)) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
-    // Direction's institution code is the verified institutional dependency.
-    // Unit/person codes are NOT inferred or opened to unauthorized roles.
-    const code = dependency
+    if (identity.authorizationStatus !== 'active' || identity.dependency !== dependency || !['DTI', 'DSA'].includes(dependency)) throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
+    if (reviewed && identity.functionalRole !== 'direccion') throw fail('OFFICIAL_DIRECTION_REQUIRED', 403)
+    const issuerIdentity = await resolveDocumentIssuer(settings, identity, path => request(path, authorization))
+    const code = issuerIdentity.code
     const folder = settings.officeInboxNodeIds?.[dependency]?.emitidos
     const recipientDependency = String(input.recipientDependency || '').toUpperCase()
     const category = input.receiptCategory
     const recipientFolder = settings.officeInboxNodeIds?.[recipientDependency]?.[category === 'por-atender' ? 'porAtender' : 'porConocimiento']
     const recipientGroup = settings.officeGroupIds?.[recipientDependency]
-    if (!folder || !['DTI', 'DSA'].includes(recipientDependency) || recipientDependency === dependency || !['por-atender', 'por-conocimiento'].includes(category) || !recipientFolder || !recipientGroup) throw fail('DIRECTOR_RECIPIENT_NOT_ALLOWED', 403)
+    const distributing = recipientDependency !== ''
+    if (!folder || distributing && (!['DTI', 'DSA'].includes(recipientDependency) || recipientDependency === dependency || !['por-atender', 'por-conocimiento'].includes(category) || !recipientFolder || !recipientGroup) || !distributing && category) throw fail('DIRECTOR_RECIPIENT_NOT_ALLOWED', 403)
+    // Non-Direction own emission does not authorize bypassing the response review circuit.
+    if (identity.functionalRole !== 'direccion' && distributing) throw fail('DOCUMENT_DISTRIBUTION_AUTHORITY_PENDING', 403)
     const canonical = officialEmissionPayload(actorId, code, input, reviewed?.binding)
     const hash = sha256(stableJson(canonical))
     const name = officialEmissionName(actorId, input.requestKey)
@@ -143,8 +148,10 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
       try {
         const source = (await request(`/nodes/${encodeURIComponent(folder)}?include=allowableOperations`, authorization)).entry
         if (source?.id !== folder || source.isFolder !== true || !source.allowableOperations?.includes('create')) throw fail('OFFICIAL_EMITIDOS_CREATE_FORBIDDEN', 403)
-        const target = (await request(`/nodes/${encodeURIComponent(recipientFolder)}?include=allowableOperations`, serviceAuthorization)).entry
-        if (target?.id !== recipientFolder || !target.isFolder || !target.allowableOperations?.includes('create')) throw fail('DIRECTOR_MULTIFILING_PERMISSION_REQUIRED', 403)
+        if (distributing) {
+          const target = (await request(`/nodes/${encodeURIComponent(recipientFolder)}?include=allowableOperations`, serviceAuthorization)).entry
+          if (target?.id !== recipientFolder || !target.isFolder || !target.allowableOperations?.includes('create')) throw fail('DIRECTOR_MULTIFILING_PERMISSION_REQUIRED', 403)
+        }
         let model
         try {
           const result = await fetchImpl(settings.alfrescoTarget + '/alfresco/service/api/classes/gd_identificacion', { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { Accept: 'application/json', Authorization: serviceAuthorization } })
@@ -232,10 +239,12 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
         // Replays use their persisted cycle/date, never the current clock.
         const referenceTime = previous ? null : clock()
         const context = { actorId, code, folder, name, hash, authorization, request, reader, lookup,
-          assertReview: reviewed ? async () => {
-            if (stableJson(await reviewed.authorize()) !== stableJson(reviewed.binding)) throw fail('OFFICIAL_APPROVAL_CHANGED', 409)
-          } : null,
-          descriptive: descriptiveMetadata(canonical, previous ? existing.properties?.['gd:fechaDocumento'] : emissionDate(referenceTime)),
+          assertReview: async () => {
+            const live = await revalidateInstitutionalIdentity(settings, session, fetchImpl)
+            if (stableJson(await resolveDocumentIssuer(settings, live, path => request(path, authorization))) !== stableJson(issuerIdentity)) throw fail('DOCUMENT_ISSUER_CODE_CONFLICT', 409)
+            if (reviewed && stableJson(await reviewed.authorize()) !== stableJson(reviewed.binding)) throw fail('OFFICIAL_APPROVAL_CHANGED', 409)
+          },
+          descriptive: descriptiveMetadata({ ...canonical, dependency }, previous ? existing.properties?.['gd:fechaDocumento'] : emissionDate(referenceTime)),
           verifyContent: async (record) => {
             let response
             try { response = await fetchImpl(settings.alfrescoTarget + core + `/nodes/${encodeURIComponent(record.documentId)}/content`, {
@@ -246,6 +255,7 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
           distribute: async (record) => {
             const actual = (await request(`/nodes/${encodeURIComponent(record.documentId)}?include=properties,permissions`, authorization)).entry
             if (actual?.id !== record.documentId || actual.parentId !== folder || actual.createdByUser?.id !== actorId) throw fail('OFFICIAL_CREATED_NODE_SCOPE_REJECTED', 403)
+            if (!distributing) return
             if (!hasInstitutionalRead(actual.permissions, recipientGroup)) throw Object.assign(fail('OFFICIAL_RECIPIENT_NODE_READ_REQUIRED', 409), { emittedNodeId: record.documentId })
             const contains = async () => {
               let count = 0
@@ -270,7 +280,7 @@ export function createOfficialEmissionService(settings, fetchImpl = (...args) =>
           now: previous ? new Date(Date.UTC(previous.cycle, 6, 1)) : referenceTime })
         const entry = (await request(`/nodes/${encodeURIComponent(result.documentId)}?include=properties`, authorization)).entry
         uncertain.delete(name)
-        return { emittedEntry: entry, receivedEntry: entry, officialEmission: true, metadataWarnings: [...officialEmissionMetadataWarnings] }
+        return { emittedEntry: entry, receivedEntry: distributing ? entry : null, distributed: distributing, officialEmission: true, metadataWarnings: [...officialEmissionMetadataWarnings] }
       } catch (error) {
         if (error.cause?.message === 'OFFICIAL_RECIPIENT_NODE_READ_REQUIRED') {
           error.message = error.cause.message

@@ -231,6 +231,15 @@ test('pilot requires explicit deployment attestation and exclusive local lease; 
     release()
     const releaseAfterRestart = acquirePilotLease(settings)
     releaseAfterRestart()
+    const stale = JSON.stringify({ pid: 987654321, startedAt: '2026-01-01T00:00:00Z', outcome: 'UNKNOWN' })
+    fs.writeFileSync(settings.dispatchPilot.leasePath, stale)
+    const originalKill = process.kill
+    try {
+      process.kill = () => { throw Object.assign(new Error('simulated dead process'), { code: 'ESRCH' }) }
+      assert.throws(() => acquirePilotLease(settings), /DISPATCH_PILOT_LEASE_UNAVAILABLE/,
+        'a dead process is not proof that its last Alfresco PUT did not execute')
+      assert.equal(fs.readFileSync(settings.dispatchPilot.leasePath, 'utf8'), stale, 'uncertainty evidence remains intact')
+    } finally { process.kill = originalKill }
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
 })
 

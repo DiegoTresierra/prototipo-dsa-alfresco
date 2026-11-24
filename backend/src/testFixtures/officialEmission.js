@@ -11,7 +11,7 @@ export function officialFixture(t) {
     dispatchPilot: { writesEnabled: true, environment: 'dev', environments: { dev: { enabled: true,
       expectedTarget: 'https://official.invalid', acknowledgement: 'single-instance-exclusive-writer-dev-institutional-documents' } } },
     distributionService: { username: 'gd_distribucion', password: 'test-only' },
-    groupMappings: { dependencies: { DTI: 'GROUP_DTI', DSA: 'GROUP_DSA' }, functions: { direccion: 'GROUP_DIRECTION' } },
+    groupMappings: { dependencies: { DTI: 'GROUP_DTI', DSA: 'GROUP_DSA' }, functions: { direccion: 'GROUP_DIRECTION', 'jefe-unidad': 'GROUP_HEAD', especialista: 'GROUP_STAFF' } },
     officeInboxNodeIds: { DTI: { emitidos: 'DTI-emitted', porAtender: 'DTI-attention', porConocimiento: 'DTI-knowledge' },
       DSA: { emitidos: 'DSA-emitted', porAtender: 'DSA-attention', porConocimiento: 'DSA-knowledge' } },
     officeGroupIds: { DTI: 'GROUP_DTI', DSA: 'GROUP_DSA' },
@@ -44,8 +44,9 @@ export function officialFixture(t) {
     assertSafe(method, parsed.pathname)
     const auth = options.headers?.Authorization
     const [dep, actorUser] = auth?.startsWith('actor:') ? auth.slice(6).split('|') : [null, null]
-    if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: dep ? actorUser : 'gd_distribucion', enabled: !conditions.rejectService || Boolean(dep) } })
-    if (/\/people\/[^/]+\/groups$/.test(parsed.pathname)) return json({ list: { entries: [`GROUP_${dep}`, 'GROUP_DIRECTION'].map((id) => ({ entry: { id } })), pagination: { skipCount: 0, count: 2, totalItems: 2, hasMoreItems: false } } })
+    if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: dep ? actorUser : 'gd_distribucion', enabled: !conditions.rejectService || Boolean(dep),
+      capabilities: !dep && conditions.missingServiceCapabilities ? {} : { isAdmin: dep ? false : conditions.adminService ?? false } } })
+    if (/\/people\/[^/]+\/groups$/.test(parsed.pathname)) return json({ list: { entries: [`GROUP_${dep}`, settings.groupMappings.functions[conditions.actorRole || 'direccion']].map((id) => ({ entry: { id } })), pagination: { skipCount: 0, count: 2, totalItems: 2, hasMoreItems: false } } })
     if (parsed.pathname === '/alfresco/service/api/classes/gd_identificacion') return json({ properties: Object.fromEntries([
       ...['gd:dependenciaOrigen','gd:dependenciaDestino','gd:remitente','gd:destinatario','gd:fechaDocumento'].map((name) => [name, 'd:text']), ['gd:numero', 'd:text'], ['gd:codigoDocumental', 'd:text'], ['gd:cicloDocumental', 'd:int'], ['gd:identidadEmision', 'd:text'],
     ].map(([name, dataType]) => [name, { dataType, multiValued: false }])) })
@@ -58,7 +59,7 @@ export function officialFixture(t) {
       return found ? json({ entry: found }) : json({}, 404)
     }
     if (method === 'GET' && action === 'children') {
-      const entries = (children.get(id) || []).map((child) => ({ entry: { id: child, association: { assocType: 'cm:contains' } } }))
+      const entries = (children.get(id) || []).map((child) => ({ entry: { ...nodes.get(child), id: child, association: { assocType: 'cm:contains' } } }))
       return json({ list: { entries, pagination: { skipCount: 0, count: entries.length, totalItems: entries.length, hasMoreItems: false } } })
     }
     if (method === 'GET' && action === 'content') return conditions.readDenied ? json({}, 403) : new Response(conditions.corruptContent ? 'corrupt' : nodes.get(id)?.file)

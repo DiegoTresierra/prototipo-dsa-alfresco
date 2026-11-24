@@ -1,7 +1,7 @@
 import { createHierarchyServiceClient } from './hierarchyServiceClient.js'
 import { resolveRole } from './roleResolver.js'
 
-const assignableRoles = new Set(['jefe-unidad', 'especialista'])
+const assignableRoles = new Set(['direccion', 'jefe-unidad', 'especialista'])
 
 function failure(code, status = 403) {
   return Object.assign(new Error(code), { code, status })
@@ -39,7 +39,7 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
     const allGroupIds = [...new Set([...groupIds(dependencies), ...groupIds(functions)])]
     if (!allGroupIds.length) throw failure('HIERARCHY_GROUP_MAPPINGS_REQUIRED', 503)
     for (const groupId of allGroupIds) {
-      const members = await service.getGroupMembers(groupId)
+      const members = await service.getInstitutionalGroupMembers(groupId)
       for (const member of members) {
         if (!membership.has(member.id)) membership.set(member.id, new Set())
         membership.get(member.id).add(groupId)

@@ -3,10 +3,13 @@ import { buildAlfrescoUrl } from './alfrescoClient.js'
 import { createDocumentQueue } from './documentQueue.js'
 import { verifyPilotDocumentScope, verifyAttentionDocumentScope, belongsToFolder } from './dispatchPilotScope.js'
 import { mapConcurrent } from './mapConcurrent.js'
-import { assignmentIsActive, canAttendSession, canIssueResponse, ownsAssignment, attentionSummary } from './attentionPolicy.js'
+import { assignmentIsActive, canAttendSession, canLinkResponse, ownsAssignment, attentionSummary } from './attentionPolicy.js'
 import { documentIdentity } from './documentIdentity.js'
 import { allowedRecipientRoles } from './dispatchPolicy.js'
-import { validateReviewProcesses, assertReviewResponseLink } from './responseReview.js'
+import { validateReviewProcesses, assertReviewResponseLink, reviewHash } from './responseReview.js'
+import { decodeEmissionMetadata } from './officialEmissionContract.js'
+import { listInstitutionalEmitted } from './emittedDocuments.js'
+import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { validateProposalJournal } from './responseProposalJournal.js'
 import { assertEnvelopeExtensionsPreserved, validateEnvelopeExtensions } from './envelopeExtensions.js'
 import { assertInterventionMutable } from './closedInterventionPolicy.js'
@@ -277,30 +280,61 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     return { dispatch: { ...record, documentIdentity: documentIdentity(value.actor, settings) },
       assignment: record.recipients.find((recipient) => recipient.id === value.assignment.id), summary: attentionSummary(envelope) }
   }
-  async function referenceExists(responseId, originalId, authorization) {
+  async function referenceTargets(responseId, authorization) {
     let skipCount = 0
-    let more
+    let more, total
+    const ids = new Set()
     do {
       const payload = await request(`${core}/nodes/${encodeURIComponent(responseId)}/targets`, { authorization,
         query: `?where=${encodeURIComponent("(assocType='cm:references')")}&maxItems=100&skipCount=${skipCount}` })
       const list = payload?.list
-      if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
-      if (list.entries.some(({ entry }) => entry?.id === originalId && entry.association?.assocType === 'cm:references')) return true
+      const p = list?.pagination
+      if (!Array.isArray(list?.entries) || list.entries.length > 100 || typeof p?.hasMoreItems !== 'boolean' ||
+          p.skipCount !== skipCount || p.count !== list.entries.length || !Number.isSafeInteger(p.totalItems) || p.totalItems < 0 ||
+          total !== undefined && total !== p.totalItems) fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
+      total = p.totalItems
+      for (const { entry } of list.entries) {
+        if (!entry?.id || entry.association?.assocType !== 'cm:references') fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
+        ids.add(entry.id)
+      }
       more = list.pagination.hasMoreItems
       skipCount += list.entries.length
-      if (skipCount > 10_000 || more && !list.entries.length) fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
+      if (skipCount > total || more !== (skipCount < total) || skipCount > 10_000 || more && !list.entries.length) fail('RESPONSE_INVALID_ASSOCIATIONS', 502)
     } while (more)
-    return false
+    return [...ids]
+  }
+  async function referenceExists(responseId, originalId, authorization) {
+    return (await referenceTargets(responseId, authorization)).includes(originalId)
   }
   async function validateResponse(input, session) {
-    if (!canIssueResponse(session) || input.responseDocumentId === input.documentId || !input.responseDocumentId) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
+    if (!canLinkResponse(session) || input.responseDocumentId === input.documentId || !input.responseDocumentId) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
     const response = await read(input.responseDocumentId, session.authorization)
     const folder = settings.officeInboxNodeIds?.[String(session.dependency).toUpperCase()]?.emitidos
     if (response.node.nodeType !== 'cm:content' || response.node.createdByUser?.id !== (session.alfresco?.id || session.user?.id) || !folder ||
         !await belongsToFolder(response.node.id, [folder], session.authorization, request)) fail('RESPONSE_NOT_OWN_EMISSION', 403)
     const origin = response.node.properties?.['gd:dependenciaOrigen']
     if (origin && String(origin).toLowerCase() !== String(session.dependency).toLowerCase()) fail('RESPONSE_ORIGIN_CONFLICT', 409)
-    return response.node
+    let official
+    try { official = decodeEmissionMetadata(response.node) } catch { fail('RESPONSE_OFFICIAL_DOCUMENT_REQUIRED', 409) }
+    if (official.actorId !== response.node.createdByUser.id || !response.node.aspectNames?.includes('gd:identificacion') ||
+        official.documentCode.split('-')[0] !== String(session.dependency).toUpperCase() ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(response.node.properties?.['gd:fechaDocumento'] || '')) fail('RESPONSE_OFFICIAL_DOCUMENT_REQUIRED', 409)
+    let content
+    try {
+      content = await fetchImpl(buildAlfrescoUrl(settings.alfrescoTarget, `${core}/nodes/${encodeURIComponent(response.node.id)}/content`), {
+        method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { Authorization: session.authorization } })
+    } catch { fail('RESPONSE_CONTENT_UNVERIFIED', 502) }
+    if (!content.ok) fail('RESPONSE_CONTENT_UNVERIFIED', content.status === 403 ? 403 : 502)
+    const bytes = Buffer.from(await content.arrayBuffer())
+    if (bytes.length < 5 || bytes.subarray(0, 5).toString() !== '%PDF-') fail('RESPONSE_CONTENT_UNVERIFIED', 409)
+    return { node: response.node, contentSha256: reviewHash(bytes), fingerprint: reviewHash(JSON.stringify([official, response.node.properties['gd:fechaDocumento'], reviewHash(bytes)])) }
+  }
+  function assertResponseApproval(envelope, verified) {
+    assertReviewResponseLink(envelope, verified.node.id)
+    if (!envelope.reviewProcesses?.length) return // No universal approval for own official documents.
+    const p = envelope.reviewProcesses.find(p => p.state === 'EMITIDA' && p.emissionDocumentId === verified.node.id)
+    const receipt = p?.events.find(e => e.action === 'EMIT' && e.emission?.record.documentId === verified.node.id)?.emission
+    if (receipt?.contentSha256 !== verified.contentSha256) fail('RESPONSE_APPROVED_CONTENT_CHANGED', 409)
   }
   async function ensureResponseReference(input, session, node) {
     if (await referenceExists(node.id, input.documentId, session.authorization)) return
@@ -350,11 +384,22 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     })
   }
   async function linkResponse(input, session) {
-    if (!canIssueResponse(session)) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
+    if (!canLinkResponse(session)) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
     if (!input.responseDocumentId || input.responseDocumentId === input.documentId) fail('INVALID_RESPONSE_DOCUMENT', 400)
     // Lock both UUIDs in stable order; never hold the same lock twice.
     const ids = [input.documentId, input.responseDocumentId].sort()
     return withDocument(ids[0], () => withDocument(ids[1], async () => {
+      // An Emitidos user supplies the original UUID, never an assignment owner.
+      // Resolve only an unambiguous own responsibility from Alfresco, including
+      // the original assignment of an idempotent replay after explicit attendance.
+      if (!input.assignmentId && session.functionalRole !== 'direccion') {
+        const original = await read(input.documentId, session.authorization)
+        const owned = original.envelope.dispatches.flatMap(d => d.recipients).filter(a => ownsAssignment(a, session))
+        const replay = original.envelope.history.find(e => e.action === 'RESPONSE_LINKED' && e.actorUserId === session.alfresco.id && e.requestKey === input.requestKey)
+        const candidates = replay ? owned.filter(a => replay.assignmentIds.includes(a.id)) : owned.filter(assignmentIsActive)
+        if (candidates.length !== 1) fail(candidates.length ? 'RESPONSE_ASSIGNMENT_AMBIGUOUS' : 'ASSIGNMENT_NOT_OWNED', 403)
+        input = { ...input, assignmentId: candidates[0].id }
+      }
       let value
       if (input.assignmentId) value = await prepareAttention(input, session)
       else {
@@ -366,7 +411,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
       }
       const action = input.assignmentId ? 'RESPONSE_LINKED' : 'DOCUMENT_RESPONSE_LINKED'
       if (previousOperation(value, input, session, action)) {
-        await validateResponse(input, session)
+        assertResponseApproval(value.envelope, await validateResponse(input, session))
         if (!await referenceExists(input.responseDocumentId, input.documentId, session.authorization)) fail('RESPONSE_LINK_PARTIAL', 409)
         return attentionResult(value)
       }
@@ -375,7 +420,9 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
       assertInterventionMutable(value.envelope, String(session.dependency).toLowerCase())
       const existing = [...(value.envelope.responses || []), ...value.envelope.dispatches.flatMap((dispatch) => dispatch.recipients).flatMap((assignment) => assignment.responses || [])]
       if (existing.some((response) => response.documentId === input.responseDocumentId)) fail('RESPONSE_ALREADY_LINKED', 409)
-      const response = await validateResponse(input, session)
+      const verified = await validateResponse(input, session)
+      assertResponseApproval(value.envelope, verified)
+      const response = verified.node
       const next = structuredClone(value.envelope)
       const assignment = input.assignmentId ? next.dispatches.flatMap((dispatch) => dispatch.recipients).find((entry) => entry.id === input.assignmentId) : null
       const at = new Date().toISOString()
@@ -389,32 +436,32 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
       const serialized = JSON.stringify(next)
       if (Buffer.byteLength(serialized) > maxAssignmentBytes) fail('DISPATCH_ASSIGNMENTS_SIZE_LIMIT', 413)
       parseAssignments(serialized, input.documentId)
+      await revalidateInstitutionalIdentity(settings, session, fetchImpl)
       await ensureResponseReference(input, session, response)
-      try { await persistEnvelope(input.documentId, next, value.raw) } catch (error) {
+      try {
+        await revalidateInstitutionalIdentity(settings, session, fetchImpl)
+        if ((await validateResponse(input, session)).fingerprint !== verified.fingerprint) fail('RESPONSE_DOCUMENT_CHANGED', 409)
+        await persistEnvelope(input.documentId, next, value.raw)
+      } catch (error) {
         throw Object.assign(new Error('RESPONSE_LINK_PARTIAL'), { status: error.status || 502, responseDocumentId: response.id })
       }
       return attentionResult(value, next)
     }))
   }
   async function listResponseCandidates(session) {
-    if (!canIssueResponse(session)) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
-    const folder = settings.officeInboxNodeIds?.[String(session.dependency).toUpperCase()]?.emitidos
-    if (!folder) fail('OFFICE_INBOX_MAPPING_REQUIRED')
-    const nodes = []
-    let skipCount = 0
-    let more
-    do {
-      const payload = await request(`${core}/nodes/${encodeURIComponent(folder)}/children`, { authorization: session.authorization,
-        query: `?include=properties,aspectNames,association&maxItems=100&skipCount=${skipCount}` })
-      const list = payload?.list
-      if (!Array.isArray(list?.entries) || typeof list.pagination?.hasMoreItems !== 'boolean') fail('DISPATCH_ALFRESCO_INVALID_RESPONSE', 502)
-      nodes.push(...list.entries.map((entry) => entry.entry).filter((node) => node?.isFile && node.nodeType === 'cm:content' && node.content?.mimeType === 'application/pdf' &&
-        node.association?.assocType === 'cm:contains' && node.createdByUser?.id === (session.alfresco?.id || session.user?.id)))
-      more = list.pagination.hasMoreItems
-      skipCount += list.entries.length
-      if (skipCount > 10_000 || more && !list.entries.length) fail('DISPATCH_DISCOVERY_LIMIT_EXCEEDED')
-    } while (more)
-    return [...new Map(nodes.map((node) => [node.id, node])).values()]
+    if (!canLinkResponse(session)) fail('RESPONSE_EMISSION_NOT_ALLOWED', 403)
+    const snapshot = await listInstitutionalEmitted(settings, session, fetchImpl)
+    if (snapshot.documentErrors.length) fail('RESPONSE_CANDIDATE_COVERAGE_INCOMPLETE', 503)
+    const nodes = snapshot.documents.filter(n => n.createdByUser?.id === session.alfresco.id)
+    const verified = []
+    for (const node of new Map(nodes.map(n => [n.id, n])).values()) {
+      try { verified.push((await validateResponse({ responseDocumentId: node.id }, session)).node) }
+      catch (e) {
+        if (['RESPONSE_OFFICIAL_DOCUMENT_REQUIRED', 'RESPONSE_ORIGIN_CONFLICT', 'RESPONSE_NOT_OWN_EMISSION'].includes(e.message)) continue
+        throw e // unavailable content/ACL/paging must not masquerade as an empty official list
+      }
+    }
+    return verified
   }
   async function relatedResponses(documentId, session) {
     const original = await read(documentId, session.authorization)
@@ -423,11 +470,34 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     const responses = await mapConcurrent(links, 4, async (link) => {
       try {
         const response = await read(link.documentId, session.authorization)
+        const official = decodeEmissionMetadata(response.node)
+        if (official.actorId !== link.emittedByUserId || official.documentCode.split('-')[0].toLowerCase() !== link.emitterDependency) throw new Error('RESPONSE_OFFICIAL_DOCUMENT_REQUIRED')
         const verified = await referenceExists(link.documentId, documentId, session.authorization)
         return { ...link, available: verified, ...(verified ? { node: response.node } : { error: 'RESPONSE_RELATION_NOT_VERIFIED' }) }
       } catch { return { ...link, available: false, error: 'RESPONSE_READ_UNAVAILABLE' } }
     })
     return { responses, summary: attentionSummary(original.envelope), documentIdentity: documentIdentity(original.node, settings) }
+  }
+  async function relatedOriginals(responseDocumentId, session, authorizeOriginal) {
+    const source = await read(responseDocumentId, session.authorization)
+    let official
+    try { official = decodeEmissionMetadata(source.node) } catch { fail('RESPONSE_OFFICIAL_DOCUMENT_REQUIRED', 409) }
+    if (official.actorId !== source.node.createdByUser?.id || !source.node.aspectNames?.includes('gd:identificacion')) fail('RESPONSE_OFFICIAL_DOCUMENT_REQUIRED', 409)
+    const originals = [], documentErrors = [], seen = new Set()
+    for (const id of await referenceTargets(responseDocumentId, session.authorization)) {
+        const entry = { id }
+        if (seen.has(entry.id)) continue
+        seen.add(entry.id)
+        try {
+          if (!await authorizeOriginal?.(entry.id)) fail('DOCUMENT_READ_NOT_ALLOWED', 403)
+          const target = await read(entry.id, session.authorization)
+          const link = [...(target.envelope.responses || []), ...target.envelope.dispatches.flatMap(d => d.recipients).flatMap(a => a.responses || [])]
+            .find(r => r.documentId === responseDocumentId && r.emittedByUserId === official.actorId && r.emitterDependency.toUpperCase() === official.documentCode.split('-')[0])
+          if (!link) fail('RESPONSE_RELATION_NOT_VERIFIED', 409)
+          originals.push({ ...link, relationType: 'response', direction: 'response-to-original', originalDocumentId: entry.id, node: target.node })
+        } catch { documentErrors.push({ error: 'ORIGINAL_RESPONSE_RELATION_UNAVAILABLE' }) }
+    }
+    return { responseDocumentId, originals, documentErrors, complete: !documentErrors.length }
   }
   async function readSnapshot(session) {
     await assertModel()
@@ -521,7 +591,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     record.senderUserId === userId && record.senderDependency === String(dependency).toLowerCase())
   return {
     kind: 'alfresco', withDocument, createDispatch, assertModel, allRecords,
-    attendAssignment, linkResponse, listResponseCandidates, relatedResponses,
+    attendAssignment, linkResponse, listResponseCandidates, relatedResponses, relatedOriginals,
     loadInbox: async (session) => {
       const snapshot = await readSnapshot(session)
       const userId = session.alfresco?.id || session.user?.id

@@ -11,7 +11,7 @@ const otherSpecialistAssignmentId = '6b0c78bf-35f2-4787-878b-f235f21f7c96'
 const input = { operationId: 'reassign-specialist-operation-01', userId: 'staff-dsa-1', destinationUnitId: targetUnitId, dependency: 'DSA', actorId: 'DSA_T' }
 const source = { id: sourceAssignmentId, userId: input.userId, unitId: sourceUnitId, dependency: 'DSA', role: 'especialista', status: 'ACTIVA', assignedBy: 'DSA_T' }
 
-function fixture({ writesEnabled = true, destinationStatus = 'ACTIVA', destinationDependency = 'DSA', candidateError, repositoryFailure, auditFailure, initialAssignments } = {}) {
+function fixture({ responsibilityCheck = async () => ({ status: 'NO_PENDING' }), writesEnabled = true, destinationStatus = 'ACTIVA', destinationDependency = 'DSA', candidateError, repositoryFailure, auditFailure, initialAssignments } = {}) {
   const units = new Map([
     [sourceUnitId, { id: sourceUnitId, name: 'Unidad origen', dependency: 'DSA', status: 'ACTIVA' }],
     [targetUnitId, { id: targetUnitId, name: 'Unidad destino', dependency: destinationDependency, status: destinationStatus }],
@@ -113,7 +113,7 @@ function fixture({ writesEnabled = true, destinationStatus = 'ACTIVA', destinati
     },
   }
   return {
-    service: createHierarchySpecialistReassignmentService({ repository, directory, auditRepository, writesEnabled }),
+    service: createHierarchySpecialistReassignmentService({ repository, directory, auditRepository, writesEnabled, responsibilityCheck }),
     units, assignments, auditEvents, auditCalls, mutationCalls,
     setCandidateError(error) { failCandidate = error },
   }
@@ -263,4 +263,26 @@ test('rejects stale revisions and keeps the independent write flag disabled by d
   await assert.rejects(disabled.service.reassign(input), (error) => error.code === 'HIERARCHY_SPECIALIST_REASSIGNMENTS_DISABLED' && error.status === 403)
   assert.deepEqual(disabled.mutationCalls, [])
   assert.deepEqual(disabled.auditCalls, [])
+})
+
+test('specialist pending obligations and incomplete coverage prevent reassignment without transferring duties', async () => {
+  for (const status of ['HAS_PENDING', 'INDETERMINATE', undefined]) {
+    const state = fixture({ responsibilityCheck: async () => ({ status }) })
+    await assert.rejects(state.service.reassign(input), /HIERARCHY_DOCUMENT_/)
+    assert.deepEqual(state.mutationCalls, [])
+    assert.deepEqual(state.auditCalls, [])
+    assert.equal(state.assignments.get(sourceAssignmentId).status, 'ACTIVA')
+  }
+})
+
+test('specialist obligations are rechecked immediately before deactivating the original relation', async () => {
+  let checks = 0
+  const state = fixture({ responsibilityCheck: async scope => {
+    assert.equal(scope.userId, input.userId)
+    assert.equal(scope.unitId, sourceUnitId)
+    return { status: ++checks === 1 ? 'NO_PENDING' : 'INDETERMINATE' }
+  } })
+  await assert.rejects(state.service.reassign(input), error => error.operationStatus === 'PARCIAL')
+  assert.equal(checks, 2)
+  assert.deepEqual(state.mutationCalls, [])
 })

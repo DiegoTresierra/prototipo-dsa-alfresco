@@ -13,8 +13,8 @@ function readRecords() {
     const parsed = JSON.parse(fs.readFileSync(storePath(), 'utf8'))
     if (!Array.isArray(parsed)) throw new Error('DISPATCH_STORE_UNAVAILABLE')
     return parsed.map(normalizeDispatch)
-  } catch {
-    throw new Error('DISPATCH_STORE_UNAVAILABLE')
+  } catch (cause) {
+    throw Object.assign(new Error('DISPATCH_STORE_UNAVAILABLE', { cause }), { code: 'DISPATCH_STORE_UNAVAILABLE', storagePhase: 'read' })
   }
 }
 
@@ -54,13 +54,16 @@ export function findAttentionAssignment(userId, documentId, dependency, assignme
 }
 
 function writeRecords(records) {
+  let storagePhase = 'mkdir'
   try {
     fs.mkdirSync(path.dirname(storePath()), { recursive: true })
     const temporaryPath = `${storePath()}.${process.pid}.tmp`
+    storagePhase = 'write-temporary'
     fs.writeFileSync(temporaryPath, JSON.stringify(records, null, 2), 'utf8')
+    storagePhase = 'rename'
     fs.renameSync(temporaryPath, storePath())
-  } catch {
-    throw new Error('DISPATCH_STORE_UNAVAILABLE')
+  } catch (cause) {
+    throw Object.assign(new Error('DISPATCH_STORE_UNAVAILABLE', { cause }), { code: 'DISPATCH_STORE_UNAVAILABLE', storagePhase })
   }
 }
 
