@@ -6,6 +6,31 @@ import path from 'node:path'
 import { config } from './config.js'
 import { createDispatch, findAttentionAssignment, findDispatch, listDispatchesForUser, updateDispatch } from './dispatchStore.js'
 
+test('failed local atomic replacement preserves the previous record and exposes only a safe diagnostic phase', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-fault-'))
+  const previousPath = config.dispatchStorePath
+  const originalRename = fs.renameSync
+  config.dispatchStorePath = path.join(directory, 'dispatches.json')
+  const input = { requestKey: 'fault', documentId: 'pdf-fixture', senderUserId: 'director-fixture', senderDependency: 'dsa',
+    instruction: 'Fixture', priority: 'Normal', recipients: [{ id: 'head-fixture', displayName: 'Fixture', dependency: 'dsa' }] }
+  try {
+    const first = createDispatch(input)
+    const before = fs.readFileSync(config.dispatchStorePath, 'utf8')
+    let attempts = 0
+    fs.renameSync = () => { attempts++; throw Object.assign(new Error('private path deliberately omitted'), { code: 'EPERM' }) }
+    assert.throws(() => updateDispatch(first.id, record => ({ ...record, status: 'ASIGNADO' })), error =>
+      error.code === 'DISPATCH_STORE_UNAVAILABLE' && error.storagePhase === 'rename' && error.cause.code === 'EPERM')
+    assert.equal(attempts, 1, 'there is no blind mutation retry')
+    assert.equal(fs.readFileSync(config.dispatchStorePath, 'utf8'), before)
+    fs.renameSync = originalRename
+    assert.equal(createDispatch(input).id, first.id, 'the original idempotent identity survives the failure')
+  } finally {
+    fs.renameSync = originalRename
+    config.dispatchStorePath = previousPath
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('persists dispatches and returns the same record for an idempotent request', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uac-dispatch-'))
   const previousPath = config.dispatchStorePath

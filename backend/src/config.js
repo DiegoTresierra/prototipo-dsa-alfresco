@@ -118,11 +118,26 @@ export const config = {
   },
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   organizationStorePath: process.env.ORGANIZATION_STORE_PATH || path.join(backendRoot, 'data', 'organization.json'),
+  hierarchyReadStorage: process.env.HIERARCHY_READ_STORAGE || 'alfresco',
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',
     password: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME
       ? process.env.ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD || ''
       : process.env.ALFRESCO_DISTRIBUTION_PASSWORD || '',
+  },
+  hierarchyService: {
+    username: process.env.ALFRESCO_HIERARCHY_SERVICE_USERNAME || '',
+    password: process.env.ALFRESCO_HIERARCHY_SERVICE_PASSWORD || '',
+    containerNodeId: process.env.ALFRESCO_HIERARCHY_CONTAINER_NODE_ID || '',
+    auditContainerNodeId: process.env.ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID || '',
+    labContainerNodeId: process.env.ALFRESCO_HIERARCHY_LAB_CONTAINER_NODE_ID || '',
+    storage: process.env.ALFRESCO_HIERARCHY_STORAGE || '',
+    unitWritesEnabled: process.env.ALFRESCO_HIERARCHY_UNIT_WRITES_ENABLED === 'true',
+    unitEditsEnabled: process.env.ALFRESCO_HIERARCHY_UNIT_EDITS_ENABLED === 'true',
+    headWritesEnabled: process.env.ALFRESCO_HIERARCHY_HEAD_WRITES_ENABLED === 'true',
+    specialistWritesEnabled: process.env.ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED === 'true',
+    headChangesEnabled: process.env.ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED === 'true',
+    specialistReassignmentsEnabled: process.env.ALFRESCO_HIERARCHY_SPECIALIST_REASSIGNMENTS_ENABLED === 'true',
   },
   userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
   documentIssuerAssignments: parseJson('ALFRESCO_DOCUMENT_ISSUER_ASSIGNMENTS_JSON', {}),

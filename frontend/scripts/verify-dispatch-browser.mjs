@@ -42,6 +42,18 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const json = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)) }
   if (url.pathname.startsWith('/api/')) {
+    if (url.pathname === '/api/hierarchy') {
+      assert.equal(request.method, 'GET', 'hierarchy browser regression cannot perform administrative writes')
+      return json({ dependency: 'dsa', director: { id: 'direction-fixture', displayName: 'Dirección de ensayo' },
+        revision: 'a'.repeat(64), capabilities: {}, pendingHeadChanges: [], pendingSpecialistReassignments: [],
+        units: [{ id: 'unit-fixture', name: 'Unidad de ensayo', code: 'TEST', dependency: 'dsa', status: 'ACTIVA' }],
+        recipients: [{ id: 'head-fixture', displayName: 'Jefatura de ensayo', functionalRole: 'jefe-unidad', dependency: 'dsa' },
+          { id: 'staff-fixture', displayName: 'Especialista de ensayo', functionalRole: 'especialista', dependency: 'dsa' }],
+        assignments: [{ laneId: 'jefes', userId: 'head-fixture', unitId: 'unit-fixture', dependency: 'dsa' },
+          { laneId: 'especialistas', userId: 'staff-fixture', unitId: 'unit-fixture', unitHeadUserId: 'head-fixture', dependency: 'dsa' }],
+      })
+    }
+    if (url.pathname === '/api/hierarchy/audit') return json({ events: [], pagination: { totalItems: 0, totalPages: 0, hasMoreItems: false } })
     if (url.pathname === '/api/documents/closure') {
       if (request.method === 'GET' && !url.searchParams.has('documentId')) {
         counters.closureInbox++
@@ -202,6 +214,13 @@ try {
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await command('Page.navigate', { url: origin + '/prototipo-dsa-alfresco/' })
   await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'React application')
+  await clickText('Ajustes')
+  await until(() => evaluate("Boolean(document.querySelector('.settings-entry-card'))"), 'hierarchy settings menu')
+  await evaluate("[...document.querySelectorAll('.settings-entry-card')].find(b => b.textContent.includes('Administrar mi oficina')).click()")
+  await until(() => evaluate("Boolean(document.querySelector('.office-chart__unit'))"), 'Alfresco hierarchy rendering')
+  assert.ok(await evaluate("document.body.textContent.includes('Unidad de ensayo') && document.body.textContent.includes('Especialista de ensayo') && document.body.textContent.includes('solo lectura')"))
+  assert.equal(await evaluate("document.querySelector('button[form=\"alfresco-create-unit-form\"]').disabled"), true)
+  assert.equal(await evaluate("[...document.querySelectorAll('.settings-detail button')].some(b => /Guardar unidad|Cambiar jef|Reasignar/.test(b.textContent) && !b.disabled)"), false)
   await clickText('Documentos recibidos')
   await waitAssigned(1)
   await waitIdle()

@@ -33,32 +33,7 @@ export async function loadInstitutionalDirectory(settings, fetchImpl = globalThi
   const memberships = new Map()
   for (const groupId of groups) {
     if (typeof groupId !== 'string' || !/^GROUP_[A-Za-z0-9_-]+$/.test(groupId)) throw failure('GROUP_MAPPINGS_REQUIRED', 503)
-    const users = new Map()
-    let skipCount = 0
-    let expectedTotal
-    do {
-      const query = new URLSearchParams({ maxItems: '100', skipCount: String(skipCount) })
-      const payload = await get(`/alfresco/service/api/groups/${encodeURIComponent(groupId.slice(6))}/children?${query}`)
-      const { data, paging } = payload || {}
-      if (!Array.isArray(data) || !Number.isSafeInteger(paging?.totalItems) || paging.totalItems < 0 ||
-          paging.skipCount !== skipCount || data.length > 100 || (expectedTotal !== undefined && expectedTotal !== paging.totalItems)) {
-        throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
-      }
-      expectedTotal = paging.totalItems
-      for (const member of data) {
-        if (!member || !['USER', 'GROUP'].includes(member.authorityType) || typeof member.shortName !== 'string' || !member.shortName) {
-          throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
-        }
-        // Inherited membership needs a separately approved policy; do not silently omit subgroups.
-        if (member.authorityType === 'GROUP') throw failure('DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED', 503)
-        if (users.has(member.shortName)) throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
-        users.set(member.shortName, { id: member.shortName, displayName: member.displayName?.trim() || member.shortName })
-      }
-      skipCount += data.length
-      if (skipCount > expectedTotal || (!data.length && skipCount < expectedTotal) || skipCount > 10_000) {
-        throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
-      }
-    } while (skipCount < expectedTotal)
+    const users = await readClassicInstitutionalGroup(groupId, get)
     memberships.set(groupId, users)
   }
   const belongs = (userId, mapping) => Object.entries(mapping).filter(([, ids]) => asArray(ids).some((id) => memberships.get(id)?.has(userId))).map(([key]) => key)
@@ -78,4 +53,36 @@ export async function loadInstitutionalDirectory(settings, fetchImpl = globalThi
     recipients.push({ ...member, displayName: person.displayName || member.displayName, dependency, functionalRole: roles[0], unit })
   }
   return { recipients: recipients.sort((a, b) => a.displayName.localeCompare(b.displayName, 'es')), configurationErrors }
+}
+
+// Strict classic contract shared by dispatch and the institutional hierarchy reader.
+export async function readClassicInstitutionalGroup(groupId, get) {
+  if (typeof groupId !== 'string' || !/^GROUP_[A-Za-z0-9_-]+$/.test(groupId)) throw failure('GROUP_MAPPINGS_REQUIRED', 503)
+  const users = new Map()
+  let skipCount = 0
+  let expectedTotal
+  do {
+    const query = new URLSearchParams({ maxItems: '100', skipCount: String(skipCount) })
+    const payload = await get(`/alfresco/service/api/groups/${encodeURIComponent(groupId.slice(6))}/children?${query}`)
+    const { data, paging } = payload || {}
+    if (!Array.isArray(data) || !Number.isSafeInteger(paging?.totalItems) || paging.totalItems < 0 ||
+        paging.skipCount !== skipCount || data.length > 100 || (expectedTotal !== undefined && expectedTotal !== paging.totalItems)) {
+      throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
+    }
+    expectedTotal = paging.totalItems
+    for (const member of data) {
+      if (!member || !['USER', 'GROUP'].includes(member.authorityType) || typeof member.shortName !== 'string' || !member.shortName) {
+        throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
+      }
+      // Inherited membership needs a separately approved policy; do not silently omit subgroups.
+      if (member.authorityType === 'GROUP') throw failure('DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED', 503)
+      if (users.has(member.shortName)) throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
+      users.set(member.shortName, { id: member.shortName, displayName: member.displayName?.trim() || member.shortName })
+    }
+    skipCount += data.length
+    if (skipCount > expectedTotal || (!data.length && skipCount < expectedTotal) || skipCount > 10_000) {
+      throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
+    }
+  } while (skipCount < expectedTotal)
+  return users
 }

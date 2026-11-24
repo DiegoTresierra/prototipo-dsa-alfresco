@@ -489,3 +489,13 @@ o un mecanismo equivalente del repositorio, y completar sesión y elegibilidad d
   intermitencia ni acreditan comportamiento real de Alfresco.
 - Causa no determinada. Pendiente capturar el diagnóstico si vuelve a reproducirse,
   sin añadir reintentos ni cambios funcionales para ocultarlo.
+
+En la integración de jerarquía se añadió diagnóstico seguro del almacenamiento
+local de la prueba: código de error, fase (`read`, `write-temporary`, `rename`) y
+código de sistema, sin rutas, credenciales ni contenido documental. Un fallo al
+registrar el resultado parcial devuelve 502 explícito y no oculta el error inicial.
+Una prueba de fallo simulado de `rename` comprueba que el registro anterior conserva
+su identidad y no se reintenta la escritura automáticamente. Esto no demuestra que
+ese fallo sea la causa del 502 histórico. Las ejecuciones de integración posteriores
+no lo reprodujeron. La persistencia institucional continúa en Alfresco; no se añadió
+un almacén documental ni un contador local.
