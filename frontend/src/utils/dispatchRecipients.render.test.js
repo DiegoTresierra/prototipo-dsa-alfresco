@@ -10,8 +10,8 @@ import react from '@vitejs/plugin-react'
 const response = {
   recipients: [
     { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista de prueba', dependency: 'dsa', functionalRole: 'especialista', unit: null },
-    { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null },
-    { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null },
+    { id: 'fixture_head_a', displayName: 'fixture_head_a', dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null },
+    { id: 'fixture_head_b', displayName: 'fixture_head_b', dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null },
   ],
   allowedRecipientRoles: ['jefe-unidad', 'especialista'],
 }
@@ -53,7 +53,7 @@ test('Dirección DSA renders all three Network recipients as dropdown options wi
 test('shared derivation form keeps the selected row recipient and allows multiple equivalent recipients', () => {
   const html = render(DispatchPanel, {
     document, recipients: response.recipients, allowedRecipientRoles: response.allowedRecipientRoles,
-    initialRecipientIds: ['JEFE_UNIDAD_DSA_1'], onDispatch: () => {},
+    initialRecipientIds: ['fixture_head_a'], onDispatch: () => {},
   })
   assert.equal((html.match(/type="checkbox"/g) || []).length, 3)
   assert.equal((html.match(/checked=""/g) || []).length, 1)
@@ -118,8 +118,8 @@ test('Jefatura only renders specialists even when passed the complete Dirección
     originAssignmentId: 'own-assignment', onDispatch: () => {},
   })
   assert.ok(html.includes('Especialista de prueba'))
-  assert.ok(!html.includes('JEFE_UNIDAD_DSA_1'))
-  assert.ok(!html.includes('JEFE_UNIDAD_DSA_2'))
+  assert.ok(!html.includes('fixture_head_a'))
+  assert.ok(!html.includes('fixture_head_b'))
   assert.equal((html.match(/type="checkbox"/g) || []).length, 1)
 })
 

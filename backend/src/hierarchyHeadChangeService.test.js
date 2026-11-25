@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchyHeadChangeService } from './hierarchyHeadChangeService.js'
 
-const unitId = 'b0c78bf2-35f2-4787-878b-f235f21f7c95'
-const oldAssignmentId = 'c0c78bf2-35f2-4787-878b-f235f21f7c96'
-const specialistAssignmentId = 'd0c78bf2-35f2-4787-878b-f235f21f7c97'
-const input = { operationId: 'change-head-operation-01', unitId, newHeadUserId: 'head-dsa-2', dependency: 'DSA', actorId: 'DSA_T' }
+const unitId = '77777777-0000-4000-8000-000000000011'
+const oldAssignmentId = '77777777-0000-4000-8000-000000000012'
+const specialistAssignmentId = '77777777-0000-4000-8000-000000000013'
+const input = { operationId: 'change-head-operation-01', unitId, newHeadUserId: 'head-dsa-2', dependency: 'DSA', actorId: 'fixture_director_a' }
 
 function fixture({ responsibilityCheck = async () => ({ status: 'NO_PENDING' }), writesEnabled = true, unitStatus = 'ACTIVA', unitDependency = 'DSA', candidateError, initialAssignments, repositoryFailure, auditFailure } = {}) {
   const units = new Map([[unitId, { id: unitId, name: 'Unidad DSA', dependency: unitDependency, status: unitStatus }]])
@@ -124,7 +124,7 @@ test('replaces the active head, preserves specialists and audits each mutation p
     ['INICIADA', 'OPERACION_INICIADA'], ['CAMBIO_APLICADO', 'JEFE_DESACTIVADO'],
     ['CAMBIO_APLICADO', 'JEFE_ASIGNADO'], ['COMPLETADA', 'OPERACION_COMPLETADA'],
   ])
-  assert.equal(state.auditCalls.at(-1).actorId, 'DSA_T')
+  assert.equal(state.auditCalls.at(-1).actorId, 'fixture_director_a')
   assert.equal(state.auditCalls.at(-1).afterData.newHeadUserId, 'head-dsa-2')
   assert.deepEqual(await state.service.listPendingChanges('DSA'), [])
 })
@@ -230,7 +230,7 @@ test('rejects equal, missing, inactive, or cross-dependency targets before mutat
 })
 
 test('rejects a new head already active in another unit or assigned as an active specialist', async () => {
-  const otherUnit = 'e0c78bf2-35f2-4787-878b-f235f21f7c98'
+  const otherUnit = '77777777-0000-4000-8000-000000000015'
   const assignedElsewhere = fixture({ initialAssignments: [
     { id: oldAssignmentId, unitId, userId: 'head-dsa-1', dependency: 'DSA', role: 'jefe-unidad', status: 'ACTIVA' },
     { id: 'other-head-assignment', unitId: otherUnit, userId: 'head-dsa-2', dependency: 'DSA', role: 'jefe-unidad', status: 'ACTIVA' },
@@ -253,7 +253,7 @@ test('rejects duplicate active heads and preserves DTI assignments during a DSA 
   await assert.rejects(duplicate.service.changeHead(input), /HIERARCHY_ACTIVE_UNIT_HEAD_CONFLICT/)
   const crossScope = fixture({ initialAssignments: [
     { id: oldAssignmentId, unitId, userId: 'head-dsa-1', dependency: 'DSA', role: 'jefe-unidad', status: 'ACTIVA' },
-    { id: 'dti-head', unitId: 'f0c78bf2-35f2-4787-878b-f235f21f7c99', userId: 'head-dti-1', dependency: 'DTI', role: 'jefe-unidad', status: 'ACTIVA' },
+    { id: 'dti-head', unitId: '77777777-0000-4000-8000-000000000017', userId: 'head-dti-1', dependency: 'DTI', role: 'jefe-unidad', status: 'ACTIVA' },
   ] })
   const result = await crossScope.service.changeHead(input)
   assert.equal(result.status, 'COMPLETADA')

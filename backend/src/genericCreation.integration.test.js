@@ -7,7 +7,7 @@ import { identityResponse } from './testFixtures/institutionalIdentity.js'
 test('generic creation revalidates the exact current recipient, constructs type metadata and verifies the resulting node', async (t) => {
   Object.assign(process.env, { PORT: '0', SESSION_SECRET: 'generic-fixture', ALFRESCO_TARGET: 'https://generic.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'fixture', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
-    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false',
+    DISPATCH_PERSISTENCE: 'alfresco', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false',
     ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'directory', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'fixture-only',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DSA: 'GROUP_DSA', DTI: 'GROUP_DTI' }, functions: { direccion: 'GROUP_DIR', 'jefe-unidad': 'GROUP_HEAD', especialista: 'GROUP_STAFF' } }),
     ALFRESCO_USER_INBOX_NODE_IDS_JSON: JSON.stringify({ target: 'target-folder' }),
@@ -34,7 +34,7 @@ test('generic creation revalidates the exact current recipient, constructs type 
     const identity = identityResponse(url, options, actors, config.groupMappings)
     if (identity) return identity
     const p = u.pathname
-    if (p.endsWith('/people/-me-')) return state.directoryStatus === 200 ? Response.json({ entry: { id: 'directory', enabled: true } }) : Response.json({}, { status: state.directoryStatus })
+    if (p.endsWith('/people/-me-')) return state.directoryStatus === 200 ? Response.json({ entry: { id: 'directory', enabled: true, capabilities: { isAdmin: false } } }) : Response.json({}, { status: state.directoryStatus })
     if (p.includes('/service/api/groups/')) {
       const group = p.split('/').at(-2)
       const ids = group === 'HEAD' ? ['sender'] : group === 'DSA' ? ['sender'] : []

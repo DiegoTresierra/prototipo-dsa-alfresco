@@ -1,3 +1,4 @@
+import { parseGroupMappings, distributionGroupIds } from './groupMappings.js'
 import dotenv from 'dotenv'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -30,43 +31,6 @@ function parseJson(name, fallback) {
   }
 }
 
-function canonicalizeMappingKeys(mapping, aliases) {
-  return Object.fromEntries(Object.entries(mapping).map(([key, configuredGroups]) => {
-    const normalizedKey = String(key).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    const groupIds = Array.isArray(configuredGroups) ? configuredGroups : [configuredGroups]
-    const normalizedGroups = groupIds.map((group) => {
-      if (group && typeof group === 'object') return group.id || group.groupId || group.name || ''
-      return group
-    }).filter(Boolean)
-    return [aliases[normalizedKey] || key, normalizedGroups.length === 1 ? normalizedGroups[0] : normalizedGroups]
-  }))
-}
-
-function normalizeGroupMappings(dependencies, functions) {
-  return {
-    dependencies: canonicalizeMappingKeys(dependencies, { dti: 'DTI', gddti: 'DTI', dsa: 'DSA', gddsa: 'DSA' }),
-    functions: canonicalizeMappingKeys(functions, {
-      director: 'direccion',
-      direccion: 'direccion',
-      jefeunidad: 'jefe-unidad',
-      especialista: 'especialista',
-    }),
-  }
-}
-
-function parseGroupMappings() {
-  if (process.env.ALFRESCO_GROUP_MAPPINGS_JSON) {
-    const mappings = parseJson('ALFRESCO_GROUP_MAPPINGS_JSON', {})
-    return normalizeGroupMappings(mappings.dependencies || {}, mappings.functions || {})
-  }
-
-  const dependencies = parseJson('ALFRESCO_DEPENDENCY_GROUP_MAPPINGS_JSON', {})
-  const functions = parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {})
-  if (Object.keys(dependencies).length || Object.keys(functions).length) return normalizeGroupMappings(dependencies, functions)
-
-  return { dependencies: {}, functions: {} }
-}
-
 export function dispatchPilotSettings(environment = process.env) {
   return {
     writesEnabled: environment.DISPATCH_ALFRESCO_WRITES_ENABLED === 'true',
@@ -87,6 +51,11 @@ export function dispatchPilotSettings(environment = process.env) {
   }
 }
 
+const technicalUserIds = parseJson('ALFRESCO_TECHNICAL_USER_IDS_JSON', [])
+if (!Array.isArray(technicalUserIds) || technicalUserIds.some(id => typeof id !== 'string' || !id.trim())) {
+  throw new Error('Invalid configuration: ALFRESCO_TECHNICAL_USER_IDS_JSON')
+}
+const groupMappings = parseGroupMappings()
 export const config = {
   port: Number(process.env.PORT || 3000),
   sessionSecret: required('SESSION_SECRET'),
@@ -95,7 +64,7 @@ export const config = {
   alfrescoDiagnostics: process.env.ALFRESCO_DIAGNOSTICS === 'true',
   basicAuthEnabled: process.env.ALFRESCO_BASIC_AUTH_ENABLED !== 'false',
   ssoAuthMode: process.env.ALFRESCO_SSO_AUTH_MODE || 'bearer',
-  groupMappings: parseGroupMappings(),
+  groupMappings,
   userInboxNodeIds: parseJson('ALFRESCO_USER_INBOX_NODE_IDS_JSON', {}),
   officeInboxNodeIds: parseJson('ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON', {}),
   documentClosure: {
@@ -104,8 +73,7 @@ export const config = {
     expectedTarget: process.env.DOCUMENT_CLOSURE_EXPECTED_TARGET || '',
     acknowledgement: process.env.DOCUMENT_CLOSURE_ACKNOWLEDGEMENT || '',
   },
-  officeGroupIds: parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', { DTI: 'GROUP_GD_DTI', DSA: 'GROUP_GD_DSA' }),
-  dispatchStorePath: process.env.DISPATCH_STORE_PATH || path.join(backendRoot, 'data', 'dispatches.json'),
+  officeGroupIds: distributionGroupIds(groupMappings, parseJson('ALFRESCO_OFFICE_GROUP_IDS_JSON', undefined)),
   dispatchPersistence: process.env.DISPATCH_PERSISTENCE || 'alfresco',
   dispatchPilot: dispatchPilotSettings(),
   officialEmission: {
@@ -116,8 +84,6 @@ export const config = {
     reconciliationPath: process.env.OFFICIAL_EMISSION_RECONCILIATION_FILE || '',
     reconciliationSha256: process.env.OFFICIAL_EMISSION_RECONCILIATION_SHA256 || '',
   },
-  numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
-  organizationStorePath: process.env.ORGANIZATION_STORE_PATH || path.join(backendRoot, 'data', 'organization.json'),
   hierarchyReadStorage: process.env.HIERARCHY_READ_STORAGE || 'alfresco',
   distributionService: {
     username: process.env.ALFRESCO_DISTRIBUTION_SERVICE_USERNAME || process.env.ALFRESCO_DISTRIBUTION_USERNAME || '',
@@ -139,7 +105,7 @@ export const config = {
     headChangesEnabled: process.env.ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED === 'true',
     specialistReassignmentsEnabled: process.env.ALFRESCO_HIERARCHY_SPECIALIST_REASSIGNMENTS_ENABLED === 'true',
   },
-  userUnitAssignments: parseJson('ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON', {}),
+  technicalUserIds,
   documentIssuerAssignments: parseJson('ALFRESCO_DOCUMENT_ISSUER_ASSIGNMENTS_JSON', {}),
   keycloak: {
     issuer: required('KEYCLOAK_ISSUER'),

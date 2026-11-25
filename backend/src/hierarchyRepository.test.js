@@ -3,14 +3,14 @@ import assert from 'node:assert/strict'
 import { createHierarchyRepository } from './hierarchyRepository.js'
 
 const containerId = '11111111-1111-4111-8111-111111111111'
-const unitId = 'b0c78bf2-35f2-4787-878b-f235f21f7c95'
-const headA = 'c0c78bf2-35f2-4787-878b-f235f21f7c96'
-const headB = 'e0c78bf2-35f2-4787-878b-f235f21f7c97'
-const specialistA = 'f0c78bf2-35f2-4787-878b-f235f21f7c98'
-const specialistB = 'a1c78bf2-35f2-4787-878b-f235f21f7c99'
+const unitId = '77777777-0000-4000-8000-000000000011'
+const headA = '77777777-0000-4000-8000-000000000012'
+const headB = '77777777-0000-4000-8000-000000000014'
+const specialistA = '77777777-0000-4000-8000-000000000016'
+const specialistB = '77777777-0000-4000-8000-000000000010'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
-  hierarchyService: { username: 'gd_jerarquias_servicio', password: 'not-a-real-secret', containerNodeId: containerId, storage: 'alfresco' },
+  hierarchyService: { username: 'fixture_hierarchy', password: 'not-a-real-secret', containerNodeId: containerId, storage: 'alfresco' },
 }
 
 function response(status, body) {

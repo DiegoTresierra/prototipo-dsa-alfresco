@@ -4,7 +4,11 @@
 
 Alfresco conserva nodos, contenido, relaciones, grupos, membresías y metadatos. El navegador presenta datos autorizados; su caché no asigna correlativos ni acredita permisos. Keycloak y el backend gestionan autenticación; la autoridad institucional se confirma en Alfresco.
 
-El JSON provisional de organización no es fuente de supervisión ni autorización documental. La persistencia local de despachos y números se conserva únicamente para compatibilidad/recuperación y no debe confundirse con la fuente operativa Alfresco.
+El servidor exige Alfresco para leer y escribir despachos. La jerarquía consulta las unidades y asignaciones activas de Alfresco y sus diarios. Los archivos históricos privados quedan fuera del circuito operativo. Un error de lectura se comunica al cliente.
+
+La sesión vincula la persona de Alfresco con sus grupos actuales. El servidor excluye de la actuación interactiva las dos identidades de servicio configuradas y las identidades técnicas adicionales declaradas en `ALFRESCO_TECHNICAL_USER_IDS_JSON`. El operador debe mantener ese inventario y revisar la pertenencia a grupos funcionales de las cuentas de automatización.
+
+`ALFRESCO_GROUP_MAPPINGS_JSON` vincula los IDs exactos de las autoridades con sus funciones y dependencias. La API de miembros aporta pertenencias. El significado institucional de cada grupo requiere configuración. Una dependencia con varios grupos requiere una selección explícita en `ALFRESCO_OFFICE_GROUP_IDS_JSON` para distribuir. Un objeto vacío explícito desactiva esos destinos. Los UUID de bandejas y contenedores, los códigos oficiales de firmantes y las credenciales permanecen en configuración privada. Los nombres técnicos de tipos, aspectos y asociaciones se validan contra el contrato del modelo.
 
 ## Identidad y autorización
 
@@ -51,3 +55,17 @@ Los secretos permanecen en configuración privada, nunca en VITE, ejemplos, info
 Las evidencias institucionales se archivan fuera del repositorio con control de acceso. Los tests deben utilizar destinos .invalid, usuarios de prueba y UUID sintéticos. No ejecutar scripts de despliegue, ni sus opciones de escritura, como parte de una auditoría GET.
 
 La validación reproducible está en [README](../README.md); las verificaciones con sesiones finales están en [READ_ACCESS_CHECKS](READ_ACCESS_CHECKS.md).
+
+## Inventario de portabilidad
+
+| Elemento | Tratamiento |
+| --- | --- |
+| Personas, estado y membresías | Consultas paginadas al directorio configurado y verificación de identidad. La lectura del PDF utiliza las credenciales del actor. |
+| Jefaturas, especialistas y nuevas unidades | Lectura de `gdo:unidad` y `gdo:asignacion`, con estado activo, dependencia, revisión y comprobación de auditoría. |
+| Códigos documentales y firmantes | Configuración institucional explícita y verificación en Alfresco. El nombre del usuario no acredita un código oficial. |
+| Grupos, carpetas y cuentas técnicas | Configuración privada por entorno. El ID de cada grupo conserva puntuación, prefijo y mayúsculas. Las carpetas personales solo intervienen en entregas que requieren una bandeja personal. |
+| Tipos, asociaciones, campos, nombres esperados de los contenedores y cabeceras del protocolo | Contratos de interoperabilidad y verificación del destino. Los scripts LAB comprueban además el contenedor de laboratorio antes de operar. |
+| JSON históricos y planificador | Los originales permanecen privados. El planificador es independiente del servidor. Las pruebas de compatibilidad usan un almacén de fixture en un directorio temporal. |
+| Nombres de usuarios, UUID y documentos de ejemplo | Datos sintéticos en pruebas. El navegador de regresión usa el frontend compilado y un servidor de fixtures. |
+| Evidencias, locks, copias y builds | Exclusiones de Git. Las copias operativas y los diarios se conservan para conciliación. |
+| Decisiones institucionales | El alta de emisores, la política sobre grupos anidados y la autorización de escrituras reales requieren validación del operador. |

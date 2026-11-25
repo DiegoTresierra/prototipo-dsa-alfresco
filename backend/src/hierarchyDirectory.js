@@ -1,3 +1,4 @@
+import { isServiceIdentity } from './institutionalIdentity.js'
 import { createHierarchyServiceClient } from './hierarchyServiceClient.js'
 import { resolveRole } from './roleResolver.js'
 
@@ -11,18 +12,11 @@ function groupIds(mapping = {}) {
   return [...new Set(Object.values(mapping).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value) => typeof value === 'string' && value))]
 }
 
-function isTechnicalAccount(person, serviceUsername) {
-  const id = String(person?.id || '')
-  return id.toLowerCase() === String(serviceUsername || '').toLowerCase() ||
-    /(^svc[_-]|[_-](?:svc|service|servicio)$)/i.test(id) || person?.capabilities?.isAdmin === true
-}
-
 export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetch } = {}) {
   const service = createHierarchyServiceClient(settings, fetchImpl)
   const mappings = settings?.groupMappings || { dependencies: {}, functions: {} }
   const dependencies = mappings.dependencies || {}
   const functions = mappings.functions || {}
-  const serviceUsername = settings?.hierarchyService?.username || ''
 
   function assertMapping(dependency, role) {
     if (!Object.hasOwn(dependencies, dependency) || !groupIds({ [dependency]: dependencies[dependency] }).length) {
@@ -61,8 +55,9 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
       if (error.status === 404) throw failure('HIERARCHY_USER_NOT_FOUND', 404)
       throw error
     }
+    if (person.id !== userId) throw failure('HIERARCHY_PERSON_ID_MISMATCH', 502)
     if (person.enabled !== true) throw failure('HIERARCHY_USER_DISABLED', 403)
-    if (isTechnicalAccount(person, serviceUsername)) throw failure('HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE', 403)
+    if (isServiceIdentity(settings, person.id) || person.capabilities?.isAdmin === true) throw failure('HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE', 403)
     const resolved = resolveRole([...userGroups], mappings, userId)
     if (resolved.authorizationStatus === 'ambiguous') throw failure('HIERARCHY_USER_MEMBERSHIP_AMBIGUOUS', 409)
     if (resolved.authorizationStatus !== 'active') throw failure('HIERARCHY_USER_MEMBERSHIP_INCOMPLETE', 403)

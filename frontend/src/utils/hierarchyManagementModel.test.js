@@ -5,12 +5,11 @@ import { createHierarchyManagementModel } from './hierarchyManagementModel.js'
 test('recognizes an empty Alfresco hierarchy and still returns live role candidates', () => {
   const model = createHierarchyManagementModel({
     dependency: 'dsa',
-    director: { id: 'DSA_T', displayName: 'Dirección DSA' },
+    director: { id: 'fixture_director_a', displayName: 'Dirección DSA' },
     units: [],
     assignments: [],
     recipients: [{ id: 'head', functionalRole: 'jefe-unidad' }, { id: 'staff', functionalRole: 'especialista' }],
   })
-  assert.equal(model.alfrescoReadOnly, true)
   assert.deepEqual(model.units, [])
   assert.deepEqual(model.assignments, [])
   assert.deepEqual(model.members.jefes, [])
@@ -32,18 +31,8 @@ test('uses Alfresco unitId as the specialist reference and keeps persisted assig
   assert.equal(model.staleCount, 1)
 })
 
-test('preserves the legacy JSON mode contract and unitHeadUserId mapping', () => {
-  const model = createHierarchyManagementModel({
-    recipients: [{ id: 'head' }, { id: 'staff' }],
-    assignments: [
-      { laneId: 'jefes', userId: 'head' },
-      { laneId: 'especialistas', userId: 'staff', unitHeadUserId: 'head' },
-      { laneId: 'jefes', userId: 'stale' },
-    ],
-  })
-  assert.equal(model.alfrescoReadOnly, false)
-  assert.deepEqual(model.units, [])
-  assert.deepEqual(model.members.jefes, ['head'])
-  assert.equal(model.specialistUnits.staff, 'head')
-  assert.equal(model.staleCount, 1)
+test('rejects legacy and incomplete payloads instead of presenting an editable or empty organization', () => {
+  for (const result of [{}, { recipients: [], assignments: [] }, { units: [], recipients: [] }]) {
+    assert.throws(() => createHierarchyManagementModel(result), /jerarquía institucional completa/)
+  }
 })

@@ -8,7 +8,7 @@ export const responseId = '00000000-0000-0000-0000-000000000020'
 export const actor = (id, role) => ({ alfresco: { id }, authorization: `Basic actor-${id}`, authorizationStatus: 'active',
   functionalRole: role, dependency: 'DSA', capabilities: ['documents:read', 'documents:write'] })
 export function attentionFixture() {
-  const settings = { alfrescoTarget: 'https://alfresco.invalid', distributionService: { username: 'gd_distribucion', password: 'test-only' },
+  const settings = { alfrescoTarget: 'https://alfresco.invalid', distributionService: { username: 'fixture_distribution', password: 'test-only' },
     dispatchPersistence: 'alfresco', dispatchPilot: { writesEnabled: true, environment: 'dev', environments: {
       dev: { enabled: true, acknowledgement: pilotAcknowledgements.dev, expectedTarget: 'https://alfresco.invalid' },
     } }, officeInboxNodeIds: { DSA: { emitidos: 'dsa-emitted', porAtender: 'dsa-attention' }, DTI: { emitidos: 'dti-emitted', porAtender: 'dti-attention' } },
@@ -18,7 +18,7 @@ export function attentionFixture() {
     parentId: parent, createdByUser: { id: creator }, content: { mimeType: 'application/pdf' }, aspectNames: ['cm:versionable', 'gd:identificacion'],
     allowableOperations: ['update'], properties: { 'gd:dependenciaOrigen': dependency, 'cm:author': 'not-an-institution', 'gd:estado': 'unchanged' },
     permissions: { isInheritanceEnabled: true, locallySet: [{ authorityId: 'GROUP_GD_DTI', name: 'Consumer', accessStatus: 'ALLOWED' }] } })
-  const nodes = new Map([[originalId, pdf(originalId, 'DTI_T', 'dti-emitted', 'DTI')]])
+  const nodes = new Map([[originalId, pdf(originalId, 'fixture_director_b', 'dti-emitted', 'DTI')]])
   const folders = new Map([['dsa-attention', new Set([originalId])], ['dti-emitted', new Set([originalId])], ['dsa-emitted', new Set()], ['dti-attention', new Set()]])
   const references = new Map()
   const state = { denyActor: false, originalPutStatus: 200, failAfterCommit: false, associationStatus: 201, calls: [] }
@@ -28,15 +28,15 @@ export function attentionFixture() {
     const p = parsed.pathname
     const method = options.method || 'GET'
     state.calls.push({ path: p, method })
-    const institutionalActors = new Map([['head', 'jefe-unidad'], ['other-head', 'jefe-unidad'], ['staff', 'especialista'], ['director', 'direccion'], ['DTI_T', 'direccion']]
-      .map(([id, functionalRole]) => [`Basic actor-${id}`, { id, functionalRole, dependency: id === 'DTI_T' ? 'DTI' : 'DSA' }]))
+    const institutionalActors = new Map([['head', 'jefe-unidad'], ['other-head', 'jefe-unidad'], ['staff', 'especialista'], ['director', 'direccion'], ['fixture_director_b', 'direccion']]
+      .map(([id, functionalRole]) => [`Basic actor-${id}`, { id, functionalRole, dependency: id === 'fixture_director_b' ? 'DTI' : 'DSA' }]))
     const identity = identityResponse(url, options, institutionalActors, settings.groupMappings)
     if (identity) return identity
     const json = (body, status = 200) => Response.json(body, { status })
     if (p.endsWith('/tickets')) return json({ entry: { id: 'test-ticket' } }, 201)
-    if (p.endsWith('/people/-me-')) return json({ entry: { id: 'gd_distribucion', enabled: true, capabilities: { isAdmin: false } } })
+    if (p.endsWith('/people/-me-')) return json({ entry: { id: 'fixture_distribution', enabled: true, capabilities: { isAdmin: false } } })
     if (p.includes('/service/api/groups/')) {
-      const groups = { DSA: ['director', 'head', 'staff', 'other-head'], DTI: ['DTI_T'], DIRECTORS: ['director', 'DTI_T'], HEADS: ['head', 'other-head'], STAFF: ['staff'] }
+      const groups = { DSA: ['director', 'head', 'staff', 'other-head'], DTI: ['fixture_director_b'], DIRECTORS: ['director', 'fixture_director_b'], HEADS: ['head', 'other-head'], STAFF: ['staff'] }
       const members = groups[p.split('/').at(-2)]
       return json({ data: members.map((shortName) => ({ shortName, authorityType: 'USER' })), paging: { skipCount: 0, totalItems: members.length } })
     }

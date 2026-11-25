@@ -7,7 +7,7 @@ import { emittedFixture } from './testFixtures/emitted.js'
 test('GET emitted endpoint enforces session and dependency, rejects client scope and forwards the real actor ACL', async (t) => {
   Object.assign(process.env, { PORT: '0', SESSION_SECRET: 'emitted-fixture', ALFRESCO_TARGET: 'https://emitted.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
-    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false' })
+    DISPATCH_PERSISTENCE: 'alfresco', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false' })
   const f = emittedFixture()
   const { config } = await import('./config.js')
   Object.assign(config, f.settings)

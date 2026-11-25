@@ -32,7 +32,7 @@ async function setup(t, dependency = 'DSA') {
   const session = { ...actor('director', 'direccion'), dependency }
   const person = { id: 'director', functionalRole: 'direccion', dependency }
   const actors = new Map([[session.authorization, person]])
-  const technical = 'Basic ' + Buffer.from('gd_distribucion:test-only').toString('base64')
+  const technical = 'Basic ' + Buffer.from('fixture_distribution:test-only').toString('base64')
   const state = { puts: 0, timeout: null, actorDenied: false, update: true, admin: false, timeoutBefore: false, denyAfterCommit: false }
   const fetchImpl = async (url, options) => {
     assert.equal(new URL(url).hostname, 'alfresco.invalid', 'never contact real Alfresco')
@@ -48,7 +48,7 @@ async function setup(t, dependency = 'DSA') {
       return Response.json({ entry: node })
     }
     assert.equal(options.method, 'GET')
-    if (options.headers.Authorization === technical && p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'gd_distribucion', enabled: true, capabilities: { isAdmin: state.admin } } })
+    if (options.headers.Authorization === technical && p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'fixture_distribution', enabled: true, capabilities: { isAdmin: state.admin } } })
     const identity = identityResponse(url, options, actors, f.settings.groupMappings)
     if (identity) return identity
     if (state.actorDenied && options.headers.Authorization === session.authorization) return Response.json({}, { status: 403 })
@@ -167,7 +167,7 @@ test('lost verification after committed PUT is uncertain; restored ACL recovers 
   assert.equal(x.state.puts, 2)
 })
 test('technical identity cannot impersonate actor; cancellation state alone is insufficient', async t => {
-  const x = await setup(t); x.person.id = 'gd_distribucion'
+  const x = await setup(t); x.person.id = 'fixture_distribution'
   await assert.rejects(x.engine().decide(x.input, x.session), /INSTITUTIONAL_IDENTITY_REJECTED/)
   assert.equal(x.state.puts, 0)
   const y = await setup(t), e = y.f.envelope()

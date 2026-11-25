@@ -10,7 +10,7 @@ test('Express official endpoint parses actual multipart, enforces CSRF/role and 
   Object.assign(process.env, { PORT: '0', SESSION_SECRET: 'test-only', ALFRESCO_TARGET: 'https://official.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback' })
   const { config } = await import('./config.js')
-  Object.assign(config, f.settings, { dispatchPersistence: 'local', port: 0 })
+  Object.assign(config, f.settings, { dispatchPilot: { ...f.settings.dispatchPilot, leasePath: f.settings.officialEmission.leasePath + '.dispatch' }, port: 0 })
   const realFetch = globalThis.fetch
   globalThis.fetch = (url, options) => new URL(url).hostname === 'official.invalid' ? f.fetch(url, options) : realFetch(url, options)
   const { server } = await import('./index.js')

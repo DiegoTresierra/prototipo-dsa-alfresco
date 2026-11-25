@@ -12,10 +12,10 @@ test('local confirmation cache never allocates or changes a repository number, i
     assert.deepEqual(loadAlfrescoConfirmedDocuments(), [])
     assert.equal(storage.get(CONFIRMED_STORAGE_KEY), legacy, 'read does not destroy legacy cache evidence')
     const data = { issuerCode: 'fake-code', originalConsecutive: '555', documentYear: 2030 }
-    const entry = { id: 'confirmed', properties: { 'gd:numero': '2', 'gd:codigoDocumental': 'DTI-UPSI', 'gd:cicloDocumental': 2026 } }
+    const entry = { id: 'confirmed', properties: { 'gd:numero': '2', 'gd:codigoDocumental': 'DTI-UNIT', 'gd:cicloDocumental': 2026 } }
     const first = recordAlfrescoConfirmedDocument(data, entry)
     assert.equal(first.document.originalConsecutive, '2')
-    assert.equal(first.document.issuerCode, 'DTI-UPSI')
+    assert.equal(first.document.issuerCode, 'DTI-UNIT')
     assert.equal(first.document.documentYear, 2026)
     assert.equal(first.document.documentNumber, '')
     const repeat = recordAlfrescoConfirmedDocument({ ...data, originalConsecutive: '888' }, entry)

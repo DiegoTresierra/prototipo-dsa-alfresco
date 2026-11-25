@@ -6,7 +6,7 @@ function fixture({ writesEnabled = true, repositoryError = null, auditErrorAt = 
   const events = []
   const unitCalls = []
   const unit = {
-    id: 'b0c78bf2-35f2-4787-878b-f235f21f7c95',
+    id: '77777777-0000-4000-8000-000000000011',
     name: 'Unidad ficticia', code: 'TEST-01', description: '', dependency: 'DSA', status: 'ACTIVA',
   }
   const repository = {

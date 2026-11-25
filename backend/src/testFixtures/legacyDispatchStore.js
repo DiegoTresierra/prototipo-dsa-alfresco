@@ -1,7 +1,8 @@
+import { isAttentionAssignment } from '../attentionPolicy.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { config } from './config.js'
+import { config } from '../config.js'
 
 function storePath() {
   return config.dispatchStorePath
@@ -39,12 +40,6 @@ function normalizeDispatch(record) {
       originAssignmentId: record.originAssignmentId || null,
     })),
   }
-}
-
-export function isAttentionAssignment(recipient, userId, role, dependency) {
-  return recipient.userId === userId && recipient.functionalRole === role &&
-    (!dependency || recipient.dependency === String(dependency).toLowerCase()) &&
-    ['ASIGNADO', 'DESPACHADO'].includes(recipient.status)
 }
 
 export function findAttentionAssignment(userId, documentId, dependency, assignmentId) {

@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { config } from './config.js'
-import { createDispatch, findAttentionAssignment, findDispatch, listDispatchesForUser, updateDispatch } from './dispatchStore.js'
+import { createDispatch, findAttentionAssignment, findDispatch, listDispatchesForUser, updateDispatch } from './testFixtures/legacyDispatchStore.js'
 
 test('failed local atomic replacement preserves the previous record and exposes only a safe diagnostic phase', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-fault-'))

@@ -10,7 +10,7 @@ const runId = 'LAB-AUDIT-TEST-01'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
   hierarchyService: {
-    username: 'gd_jerarquias_servicio', password: 'not-a-real-secret',
+    username: 'fixture_hierarchy', password: 'not-a-real-secret',
     containerNodeId: definitiveId, auditContainerNodeId: auditId, labContainerNodeId: labId, storage: 'alfresco',
   },
 }
@@ -33,7 +33,7 @@ function makeFake({ rootStatus = 200, rootName = 'GD_JERARQUIAS_LAB', postStatus
     calls.push({ method, pathname: parsed.pathname, body })
     if (parsed.pathname.endsWith('/authentication/versions/1/tickets')) return response(201, { entry: { id: 'fake-ticket' } })
     if (parsed.pathname.endsWith('/people/-me-')) return response(200, { entry: {
-      id: 'gd_jerarquias_servicio', enabled: true, capabilities: { isAdmin: false },
+      id: 'fixture_hierarchy', enabled: true, capabilities: { isAdmin: false },
     } })
     if (parsed.pathname.endsWith(`/nodes/${labId}`) && method === 'GET') {
       return rootStatus === 200 ? response(200, { entry: root }) : response(rootStatus, { error: 'lab container read failed' })

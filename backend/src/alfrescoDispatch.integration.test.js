@@ -19,7 +19,7 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   Object.assign(process.env, {
     PORT: '0', SESSION_SECRET: 'test-only', ALFRESCO_TARGET: 'https://alfresco.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
-    ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'gd_distribucion', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'test-only',
+    ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'fixture_distribution', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'test-only',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DSA: 'GROUP_DSA', DTI: 'GROUP_DTI' },
       functions: { direccion: 'GROUP_DIRECTORS', 'jefe-unidad': 'GROUP_HEADS', especialista: 'GROUP_STAFF' } }),
     ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON: JSON.stringify({ DSA: { porAtender: 'dsa-folder' }, DTI: { emitidos: 'dti-folder' } }),
@@ -49,9 +49,9 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(value.id).digest('base64url')
     return { Cookie: `gd_session=${value.id}.${signature}`, 'X-CSRF-Token': value.csrfToken, 'Content-Type': 'application/json' }
   }
-  const director = session('DSA_T', 'direccion')
+  const director = session('fixture_director_a', 'direccion')
   const director2 = session('director-2', 'direccion')
-  const directorDti = session('DTI_T', 'direccion', 'DTI')
+  const directorDti = session('fixture_director_b', 'direccion', 'DTI')
   const head = session('head', 'jefe-unidad')
   const staff = session('staff', 'especialista')
   const node = { id: documentId, nodeType: 'cm:content', isFile: true, content: { mimeType: 'application/pdf' }, parentId: 'dti-folder',
@@ -76,11 +76,11 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     const method = options.method || 'GET'
     if (method === 'GET') reads.push(p)
     assert.ok(['GET', 'PUT'].includes(method))
-    if (p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'gd_distribucion', enabled: true, capabilities: { isAdmin: false } } })
+    if (p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'fixture_distribution', enabled: true, capabilities: { isAdmin: false } } })
     if (p.includes('/service/api/groups/')) {
       const group = p.split('/').at(-2)
-      const members = { DSA: ['DSA_T', 'director-2', 'head', 'head-2', 'staff'], DTI: ['DTI_T', 'staff-dti'],
-        DIRECTORS: ['DSA_T', 'director-2', 'DTI_T'], HEADS: ['head', 'head-2'], STAFF: ['staff', 'staff-dti'] }[group]
+      const members = { DSA: ['fixture_director_a', 'director-2', 'head', 'head-2', 'staff'], DTI: ['fixture_director_b', 'staff-dti'],
+        DIRECTORS: ['fixture_director_a', 'director-2', 'fixture_director_b'], HEADS: ['head', 'head-2'], STAFF: ['staff', 'staff-dti'] }[group]
       return Response.json({ data: members.map((shortName) => ({ shortName, authorityType: 'USER' })), paging: { skipCount: 0, totalItems: members.length } })
     }
     if (p.includes('/people/')) return Response.json({ entry: { id: p.split('/').at(-1), enabled: true } })
@@ -98,12 +98,12 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     }
     if (p.endsWith('/parents')) return Response.json({}, { status: 403 })
     const id = p.endsWith('/content') ? p.split('/').at(-2) : p.split('/').at(-1)
-    if (denied && options.headers.Authorization === 'Basic DSA_T') return Response.json({}, { status: 403 })
+    if (denied && options.headers.Authorization === 'Basic fixture_director_a') return Response.json({}, { status: 403 })
     if (method === 'PUT') {
       if (updateDenied) return Response.json({}, { status: 403 })
       assert.ok([documentId, secondId, additionalId].includes(id), 'PUT only mocked institutional PDFs')
       const body = JSON.parse(options.body)
-      assert.equal(options.headers.Authorization, 'Basic '+Buffer.from('gd_distribucion:test-only').toString('base64'))
+      assert.equal(options.headers.Authorization, 'Basic '+Buffer.from('fixture_distribution:test-only').toString('base64'))
       puts.push(body)
       const target = nodes.get(id)
       Object.assign(target.properties, body.properties)
@@ -180,7 +180,7 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   assert.equal(fs.readFileSync(localPath, 'utf8'), 'legacy data must never be read or changed')
   originalInInstitutionalScope = true
   const current = node.properties['gd:asignaciones']
-  actors.get('Basic DSA_T').groups = ['GROUP_DSA', 'GROUP_STAFF']
+  actors.get('Basic fixture_director_a').groups = ['GROUP_DSA', 'GROUP_STAFF']
   const revoked = await post(director, { ...payload, requestKey: 'revoked-director' })
   assert.equal(revoked.status, 403)
   assert.equal((await revoked.json()).error, 'INSTITUTIONAL_IDENTITY_REJECTED')

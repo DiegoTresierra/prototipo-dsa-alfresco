@@ -11,7 +11,7 @@ export function Sidebar({ activePanel, collapsed, isOpen, items, onNavigate, onC
       <aside className={`sidebar ${isOpen ? 'sidebar--open' : ''} ${collapsed ? 'sidebar--collapsed' : ''}`}>
         <div className="sidebar__brand">
           <div className="brand-mark"><Icon name="file" size={22} /></div>
-          {!collapsed && <div className="sidebar__brand-copy"><strong>Gestión Documental</strong><span>{office.acronym ? `${office.acronym} · Universidad Andina` : office.office}</span></div>}
+          {!collapsed && <div className="sidebar__brand-copy"><strong>Gestión Documental</strong><span>{[office.acronym || office.office, import.meta.env.VITE_INSTITUTION_NAME].filter(Boolean).join(' · ')}</span></div>}
           <button aria-label="Cerrar menú" className="sidebar__close" onClick={onClose} type="button"><Icon name="close" /></button>
         </div>
 

@@ -1,4 +1,6 @@
-// Read-only integration boundary owned by the future internal-group module.
+import { isValidDispatchUnit } from './dispatchPolicy.js'
+
+// Only current assignments verified by the institutional provider establish supervision.
 // No names, unit suffixes or dependency-wide supervision guesses here.
 export async function resolveManagedRecipients(session, recipients, provider) {
   const dependency = String(session?.dependency || '').toLowerCase()
@@ -13,7 +15,9 @@ export async function resolveManagedRecipients(session, recipients, provider) {
       resolution.members.some((member) => !member.userId || !Array.isArray(member.groupIds) ||
         !member.groupIds.length || member.groupIds.some((id) => typeof id !== 'string' || !id.startsWith('GROUP_')))) throw pending()
   const ids = new Set(resolution.members.map((member) => member.userId))
-  return eligible.filter((recipient) => recipient.functionalRole === 'especialista' && ids.has(recipient.id))
+  const unit = isValidDispatchUnit(resolution.unit, dependency) ? resolution.unit : null
+  return eligible.filter(recipient => recipient.functionalRole === 'especialista' && ids.has(recipient.id))
+    .map(recipient => ({ ...recipient, unit }))
 }
 
 function pending() {

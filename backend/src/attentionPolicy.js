@@ -33,3 +33,9 @@ export function attentionSummary(envelope) {
     pending, cancelled, readyForClosureReview: assignments.length > 0 && pending === 0 && cancelled === 0,
     formalClosureAllowed: false } // Authority and cancellation rules require an institutional decision.
 }
+
+export function isAttentionAssignment(recipient, userId, role, dependency) {
+  return recipient.userId === userId && recipient.functionalRole === role &&
+    (!dependency || recipient.dependency === String(dependency).toLowerCase()) &&
+    assignmentIsActive(recipient)
+}

@@ -4,10 +4,10 @@ import { createHierarchyHeadAssignmentService } from './hierarchyHeadAssignmentS
 
 const input = {
   operationId: 'head-operation-2026-01',
-  unitId: 'b0c78bf2-35f2-4787-878b-f235f21f7c95',
+  unitId: '77777777-0000-4000-8000-000000000011',
   userId: 'head-dsa-1',
   dependency: 'DSA',
-  actorId: 'DSA_T',
+  actorId: 'fixture_director_a',
 }
 
 function fixture({ writesEnabled = true, repositoryError, auditErrorAt = '' } = {}) {
@@ -21,7 +21,7 @@ function fixture({ writesEnabled = true, repositoryError, auditErrorAt = '' } = 
       if (repositoryError) throw repositoryError
       if (assignments.has(args.operationId)) return { ...assignments.get(args.operationId), reused: true }
       const assignment = {
-        id: 'c0c78bf2-35f2-4787-878b-f235f21f7c96',
+        id: '77777777-0000-4000-8000-000000000012',
         unitId: args.unitId,
         userId: args.userId,
         dependency: args.dependency,
@@ -53,7 +53,7 @@ test('records INICIADA before repository mutation and COMPLETADA after verified 
   assert.equal(result.assignment.role, 'jefe-unidad')
   assert.equal(result.assignment.unitId, input.unitId)
   assert.deepEqual(state.eventCalls.map(({ phase }) => phase), ['INICIADA', 'COMPLETADA'])
-  assert.equal(state.eventCalls[0].actorId, 'DSA_T')
+  assert.equal(state.eventCalls[0].actorId, 'fixture_director_a')
   assert.equal(state.eventCalls[1].action, 'JEFE_ASIGNADO')
   assert.equal(state.repositoryCalls[0].role, 'jefe-unidad')
   assert.equal(state.repositoryCalls[0].dependency, 'DSA')
@@ -87,7 +87,7 @@ test('reports a partial assignment and records a PARCIAL event when repository c
 test('does not report success if the completion audit fails and tries to record PARCIAL', async () => {
   const state = fixture({ auditErrorAt: 'COMPLETADA' })
   await assert.rejects(state.service.assignHead(input), (error) =>
-    error.code === 'HIERARCHY_AUDIT_RECORD_FAILED' && error.operationStatus === 'PARCIAL' && error.assignmentId === 'c0c78bf2-35f2-4787-878b-f235f21f7c96')
+    error.code === 'HIERARCHY_AUDIT_RECORD_FAILED' && error.operationStatus === 'PARCIAL' && error.assignmentId === '77777777-0000-4000-8000-000000000012')
   assert.deepEqual(state.eventCalls.map(({ phase }) => phase), ['INICIADA', 'COMPLETADA', 'PARCIAL'])
 })
 

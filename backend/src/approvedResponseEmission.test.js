@@ -31,8 +31,8 @@ async function integrated(t, { approved = true, typed = true, legacy = false } =
   const roots = Object.fromEntries(['DTI', 'DSA'].map((dep) => [dep, { ...e.settings.officeInboxNodeIds[dep], reviewSource: f.settings.officeInboxNodeIds[dep].porAtender }]))
   Object.assign(f.settings, { alfrescoTarget: e.settings.alfrescoTarget, officeInboxNodeIds: roots, dispatchPersistence: 'alfresco',
     dispatchPilot: e.settings.dispatchPilot, distributionService: e.settings.distributionService, officeGroupIds: e.settings.officeGroupIds, officialEmission: e.settings.officialEmission })
-  const serviceAuth = 'Basic ' + Buffer.from('gd_distribucion:test-only').toString('base64')
-  f.actors.set(serviceAuth, { id: 'gd_distribucion', functionalRole: 'direccion', dependency: 'DSA' })
+  const serviceAuth = 'Basic ' + Buffer.from('fixture_distribution:test-only').toString('base64')
+  f.actors.set(serviceAuth, { id: 'fixture_distribution', functionalRole: 'direccion', dependency: 'DSA' })
   const references = new Set()
   const conditions = { referenceDenied: false }
   const fetchImpl = async (url, options = {}) => {

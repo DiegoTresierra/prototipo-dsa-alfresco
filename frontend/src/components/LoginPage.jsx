@@ -9,6 +9,8 @@ export function LoginPage({ basicAuthEnabled, onAuthenticated }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const logoUrl = import.meta.env.VITE_INSTITUTION_LOGO_URL
+  const institution = import.meta.env.VITE_INSTITUTION_NAME || ''
   const [logoUnavailable, setLogoUnavailable] = useState(false)
 
   const handleSubmit = async (event) => {
@@ -29,16 +31,9 @@ export function LoginPage({ basicAuthEnabled, onAuthenticated }) {
     <main className="login-page">
       <section className="login-card" aria-labelledby="login-title">
         <header className="login-card__brand">
-          {logoUnavailable
-            ? <div className="login-card__logo-fallback" aria-label="Universidad Andina del Cusco">UAC</div>
-            : <img
-                alt="Logotipo de la Universidad Andina del Cusco"
-                className="login-card__logo"
-                onError={() => setLogoUnavailable(true)}
-                referrerPolicy="no-referrer"
-                src="https://apiwww.uandina.edu.pe/storage/slider_detail/10/logotipo-actual-7d141a2a0266.webp"
-              />}
-          <p className="login-card__institution">Universidad Andina del Cusco</p>
+          {logoUrl && !logoUnavailable && <img alt={institution} className="login-card__logo"
+            onError={() => setLogoUnavailable(true)} referrerPolicy="no-referrer" src={logoUrl} />}
+          {institution && <p className="login-card__institution">{institution}</p>}
           <p className="login-card__product">Gestión Documental Interna</p>
         </header>
 
@@ -50,7 +45,7 @@ export function LoginPage({ basicAuthEnabled, onAuthenticated }) {
         {basicAuthEnabled && (
           <form aria-busy={loading} className="login-form" onSubmit={handleSubmit}>
             <label className="form-field">
-              <span>Usuario Alfresco DEV</span>
+              <span>Usuario institucional</span>
               <input autoComplete="username" onChange={(event) => setUsername(event.target.value)} required value={username} />
             </label>
             <label className="form-field">

@@ -315,7 +315,7 @@ export function createAlfrescoProposalAdapter(settings, { fetchImpl = globalThis
           if (!service?.username || !service.password || ['admin', 'administrator'].includes(service.username.toLowerCase())) fail('REVIEW_OFFICIAL_DELIVERY_UNVERIFIED')
           const discovery = { authorization: 'Basic ' + Buffer.from(`${service.username}:${service.password}`).toString('base64') }
           const { entry: me } = await request('/people/-me-', discovery)
-          if (me?.id !== service.username || me.enabled !== true || !await scope(id, [receivingFolder], discovery)) fail('REVIEW_OFFICIAL_DELIVERY_UNVERIFIED')
+          if (me?.id !== service.username || me.enabled !== true || me.capabilities?.isAdmin !== false || !await scope(id, [receivingFolder], discovery)) fail('REVIEW_OFFICIAL_DELIVERY_UNVERIFIED')
           return record
         },
         async referenceOfficial(id) {

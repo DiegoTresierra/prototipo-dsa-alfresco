@@ -66,15 +66,15 @@ export function createHierarchyReadService({ repository, directory, groupMapping
     }
 
     const headByUnit = new Map()
-    const headUnitByUser = new Map()
+    const unitByUser = new Map([...activeSpecialistUnit].map(([id, unitId]) => [id, unitsById.get(unitId)]))
     for (const unit of units) {
       const activeHeads = (assignmentsByUnit.get(unit.id) || []).filter((assignment) => assignment.role === 'jefe-unidad')
       if (activeHeads.length > 1) throw failure('HIERARCHY_UNIT_MULTIPLE_ACTIVE_HEADS', 409)
       if (activeHeads.length === 1) {
         const head = activeHeads[0]
-        if (headUnitByUser.has(head.userId)) throw failure('HIERARCHY_HEAD_MULTIPLE_ACTIVE_UNITS', 409)
+        if (unitByUser.has(head.userId)) throw failure('HIERARCHY_HEAD_MULTIPLE_ACTIVE_UNITS', 409)
         headByUnit.set(unit.id, head.userId)
-        headUnitByUser.set(head.userId, unit)
+        unitByUser.set(head.userId, unit)
       }
     }
 
@@ -90,11 +90,11 @@ export function createHierarchyReadService({ repository, directory, groupMapping
         displayName: candidate.displayName || candidate.id,
         dependency: normalizedDependency,
         functionalRole: candidate.role,
-        unit: candidate.role === 'jefe-unidad' && headUnitByUser.has(candidate.id)
+        unit: unitByUser.has(candidate.id)
           ? {
-              id: headUnitByUser.get(candidate.id).id,
-              name: headUnitByUser.get(candidate.id).name,
-              code: headUnitByUser.get(candidate.id).code || '',
+              id: unitByUser.get(candidate.id).id,
+              name: unitByUser.get(candidate.id).name,
+              code: unitByUser.get(candidate.id).code || '',
               dependency: normalizedDependency,
             }
           : null,
@@ -121,13 +121,8 @@ export function createHierarchyReadService({ repository, directory, groupMapping
 
 export function hierarchyStorageMode(config) {
   const mode = String(config?.hierarchyReadStorage || 'alfresco').trim().toLowerCase()
-  if (!['json', 'alfresco'].includes(mode)) throw failure('HIERARCHY_READ_STORAGE_INVALID', 503)
+  if (mode !== 'alfresco') throw failure('HIERARCHY_READ_STORAGE_INVALID', 503)
   return mode
-}
-
-export function assertHierarchyJsonWritesEnabled(config) {
-  const mode = hierarchyStorageMode(config)
-  if (mode === 'alfresco') throw failure('HIERARCHY_ALFRESCO_READ_ONLY', 409)
 }
 
 // Read readiness is independent from write flags and from any laboratory folder.
@@ -147,6 +142,7 @@ export function assertHierarchyReadConfiguration(config) {
 
 export function safeHierarchyReadError(error) {
   const code = String(error?.code || error?.message || '')
+  if (code === 'HIERARCHY_READ_STORAGE_INVALID') return { status: 503, error: code }
   if (code === 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED') return {
     status: 503, error: code,
     missingConfiguration: (error.missingConfiguration || []).filter(name => [

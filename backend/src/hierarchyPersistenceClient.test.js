@@ -3,14 +3,14 @@ import assert from 'node:assert/strict'
 import { createHierarchyPersistenceClient } from './hierarchyPersistenceClient.js'
 
 const productionContainerId = '11111111-1111-4111-8111-111111111111'
-const labContainerId = 'a0c78bf2-35f2-4f7c-878b-f235f21f7c94'
-const unitId = 'b0c78bf2-35f2-4787-878b-f235f21f7c95'
-const assignmentId = 'c0c78bf2-35f2-4787-878b-f235f21f7c96'
+const labContainerId = '77777777-0000-4000-8000-000000000009'
+const unitId = '77777777-0000-4000-8000-000000000011'
+const assignmentId = '77777777-0000-4000-8000-000000000012'
 const runId = 'LAB-TEST-001'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
   hierarchyService: {
-    username: 'gd_jerarquias_servicio',
+    username: 'fixture_hierarchy',
     password: 'not-a-real-secret',
     containerNodeId: productionContainerId,
     storage: 'alfresco',
@@ -28,8 +28,8 @@ function makeNode({ id, name, nodeType, parentId, properties = {}, folder = fals
     permissions: { isInheritanceEnabled: false },
     createdAt: '2026-11-19T10:00:00.000Z',
     modifiedAt: '2026-11-19T10:00:00.000Z',
-    createdByUser: { id: 'gd_jerarquias_servicio' },
-    modifiedByUser: { id: 'gd_jerarquias_servicio' },
+    createdByUser: { id: 'fixture_hierarchy' },
+    modifiedByUser: { id: 'fixture_hierarchy' },
   }
 }
 
@@ -41,8 +41,8 @@ function createFakeAlfresco({ rootStatus = 200, paginateRoot = false, postStatus
   const childrenByParent = new Map([[labContainerId, []]])
   if (paginateRoot) {
     for (const [id, name] of [
-      ['e0c78bf2-35f2-4787-878b-f235f21f7c97', 'ZZ_LAB_PAGINATION_MARKER_A'],
-      ['f0c78bf2-35f2-4787-878b-f235f21f7c98', 'ZZ_LAB_PAGINATION_MARKER_B'],
+      ['77777777-0000-4000-8000-000000000014', 'ZZ_LAB_PAGINATION_MARKER_A'],
+      ['77777777-0000-4000-8000-000000000016', 'ZZ_LAB_PAGINATION_MARKER_B'],
     ]) {
       nodes.set(id, makeNode({ id, name, nodeType: 'cm:folder', parentId: labContainerId, folder: true }))
       childrenByParent.get(labContainerId).push(id)
@@ -58,7 +58,7 @@ function createFakeAlfresco({ rootStatus = 200, paginateRoot = false, postStatus
     calls.push({ method, pathname: parsed.pathname, search: parsed.search, body: options.body ? JSON.parse(options.body) : undefined })
     if (parsed.pathname.endsWith('/authentication/versions/1/tickets')) return jsonResponse(201, { entry: { id: 'fake-ticket' } })
     if (parsed.pathname.endsWith('/people/-me-')) return jsonResponse(200, { entry: {
-      id: 'gd_jerarquias_servicio', enabled: true, capabilities: { isAdmin: false },
+      id: 'fixture_hierarchy', enabled: true, capabilities: { isAdmin: false },
     } })
 
     const rootNodeMatch = parsed.pathname.match(new RegExp(`/nodes/${labContainerId}$`))

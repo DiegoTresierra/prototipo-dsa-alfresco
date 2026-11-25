@@ -2,14 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchySpecialistReassignmentService } from './hierarchySpecialistReassignmentService.js'
 
-const sourceUnitId = '1b0c78bf-35f2-4787-878b-f235f21f7c91'
-const targetUnitId = '2b0c78bf-35f2-4787-878b-f235f21f7c92'
-const otherUnitId = '3b0c78bf-35f2-4787-878b-f235f21f7c93'
-const sourceAssignmentId = '4b0c78bf-35f2-4787-878b-f235f21f7c94'
-const headAssignmentId = '5b0c78bf-35f2-4787-878b-f235f21f7c95'
-const otherSpecialistAssignmentId = '6b0c78bf-35f2-4787-878b-f235f21f7c96'
-const input = { operationId: 'reassign-specialist-operation-01', userId: 'staff-dsa-1', destinationUnitId: targetUnitId, dependency: 'DSA', actorId: 'DSA_T' }
-const source = { id: sourceAssignmentId, userId: input.userId, unitId: sourceUnitId, dependency: 'DSA', role: 'especialista', status: 'ACTIVA', assignedBy: 'DSA_T' }
+const sourceUnitId = '77777777-0000-4000-8000-000000000001'
+const targetUnitId = '77777777-0000-4000-8000-000000000002'
+const otherUnitId = '77777777-0000-4000-8000-000000000003'
+const sourceAssignmentId = '77777777-0000-4000-8000-000000000004'
+const headAssignmentId = '77777777-0000-4000-8000-000000000005'
+const otherSpecialistAssignmentId = '77777777-0000-4000-8000-000000000006'
+const input = { operationId: 'reassign-specialist-operation-01', userId: 'staff-dsa-1', destinationUnitId: targetUnitId, dependency: 'DSA', actorId: 'fixture_director_a' }
+const source = { id: sourceAssignmentId, userId: input.userId, unitId: sourceUnitId, dependency: 'DSA', role: 'especialista', status: 'ACTIVA', assignedBy: 'fixture_director_a' }
 
 function fixture({ responsibilityCheck = async () => ({ status: 'NO_PENDING' }), writesEnabled = true, destinationStatus = 'ACTIVA', destinationDependency = 'DSA', candidateError, repositoryFailure, auditFailure, initialAssignments } = {}) {
   const units = new Map([
@@ -19,8 +19,8 @@ function fixture({ responsibilityCheck = async () => ({ status: 'NO_PENDING' }),
   ])
   const assignments = new Map((initialAssignments || [
     source,
-    { id: headAssignmentId, userId: 'head-dsa-1', unitId: sourceUnitId, dependency: 'DSA', role: 'jefe-unidad', status: 'ACTIVA', assignedBy: 'DSA_T' },
-    { id: otherSpecialistAssignmentId, userId: 'staff-dsa-2', unitId: targetUnitId, dependency: 'DSA', role: 'especialista', status: 'ACTIVA', assignedBy: 'DSA_T' },
+    { id: headAssignmentId, userId: 'head-dsa-1', unitId: sourceUnitId, dependency: 'DSA', role: 'jefe-unidad', status: 'ACTIVA', assignedBy: 'fixture_director_a' },
+    { id: otherSpecialistAssignmentId, userId: 'staff-dsa-2', unitId: targetUnitId, dependency: 'DSA', role: 'especialista', status: 'ACTIVA', assignedBy: 'fixture_director_a' },
   ]).map((entry) => [entry.id, { ...entry }]))
   const auditEvents = new Map()
   const auditCalls = []
@@ -136,7 +136,7 @@ test('moves the specialist, keeps the old assignment inactive, and preserves hea
     ['INICIADA', 'OPERACION_INICIADA'], ['CAMBIO_APLICADO', 'ASIGNACION_DESACTIVADA'],
     ['CAMBIO_APLICADO', 'ESPECIALISTA_REASIGNADO'], ['COMPLETADA', 'OPERACION_COMPLETADA'],
   ])
-  assert.ok(state.auditCalls.every((event) => event.actorId === 'DSA_T' && event.dependency === 'DSA'))
+  assert.ok(state.auditCalls.every((event) => event.actorId === 'fixture_director_a' && event.dependency === 'DSA'))
   assert.equal(state.auditCalls[0].beforeData.sourceAssignmentId, sourceAssignmentId)
   assert.equal(state.auditCalls.at(-1).afterData.destinationAssignmentId, result.assignment.id)
 })
@@ -147,7 +147,7 @@ test('allows a destination unit without a head and rejects same, missing, inacti
   const same = fixture()
   await assert.rejects(same.service.reassign({ ...input, destinationUnitId: sourceUnitId }), /HIERARCHY_SPECIALIST_REASSIGNMENT_SAME_UNIT/)
   const missing = fixture()
-  await assert.rejects(missing.service.reassign({ ...input, destinationUnitId: '8b0c78bf-35f2-4787-878b-f235f21f7c98' }), /HIERARCHY_UNIT_OUT_OF_SCOPE/)
+  await assert.rejects(missing.service.reassign({ ...input, destinationUnitId: '77777777-0000-4000-8000-000000000008' }), /HIERARCHY_UNIT_OUT_OF_SCOPE/)
   const inactive = fixture({ destinationStatus: 'INACTIVA' })
   await assert.rejects(inactive.service.reassign(input), /HIERARCHY_UNIT_INACTIVE/)
   const foreign = fixture({ destinationDependency: 'DTI' })
@@ -159,7 +159,7 @@ test('allows a destination unit without a head and rejects same, missing, inacti
 })
 
 test('does not alter assignments in another dependency', async () => {
-  const dtiAssignment = { id: 'dti-staff-assignment', userId: 'staff-dti-1', unitId: '7b0c78bf-35f2-4787-878b-f235f21f7c97', dependency: 'DTI', role: 'especialista', status: 'ACTIVA', assignedBy: 'DTI_T' }
+  const dtiAssignment = { id: 'dti-staff-assignment', userId: 'staff-dti-1', unitId: '77777777-0000-4000-8000-000000000007', dependency: 'DTI', role: 'especialista', status: 'ACTIVA', assignedBy: 'fixture_director_b' }
   const state = fixture({ initialAssignments: [source, dtiAssignment] })
   const result = await state.service.reassign(input)
   assert.equal(result.status, 'COMPLETADA')
@@ -168,7 +168,7 @@ test('does not alter assignments in another dependency', async () => {
 })
 
 test('rejects a Specialist with an active assignment in a different dependency', async () => {
-  const dtiAssignment = { id: 'dti-same-user-assignment', userId: input.userId, unitId: '7b0c78bf-35f2-4787-878b-f235f21f7c97', dependency: 'DTI', role: 'especialista', status: 'ACTIVA', assignedBy: 'DTI_T' }
+  const dtiAssignment = { id: 'dti-same-user-assignment', userId: input.userId, unitId: '77777777-0000-4000-8000-000000000007', dependency: 'DTI', role: 'especialista', status: 'ACTIVA', assignedBy: 'fixture_director_b' }
   const state = fixture({ initialAssignments: [source, dtiAssignment] })
   await assert.rejects(state.service.reassign(input), /HIERARCHY_SPECIALIST_REASSIGNMENT_CROSS_DEPENDENCY_CONFLICT/)
   assert.deepEqual(state.mutationCalls, [])

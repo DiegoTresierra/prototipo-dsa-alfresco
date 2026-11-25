@@ -4,7 +4,7 @@ import { createInstitutionalHierarchyProvider, readPendingHierarchyOperations } 
 import { resolveManagedRecipients } from './organizationalHierarchy.js'
 
 function fixture() {
-  const state = { revision: 'a'.repeat(64), changed: false, pending: [], assignments: [
+  const state = { units: ['unit-a', 'unit-b'], revision: 'a'.repeat(64), changed: false, pending: [], assignments: [
     { unitId: 'unit-a', userId: 'head', role: 'jefe-unidad', dependency: 'DSA', status: 'ACTIVA' },
     { unitId: 'unit-a', userId: 'staff', role: 'especialista', dependency: 'DSA', status: 'ACTIVA' },
     { unitId: 'unit-b', userId: 'other', role: 'especialista', dependency: 'DSA', status: 'ACTIVA' },
@@ -20,7 +20,7 @@ function fixture() {
   }
   const repository = {
     async getRevision() { return state.changed ? 'b'.repeat(64) : state.revision },
-    async listUnits() { return { units: ['unit-a', 'unit-b'].map(id => ({ id, dependency: 'DSA', status: 'ACTIVA' })) } },
+    async listUnits() { return { units: state.units.map(id => ({ id, code: id, name: `Test ${id}`, dependency: 'DSA', status: 'ACTIVA' })) } },
     async listAssignments() { return { assignments: state.assignments } },
   }
   let reads = 0
@@ -100,4 +100,22 @@ test('all administration journals, including orphan partial operations, block re
 test('incomplete audit pages cannot be mistaken for an absence of pending administrative operations', async () => {
   const repository = { async listEvents({ page, pageSize }) { return { events: [], pagination: { page, pageSize, totalItems: 1, totalPages: 1, hasMoreItems: false } } } }
   await assert.rejects(readPendingHierarchyOperations(repository, 'DSA'), /COVERAGE_INCOMPLETE/)
+})
+
+test('new unit and people are resolved on the next read and lose authority after reassignment', async () => {
+  const { state, provider } = fixture()
+  state.units.push('new-unit')
+  for (const [userId, role] of [['new-owner', 'jefe-unidad'], ['new-member', 'especialista']]) {
+    state.people.set(userId, role)
+    state.assignments.push({ unitId: 'new-unit', dependency: 'DSA', userId, role, status: 'ACTIVA' })
+  }
+  const input = { dependency: 'DSA', userId: 'new-owner' }
+  assert.deepEqual((await provider.resolveSpecialists(input)).members.map(m => m.userId), ['new-member'])
+  const eligible = [{ id: 'new-member', dependency: 'dsa', functionalRole: 'especialista' }]
+  const [recipient] = await resolveManagedRecipients({ alfresco: { id: 'new-owner' }, functionalRole: 'jefe-unidad', dependency: 'DSA' }, eligible, provider)
+  assert.deepEqual(recipient.unit, { id: 'new-unit', code: 'new-unit', name: 'Test new-unit', dependency: 'dsa' })
+  state.assignments.at(-1).status = 'INACTIVA'
+  assert.deepEqual((await provider.resolveSpecialists(input)).members, [])
+  state.assignments.at(-2).status = 'INACTIVA'
+  await assert.rejects(provider.resolveSpecialists(input), /HIERARCHY_ACTIVE_RELATION_AMBIGUOUS/)
 })

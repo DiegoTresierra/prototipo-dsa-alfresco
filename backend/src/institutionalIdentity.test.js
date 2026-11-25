@@ -54,3 +54,11 @@ test('unavailable, denied, malformed and stalled Alfresco responses never author
   await assert.rejects(revalidateInstitutionalIdentity(settings, session, async (url) => url.endsWith('/people/-me-')
     ? Response.json({ entry: { id: 'actor', enabled: true } }) : Response.json({ list: { entries: [], pagination: { skipCount: 0, hasMoreItems: true } } })), { status: 503 })
 })
+
+test('configured technical accounts cannot act even with an active institutional session', async () => {
+  for (const config of [{ hierarchyService: { username: 'Actor' } }, { distributionService: { username: 'actor' } }, { technicalUserIds: ['actor'] }]) {
+    const f = fixture()
+    await assert.rejects(revalidateInstitutionalIdentity({ ...settings, ...config }, session, f.fetch), /IDENTITY_REJECTED/)
+    assert.equal(f.state.calls.length, 0)
+  }
+})

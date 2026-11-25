@@ -17,7 +17,7 @@ Las plantillas públicas están en [.env.example](.env.example); completarlas ex
 - DISPATCH_PERSISTENCE=alfresco.
 - DISPATCH_ALFRESCO_WRITES_ENABLED=false por defecto.
 
-ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON es opcional; no sirve como fuente de supervisión. Las carpetas individuales configuradas solo corresponden a otros flujos compatibles, no son un requisito nuevo del despacho.
+ALFRESCO_USER_UNIT_ASSIGNMENTS_JSON solo se consulta en el planificador histórico de migración. El despacho resuelve la supervisión mediante relaciones activas en Alfresco. Las carpetas individuales configuradas solo corresponden a otros flujos compatibles, no son un requisito nuevo del despacho.
 
 No usar DISPATCH_PILOT_TEST_FOLDER_IDS_JSON ni DISPATCH_PILOT_DOCUMENT_IDS_JSON: esos requisitos fueron retirados.
 

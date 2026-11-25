@@ -10,7 +10,7 @@ export function officialFixture(t) {
     alfrescoTarget: 'https://official.invalid', dispatchPersistence: 'alfresco',
     dispatchPilot: { writesEnabled: true, environment: 'dev', environments: { dev: { enabled: true,
       expectedTarget: 'https://official.invalid', acknowledgement: 'single-instance-exclusive-writer-dev-institutional-documents' } } },
-    distributionService: { username: 'gd_distribucion', password: 'test-only' },
+    distributionService: { username: 'fixture_distribution', password: 'test-only' },
     groupMappings: { dependencies: { DTI: 'GROUP_DTI', DSA: 'GROUP_DSA' }, functions: { direccion: 'GROUP_DIRECTION', 'jefe-unidad': 'GROUP_HEAD', especialista: 'GROUP_STAFF' } },
     officeInboxNodeIds: { DTI: { emitidos: 'DTI-emitted', porAtender: 'DTI-attention', porConocimiento: 'DTI-knowledge' },
       DSA: { emitidos: 'DSA-emitted', porAtender: 'DSA-attention', porConocimiento: 'DSA-knowledge' } },
@@ -44,7 +44,7 @@ export function officialFixture(t) {
     assertSafe(method, parsed.pathname)
     const auth = options.headers?.Authorization
     const [dep, actorUser] = auth?.startsWith('actor:') ? auth.slice(6).split('|') : [null, null]
-    if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: dep ? actorUser : 'gd_distribucion', enabled: !conditions.rejectService || Boolean(dep),
+    if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: dep ? actorUser : 'fixture_distribution', enabled: !conditions.rejectService || Boolean(dep),
       capabilities: !dep && conditions.missingServiceCapabilities ? {} : { isAdmin: dep ? false : conditions.adminService ?? false } } })
     if (/\/people\/[^/]+\/groups$/.test(parsed.pathname)) return json({ list: { entries: [`GROUP_${dep}`, settings.groupMappings.functions[conditions.actorRole || 'direccion']].map((id) => ({ entry: { id } })), pagination: { skipCount: 0, count: 2, totalItems: 2, hasMoreItems: false } } })
     if (parsed.pathname === '/alfresco/service/api/classes/gd_identificacion') return json({ properties: Object.fromEntries([

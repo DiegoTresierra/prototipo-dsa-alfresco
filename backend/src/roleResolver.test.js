@@ -1,8 +1,22 @@
+import { parseGroupMappings, distributionGroupIds } from './groupMappings.js'
+import { createDispatchRepository } from './dispatchRepository.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_GROUP_MAPPINGS, resolveRole } from './roleResolver.js'
+import { resolveRole } from './roleResolver.js'
 
-const resolve = (groups) => resolveRole(groups, DEFAULT_GROUP_MAPPINGS, 'DTI_T')
+const fixtureGroups = {
+  dependencies: {
+    DTI: 'GROUP_GD_DTI',
+    DSA: 'GROUP_GD_DSA',
+  },
+  functions: {
+    direccion: 'GROUP_GD_DIRECCION',
+    'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
+    especialista: 'GROUP_GD_ESPECIALISTA',
+  },
+}
+
+const resolve = (groups) => resolveRole(groups, fixtureGroups, 'fixture_director_b')
 
 test('resolves each dependency and function combination', () => {
   assert.equal(resolve(['GROUP_GD_DTI', 'GROUP_GD_DIRECCION']).roleId, 'director-dti')
@@ -22,7 +36,7 @@ test('requires exactly one dependency and one function', () => {
 
 test('ignores unrelated Alfresco groups and does not infer from usernames', () => {
   const result = resolve(['GROUP_SITE_CONSUMERS', 'GROUP_GD_DSA', 'GROUP_GD_ESPECIALISTA'])
-  assert.equal(result.userId, 'DTI_T')
+  assert.equal(result.userId, 'fixture_director_b')
   assert.equal(result.dependency, 'DSA')
   assert.equal(result.roleId, 'especialista-dsa')
 })
@@ -36,4 +50,29 @@ test('distinct authority IDs never become equivalent after stripping prefixes, p
   assert.equal(resolveRole(['GROUP_CUSTOM_DSA', 'GROUP_CUSTOM_HEAD'], {
     dependencies: { DSA: ['GROUP_CUSTOM_DSA'] }, functions: { 'jefe-unidad': ['GROUP_CUSTOM_HEAD'] },
   }).roleId, 'jefe-unidad-dsa', 'explicit configured IDs remain supported')
+})
+
+test('memberships alone cannot supply a missing institutional mapping', () => {
+  assert.equal(resolveRole(['GROUP_GD_DSA', 'GROUP_GD_DIRECCION']).authorizationStatus, 'incomplete')
+})
+
+test('exact external groups support renames and ambiguous ACL groups require explicit configuration', () => {
+  const mappings = parseGroupMappings({ ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({
+    dependencies: { DSA: ['GROUP_TEAM_X', 'GROUP_TEAM_Y'], DTI: 'GROUP_TEAM_Z' }, functions: { direccion: 'GROUP_JOB_A' },
+  }) })
+  assert.equal(resolveRole(['GROUP_TEAM_X', 'GROUP_JOB_A'], mappings).roleId, 'director-dsa')
+  assert.deepEqual(distributionGroupIds(mappings), { DTI: 'GROUP_TEAM_Z' })
+  assert.deepEqual(distributionGroupIds(mappings, {}), {})
+  assert.throws(() => createDispatchRepository({ dispatchPersistence: 'local' }), /INVALID_DISPATCH_PERSISTENCE/)
+})
+
+test('conflicting aliases, non-authority labels and unknown functional roles cannot grant access', () => {
+  for (const functions of [{ director: 'GROUP_A', direccion: 'GROUP_B' }, { especialista: 'Display label' }]) {
+    assert.throws(() => parseGroupMappings({ ALFRESCO_ROLE_MAPPINGS_JSON: JSON.stringify(functions) }), /INVALID_GROUP_MAPPINGS/)
+  }
+  assert.throws(() => parseGroupMappings({ ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({
+    dependencies: { DSA: 'GROUP_A' }, functions: { direccion: 'GROUP_A' },
+  }) }), /INVALID_GROUP_MAPPINGS/)
+  assert.equal(resolveRole(['GROUP_A', 'GROUP_B'], { dependencies: { DSA: 'GROUP_A' },
+    functions: { unknown: 'GROUP_B' } }).authorizationStatus, 'incomplete')
 })

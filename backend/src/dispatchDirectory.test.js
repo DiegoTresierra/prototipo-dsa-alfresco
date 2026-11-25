@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { loadDispatchDirectory, loadInstitutionalDirectory } from './dispatchDirectory.js'
 import { validateDispatchRequest } from './dispatchPolicy.js'
 
-const head1 = 'JEFE_UNIDAD_DSA_1'
-const head2 = 'JEFE_UNIDAD_DSA_2'
+const head1 = 'fixture_head_a'
+const head2 = 'fixture_head_b'
 const unit = { code: 'fixture-unit', name: 'Unidad de prueba', dependency: 'DSA' }
 function fixture() {
   const settings = {
@@ -21,7 +21,7 @@ function fixture() {
     assert.equal(options.headers.Authorization, `Basic ${Buffer.from('fixture-service:fixture-password').toString('base64')}`)
     const parsed = new URL(url)
     let payload
-    if (parsed.pathname.endsWith('/people/-me-')) payload = { entry: { id: 'fixture-service', enabled: true } }
+    if (parsed.pathname.endsWith('/people/-me-')) payload = { entry: { id: 'fixture-service', enabled: true, capabilities: { isAdmin: false } } }
     else if (parsed.pathname.includes('/people/')) {
       const id = decodeURIComponent(parsed.pathname.split('/').at(-1))
       payload = { entry: { id, enabled: !disabled.has(id) } }
@@ -102,4 +102,25 @@ test('subgroups cannot silently disappear from the directory and multiple functi
   await assert.rejects(loadDispatchDirectory(f.settings, async (url, options) => url.includes('/DSA/children')
     ? Response.json({ data: [{ shortName: 'nested', authorityType: 'GROUP' }], paging: { skipCount: 0, totalItems: 1 } })
     : f.fetch(url, options)), /DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED/)
+})
+
+test('excludes configured service identities and accepts a human independently of account spelling', async () => {
+  const f = fixture()
+  f.settings.hierarchyService = { username: 'reader' }
+  f.settings.technicalUserIds = ['automation']
+  for (const id of ['reader', 'automation', 'fixture-service', 'svc-human']) {
+    f.groups.DSA.push(id)
+    f.groups.SPECIALISTS.push(id)
+  }
+  const { recipients } = await loadDispatchDirectory(f.settings, f.fetch)
+  assert.deepEqual(recipients.filter(p => p.functionalRole === 'especialista').map(p => p.id), ['svc-human'])
+})
+
+test('a privileged or unverifiable service cannot supply documentary recipients', async () => {
+  const f = fixture()
+  for (const capabilities of [{ isAdmin: true }, {}]) {
+    await assert.rejects(loadDispatchDirectory(f.settings, async () => Response.json({
+      entry: { id: f.settings.distributionService.username, enabled: true, capabilities },
+    })), /DISPATCH_DIRECTORY_IDENTITY_INVALID/)
+  }
 })

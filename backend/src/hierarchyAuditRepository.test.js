@@ -9,7 +9,7 @@ const eventType = 'gdo:eventoJerarquia'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
   hierarchyService: {
-    username: 'gd_jerarquias_servicio', password: 'not-a-real-secret',
+    username: 'fixture_hierarchy', password: 'not-a-real-secret',
     containerNodeId: mainId, labContainerNodeId: labId, auditContainerNodeId: auditId, storage: 'alfresco',
   },
 }
@@ -32,7 +32,7 @@ function fakeAlfresco({ auditStatus = 200, identity = null, postStatus = 201, co
     calls.push({ method, pathname: parsed.pathname, body })
     if (parsed.pathname.endsWith('/authentication/versions/1/tickets')) return response(201, { entry: { id: 'fake-ticket' } })
     if (parsed.pathname.endsWith('/people/-me-')) return response(200, { entry: identity || {
-      id: 'gd_jerarquias_servicio', enabled: true, capabilities: { isAdmin: false },
+      id: 'fixture_hierarchy', enabled: true, capabilities: { isAdmin: false },
     } })
     if (parsed.pathname.endsWith(`/nodes/${auditId}`) && method === 'GET') {
       return auditStatus === 200 ? response(200, { entry: root }) : response(auditStatus, { error: 'audit container access failed' })
@@ -79,8 +79,8 @@ function event(overrides = {}) {
     action: 'ESPECIALISTA_ASIGNADO',
     dependency: 'DSA',
     actorId: 'director-dsa',
-    unitId: 'b0c78bf2-35f2-4787-878b-f235f21f7c95',
-    assignmentId: 'c0c78bf2-35f2-4787-878b-f235f21f7c96',
+    unitId: '77777777-0000-4000-8000-000000000011',
+    assignmentId: '77777777-0000-4000-8000-000000000012',
     userId: 'especialista-dsa-1',
     beforeData: { estado: 'SIN_ASIGNAR' },
     afterData: { estado: 'ACTIVA', rol: 'especialista' },

@@ -14,7 +14,10 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     'head-b': { code: 'fixture-b', name: 'Unidad de prueba B', dependency: 'DSA' },
   }
   Object.assign(process.env, {
-    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false',
+    DISPATCH_PERSISTENCE: 'alfresco', DISPATCH_ALFRESCO_WRITES_ENABLED: 'true',
+    DISPATCH_PILOT_ENVIRONMENT: 'dev', DISPATCH_PILOT_ALFRESCO_TARGET: 'https://alfresco.invalid',
+    DISPATCH_PILOT_ACK: 'single-instance-exclusive-writer-dev-institutional-documents',
+    DISPATCH_PILOT_LEASE_PATH: path.join(temporaryDirectory, 'fixture.lock'),
     // This scenario injects its own verified provider after testing its absence.
     // A developer's private hierarchy configuration must not alter the fixture.
     ALFRESCO_HIERARCHY_STORAGE: '',
@@ -30,7 +33,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   const { server } = await import('./index.js')
   const { config } = await import('./config.js')
   const { createSession } = await import('./sessionStore.js')
-  const { updateDispatch } = await import('./dispatchStore.js')
+  const { projections } = await import('./alfrescoDispatchRepository.js')
   if (!server.listening) await once(server, 'listening')
   const originalFetch = globalThis.fetch
   t.after(async () => {
@@ -73,9 +76,25 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     const identity = identityResponse(url, options, actors, config.groupMappings)
     if (identity) return identity
     const isSearch = parsed.pathname.endsWith('/search')
-    assert.equal(method, isSearch ? 'POST' : 'GET', 'dispatch never writes a node, ACL, PDF or association')
+    const service = options.headers.Authorization === `Basic ${Buffer.from('directory-service:fixture-password').toString('base64')}`
+    if (method === 'PUT') {
+      const id = parsed.pathname.split('/').at(-1)
+      assert.ok(service && nodes[id] && parsed.pathname.endsWith('/nodes/' + id))
+      const delta = JSON.parse(options.body)
+      assert.ok(Object.keys(delta).every(key => ['properties', 'aspectNames'].includes(key)))
+      assert.deepEqual(Object.keys(delta.properties).sort(), ['gd:asignaciones', 'gd:dependenciasResponsablesActuales', 'gd:responsablesActuales'])
+      nodes[id].properties = { ...nodes[id].properties, ...delta.properties }
+      if (delta.aspectNames) nodes[id].aspectNames = delta.aspectNames
+      return Response.json({ entry: { id } })
+    }
+    assert.equal(method, isSearch ? 'POST' : 'GET')
     const json = (value, status = 200) => Response.json(value, { status })
-    if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: 'directory-service', enabled: true } })
+    if (parsed.pathname.endsWith('/people/-me-')) return json({ entry: { id: 'directory-service', enabled: true, capabilities: { isAdmin: false } } })
+    if (parsed.pathname.endsWith('/classes/gd_tramite')) return json({ properties: {
+      'gd:asignaciones': { dataType: 'd:text', multiValued: false, indexed: false },
+      'gd:responsablesActuales': { dataType: 'd:text', multiValued: true },
+      'gd:dependenciasResponsablesActuales': { dataType: 'd:text', multiValued: true },
+    } })
     if (parsed.pathname.includes('/service/api/groups/')) {
       const group = parsed.pathname.split('/').at(-2)
       const members = groups[group]
@@ -86,9 +105,16 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
       const id = parsed.pathname.split('/').at(-1)
       return json({ entry: { id, enabled: !disabled.has(id) } })
     }
-    assert.ok(['head-a', 'director', 'staff-a', 'director-dti', 'head-dti', 'DSA_T'].some((id) => options.headers.Authorization === `Basic ${id}-ticket`), 'document requests use the effective user')
+    assert.ok(service || ['head-a', 'director', 'staff-a', 'director-dti', 'head-dti', 'fixture_director_a'].some((id) => options.headers.Authorization === `Basic ${id}-ticket`), 'document requests use a known test identity')
     if (parsed.pathname.endsWith('/children')) {
       const folder = parsed.pathname.split('/').at(-2)
+      if (parsed.searchParams.get('include')?.includes('association') && !scopedChildren.has(folder)) {
+        const entries = Object.entries(nodes).filter(([id, n]) => n.parentId === folder ||
+          id === 'secondary' && folder === 'dsa-knowledge' ||
+          !parentsDenied.has(id) && parentsByNode.get(id)?.some(p => p.entry.id === folder && p.entry.association?.assocType === 'cm:contains'))
+          .map(([id]) => ({ entry: { id, isFile: true, content: { mimeType: 'application/pdf' }, association: { assocType: 'cm:contains' } } }))
+        return json({ list: { entries, pagination: { hasMoreItems: false } } })
+      }
       if (scopedChildren.has(folder)) {
         const children = scopedChildren.get(folder)
         if (children === null) return json({}, 403)
@@ -103,10 +129,10 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
       return json({ list: { entries: parentsByNode.get(id) || (id === 'secondary' ? [{ entry: { id: 'dsa-knowledge' } }] : []), pagination: { hasMoreItems: false } } })
     }
     const id = parsed.pathname.endsWith('/content') ? parsed.pathname.split('/').at(-2) : parsed.pathname.split('/').at(-1)
-    if (denied.has(id)) return json({}, 403)
+    if (!service && denied.has(id)) return json({}, 403)
     if (!nodes[id]) return json({}, 404)
     if (parsed.pathname.endsWith('/content')) return new Response('%PDF-1.7\nfixture', { headers: { 'Content-Type': 'application/pdf' } })
-    return json({ entry: { id, isFile: true, content: { mimeType: 'application/pdf' }, ...nodes[id] } })
+    return json({ entry: { id, isFile: true, nodeType: 'cm:content', allowableOperations: service ? ['update'] : [], content: { mimeType: 'application/pdf' }, ...nodes[id] } })
   }
   const proxy = `${base}/api/alfresco/api/-default-/public/alfresco/versions/1`
   for (const headers of [director, head, specialist]) {
@@ -139,7 +165,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(record.completedAt, undefined, 'assignment completion is not global attention completion')
   assert.equal((await dispatch()).status, 200)
   assert.equal((await dispatch({ ...input, instruction: 'Otra instrucción' })).status, 409)
-  assert.equal(JSON.parse(fs.readFileSync(config.dispatchStorePath, 'utf8')).length, 1)
+  assert.equal(JSON.parse(nodes.pdf.properties['gd:asignaciones']).dispatches.length, 1)
   assert.equal((await read('pdf', '/content')).status, 200)
   const before = (await (await fetch(`${base}/api/documents/dispatches`, { headers: head })).json()).dispatches
   assert.equal(before[0].documentId, 'pdf')
@@ -188,11 +214,11 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(child.originAssignmentId, ownAssignment.id)
   assert.equal(child.senderRole, 'jefe-unidad')
   assert.ok(child.recipients.every((recipient) => recipient.originAssignmentId === ownAssignment.id && recipient.senderUserId === 'head-a' && recipient.functionalRole === 'especialista'))
-  const parent = JSON.parse(fs.readFileSync(config.dispatchStorePath, 'utf8')).find((item) => item.id === record.id)
+  const parent = JSON.parse(nodes.pdf.properties['gd:asignaciones']).dispatches.find((item) => item.id === record.id)
   assert.deepEqual(parent, record, 'deriving never changes either jefatura obligation')
-  const count = JSON.parse(fs.readFileSync(config.dispatchStorePath, 'utf8')).length
+  const count = JSON.parse(nodes.pdf.properties['gd:asignaciones']).dispatches.length
   assert.equal((await dispatch(chained, head)).status, 200)
-  assert.equal(JSON.parse(fs.readFileSync(config.dispatchStorePath, 'utf8')).length, count)
+  assert.equal(JSON.parse(nodes.pdf.properties['gd:asignaciones']).dispatches.length, count)
   assert.equal((await dispatch({ ...chained, originAssignmentId: otherAssignment.id }, head)).status, 409, 'retry cannot change its parent assignment')
   for (const value of [
     { ...chained, requestKey: 'wrong-parent', originAssignmentId: otherAssignment.id },
@@ -222,12 +248,17 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     assert.equal((await fetch(`${proxy}/nodes/secondary${suffix}`, { headers: specialist })).status, 403)
   }
   denied.add('pdf')
+  for (const [payload, actor] of [[input, director], [chained, head]]) {
+    const conflict = await dispatch({ ...payload, instruction: 'Changed after ACL revocation' }, actor)
+    assert.equal(conflict.status, 403, 'an idempotency conflict must not disclose records after ACL revocation')
+    assert.equal((await conflict.json()).dispatchId, undefined)
+  }
   assert.equal((await dispatch(chained, head)).status, 403, 'even an idempotent retry respects a current Alfresco denial')
   assert.equal((await fetch(`${proxy}/nodes/pdf/content`, { headers: specialist })).status, 403)
   const deniedInbox = await (await fetch(`${base}/api/documents/dispatches?include=documents`, { headers: specialist })).json()
-  assert.equal(deniedInbox.dispatches.length, 2)
+  assert.deepEqual(deniedInbox.dispatches, [], 'the actor cannot discover records from an ACL-denied PDF')
   assert.deepEqual(deniedInbox.documents, [])
-  assert.equal(deniedInbox.documentErrors[0].documentId, 'pdf')
+  assert.ok(!JSON.stringify(deniedInbox).includes(record.id))
   denied.delete('pdf')
   disabled.add('staff-b')
   assert.ok(!(await (await getDirectory(head)).json()).recipients.some((recipient) => recipient.id === 'staff-b'))
@@ -239,7 +270,9 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   groups.HEADS.pop()
   assert.equal((await dispatch({ ...input, documentId: 'secondary', recipientUserIds: ['staff-a'], requestKey: 'direction-secondary-parent' })).status, 201, 'Dirección manages institutional documents through secondary parents too')
   assert.equal((await fetch(`${proxy}/nodes/secondary/content`, { headers: specialist })).status, 200)
-  updateDispatch(record.id, (current) => ({ ...current, recipients: current.recipients.map((recipient) => recipient.id === ownAssignment.id ? { ...recipient, status: 'ATENDIDO' } : recipient) }))
+  const envelope = JSON.parse(nodes.pdf.properties['gd:asignaciones'])
+  envelope.dispatches.find(d => d.id === record.id).recipients.find(a => a.id === ownAssignment.id).status = 'ATENDIDO'
+  Object.assign(nodes.pdf.properties, projections(envelope), { 'gd:asignaciones': JSON.stringify(envelope) })
   assert.equal((await dispatch({ ...chained, requestKey: 'closed-origin' }, head)).status, 403)
   const forgedScope = await dispatch({ ...input, documentId: 'foreign', requestKey: 'forged-scope', dependency: 'DSA', parentId: 'dsa-attention', sourceFolderId: 'dsa-attention' })
   assert.equal(forgedScope.status, 403)
@@ -250,11 +283,11 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   const actualAttention = '11111111-2222-4333-8444-18f26647e882'
   nodes[actualId] = { parentId: '11111111-2222-4333-8444-be4a24fc1dbc' }
   config.officeInboxNodeIds.DSA.porAtender = actualAttention
-  groups.DSA.push('DSA_T', 'JEFE_UNIDAD_DSA_1')
-  groups.DIRECTORS.push('DSA_T')
-  groups.HEADS.push('JEFE_UNIDAD_DSA_1')
-  const realShapeActor = makeSession('DSA_T', 'direccion')
-  const realShapeRequest = { documentId: actualId, recipientUserIds: ['JEFE_UNIDAD_DSA_1'], instruction: 'hola', originAssignmentId: null, priority: 'Normal', requestKey: '989b9b26-4714-469c-9436-84e34d7095f9' }
+  groups.DSA.push('fixture_director_a', 'fixture_head_a')
+  groups.DIRECTORS.push('fixture_director_a')
+  groups.HEADS.push('fixture_head_a')
+  const realShapeActor = makeSession('fixture_director_a', 'direccion')
+  const realShapeRequest = { documentId: actualId, recipientUserIds: ['fixture_head_a'], instruction: 'hola', originAssignmentId: null, priority: 'Normal', requestKey: '00000000-0000-4000-8000-000000000031' }
   parentsByNode.set(actualId, [{ entry: { id: nodes[actualId].parentId, association: { assocType: 'cm:contains', isPrimary: true } } }, { entry: { id: actualAttention, association: { assocType: 'cm:contains', isPrimary: false } } }])
   parentsDenied.add(actualId)
   scopedChildren.set('dsa-emitted', null)
@@ -270,7 +303,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(failureResponse.status, 403, 'frontend scope claims cannot replace membership verified in Alfresco')
   const failure = await failureResponse.json()
   assert.equal(failure.error, 'DISPATCH_DOCUMENT_NOT_ALLOWED')
-  assert.equal(failure.diagnostic.userId, 'DSA_T')
+  assert.equal(failure.diagnostic.userId, 'fixture_director_a')
   assert.equal(failure.diagnostic.functionalRole, 'direccion')
   assert.equal(failure.diagnostic.nodeStatus, 200)
   assert.equal(failure.diagnostic.parentsStatus, 403)
@@ -281,6 +314,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   scopedChildren.set(actualAttention, [{ entry: { id: actualId, association: { assocType: 'custom:reference' } } }])
   assert.equal((await dispatch({ ...realShapeRequest, requestKey: 'not-a-contains-membership' }, realShapeActor)).status, 403)
   parentsDenied.delete(actualId)
+  scopedChildren.delete(actualAttention) // The containing folder now reports its ordinary cm:contains association.
   assert.equal((await dispatch(realShapeRequest, realShapeActor)).status, 200, 'ordinary parents verification and idempotence remain valid')
   denied.add(actualId)
   const scopeReadsBeforeDenial = calls.filter(({ path }) => path.includes('/nodes/') && path.endsWith('/children')).length
@@ -288,5 +322,5 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(nodeFailure.status, 403)
   assert.equal((await nodeFailure.json()).diagnostic.reason, 'ALFRESCO_NODE_READ_REJECTED')
   assert.equal(calls.filter(({ path }) => path.includes('/nodes/') && path.endsWith('/children')).length, scopeReadsBeforeDenial, 'a PDF ACL denial never triggers an alternate scope authorization')
-  assert.equal(calls.some(({ method, path }) => method !== 'GET' && !path.endsWith('/search')), false)
+  assert.ok(calls.filter(c => c.method !== 'GET').every(c => c.path.endsWith('/search') || c.method === 'PUT' && /\/nodes\/[^/]+$/.test(c.path)))
 })

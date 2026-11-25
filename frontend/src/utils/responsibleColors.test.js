@@ -5,7 +5,7 @@ import { loadAssignmentInbox } from './assignmentInbox.js'
 import { documentResponsibilities } from './dispatchPersistence.js'
 
 test('synthetic DSA fixture IDs have stable distinguishable colors, independent of role, document and session', () => {
-  const ids = ['JEFE_UNIDAD_DSA_1', 'JEFE_UNIDAD_DSA_2', 'specialist.fixture.1@example.invalid']
+  const ids = ['fixture_head_a', 'fixture_head_b', 'specialist.fixture.1@example.invalid']
   const colors = ids.map(responsibleColor)
   assert.equal(new Set(colors).size, 3)
   const hues = colors.map((color) => Number(color.match(/hsl\((\d+)/)[1]))
@@ -18,9 +18,9 @@ test('synthetic DSA fixture IDs have stable distinguishable colors, independent 
 
 test('backend bundle retains persistence through loading into the actual UI responsibility filter', async () => {
   const payload = { persistence: 'alfresco', dispatches: [{ documentId: '11111111-2222-4333-8444-2a29efcb482b', recipients: [
-    { userId: 'JEFE_UNIDAD_DSA_1', status: 'ASIGNADO' }, { userId: 'JEFE_UNIDAD_DSA_2', status: 'ANULADO' },
+    { userId: 'fixture_head_a', status: 'ASIGNADO' }, { userId: 'fixture_head_b', status: 'ANULADO' },
   ] }], sentDispatches: [], documents: [], documentErrors: [] }
   const result = await loadAssignmentInbox(async () => Response.json(payload), (node) => node)
-  assert.deepEqual(documentResponsibilities(result.dispatchRecords, payload.dispatches[0].documentId, true).map((item) => item.userId), ['JEFE_UNIDAD_DSA_1'])
+  assert.deepEqual(documentResponsibilities(result.dispatchRecords, payload.dispatches[0].documentId, true).map((item) => item.userId), ['fixture_head_a'])
   await assert.rejects(loadAssignmentInbox(async () => Response.json({ ...payload, persistence: undefined }), (node) => node), /backend no informa/)
 })

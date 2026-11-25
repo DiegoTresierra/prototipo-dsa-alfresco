@@ -5,7 +5,7 @@ Frontend React/Vite y backend Express para distribución entre Direcciones, desp
 ## Estado y límites
 
 - Despacho y atención utilizan asignaciones equivalentes sobre un mismo UUID original.
-- El organigrama JSON es provisional y no concede permisos.
+- Las unidades, relaciones activas y auditoría proceden de Alfresco. La aplicación rechaza los antiguos modos locales de jerarquía y despacho.
 - Jefatura no deriva a Especialista sin supervisión institucional verificable.
 - Propuestas, decisiones e integración de emisión aprobada son servicios internos preparados y probados con mocks, sin rutas mutables productivas.
 - La emisión oficial requiere habilitación independiente; no se activa por instalar, compilar o verificar el modelo.

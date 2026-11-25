@@ -57,9 +57,7 @@ El servicio exige un único resultado, evidencia de IDs GROUP_ y vuelve a consul
 usuario habilitado y grupos paginados para comprobar IDs exactos, rol, dependencia
 y pertenencia a los grupos declarados. No confía en nombres, sufijos ni datos React.
 
-No se implementa aquí el proveedor real ni se inyecta organization.json. Sin proveedor,
-con resultado vacío/no verificado o ambiguo, la operación se bloquea. Los grupos de
-las pruebas son datos de fixtures, no configuración institucional desplegada.
+El proveedor institucional consulta las relaciones activas en Alfresco y las membresías vigentes. La ausencia de proveedor, las relaciones ambiguas y la auditoría pendiente bloquean la resolución. Las rutas mutables de decisión siguen desconectadas.
 
 ## Integridad de eventos
 

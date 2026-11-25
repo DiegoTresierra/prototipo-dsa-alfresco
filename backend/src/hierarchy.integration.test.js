@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { once } from 'node:events'
 
-test('provisional organization requires Direction and CSRF but never authorizes hierarchical dispatch', async (t) => {
+test('institutional hierarchy requires Direction and CSRF but never authorizes hierarchical dispatch', async (t) => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'hierarchy-http-'))
   const containerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const dsaUnitId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -18,7 +18,7 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   Object.assign(process.env, {
     PORT: '0', SESSION_SECRET: 'hierarchy-fixture', ALFRESCO_TARGET: 'https://hierarchy.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'fixture', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
-    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false',
+    DISPATCH_PERSISTENCE: 'alfresco', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false',
     ORGANIZATION_STORE_PATH: path.join(temporary, 'organization.json'), DISPATCH_STORE_PATH: path.join(temporary, 'dispatches.json'),
     ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'directory', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'fixture-password',
     ALFRESCO_HIERARCHY_SERVICE_USERNAME: 'hierarchy-service', ALFRESCO_HIERARCHY_SERVICE_PASSWORD: 'fixture-hierarchy-password',
@@ -146,15 +146,10 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     'unauthenticated unit edits are rejected before reaching the service')
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: headers('staff', 'especialista') })).status, 403)
   assert.equal((await put({ ...director, 'X-CSRF-Token': 'invalid' }, assignments)).status, 403)
-  assert.equal((await put(director, [...assignments, { laneId: 'especialistas', userId: 'foreign' }])).status, 400)
-  assert.equal((await put(director, [{ laneId: 'especialistas', userId: 'staff', unitHeadUserId: 'foreign' }])).status, 400)
-  assert.equal((await put(director, assignments)).status, 200)
-  const saved = await (await realFetch(`${base}/api/hierarchy`, { headers: director })).json()
-  assert.equal(saved.dependency, 'dsa')
-  assert.equal(saved.assignments[1].unitHeadUserId, 'head')
-  assert.ok(saved.assignments.every((a) => a.dependency === 'dsa' && a.updatedBy === 'director'))
-  assert.equal(JSON.parse(fs.readFileSync(config.organizationStorePath, 'utf8')).audit.length, 1)
-  assert.deepEqual((await (await realFetch(`${base}/api/hierarchy`, { headers: headers('dti', 'direccion', 'DTI') })).json()).assignments, [])
+  const legacyPath = path.join(temporary, 'organization.json')
+  fs.writeFileSync(legacyPath, JSON.stringify({ assignments, audit: [] }))
+  assert.equal((await put(director, assignments)).status, 409)
+  assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: director })).status, 503)
   const recipients = await realFetch(`${base}/api/directory/dispatch-recipients`, { headers: head })
   assert.equal(recipients.status, 503)
   assert.equal((await recipients.json()).error, 'ORGANIZATIONAL_HIERARCHY_PENDING')
@@ -172,11 +167,11 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal(editDisabled.status, 403, 'unit edits stay disabled until explicitly enabled')
   assert.equal((await editDisabled.json()).error, 'HIERARCHY_UNIT_EDITS_DISABLED')
   assert.equal(calls.filter((call) => call.method === 'PUT' || (call.method === 'POST' && /\/nodes\/.*\/children$/.test(call.pathname))).length, alfrescoUnitWritesBeforeEdit)
-  const jsonBeforeReadOnlyPut = fs.readFileSync(config.organizationStorePath, 'utf8')
+  const jsonBeforeReadOnlyPut = fs.readFileSync(legacyPath, 'utf8')
   const readOnlyPut = await put(director, assignments)
   assert.equal(readOnlyPut.status, 409)
   assert.equal((await readOnlyPut.json()).error, 'HIERARCHY_ALFRESCO_READ_ONLY')
-  assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), jsonBeforeReadOnlyPut)
+  assert.equal(fs.readFileSync(legacyPath, 'utf8'), jsonBeforeReadOnlyPut)
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: head })).status, 403)
   const alfrescoRead = await (await realFetch(`${base}/api/hierarchy`, { headers: director })).json()
   assert.equal(alfrescoRead.dependency, 'dsa')
@@ -270,9 +265,9 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.equal((await disabledReassignment.json()).error, 'HIERARCHY_SPECIALIST_REASSIGNMENTS_DISABLED')
   assert.equal(calls.filter((call) => call.method === 'POST' && call.pathname.endsWith('/children')).length, writesBeforeRoleCheck,
     'disabled or unauthorized specialist reassignment must not write Alfresco nodes')
-  assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), jsonBeforeReadOnlyPut,
+  assert.equal(fs.readFileSync(legacyPath, 'utf8'), jsonBeforeReadOnlyPut,
     'the Alfresco unit endpoint must not modify organization.json')
-  const dsaTSession = headers('DSA_T', 'direccion')
+  const dsaTSession = headers('fixture_director_a', 'direccion')
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: dsaTSession })).status, 200,
     'an already-authorized Director session is not rejected by an empty technical-account Direction group listing')
   emptyAlfrescoContainer = true
@@ -280,12 +275,12 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   assert.deepEqual(emptyRead.units, [])
   assert.deepEqual(emptyRead.assignments, [])
   emptyAlfrescoContainer = false
-  const jsonBeforeFailedRead = fs.readFileSync(config.organizationStorePath, 'utf8')
+  const jsonBeforeFailedRead = fs.readFileSync(legacyPath, 'utf8')
   failAlfrescoRead = true
   const failedRead = await realFetch(`${base}/api/hierarchy`, { headers: director })
   assert.equal(failedRead.status, 503)
   assert.equal((await failedRead.json()).error, 'HIERARCHY_ALFRESCO_READ_UNAVAILABLE')
-  assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), jsonBeforeFailedRead)
+  assert.equal(fs.readFileSync(legacyPath, 'utf8'), jsonBeforeFailedRead)
   failAlfrescoRead = false
   const readerConfiguration = config.hierarchyService
   config.hierarchyService = {}
@@ -301,7 +296,7 @@ test('provisional organization requires Direction and CSRF but never authorizes 
     assert.equal(missingAudit.status, 503)
     assert.equal((await missingAudit.json()).error, 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED')
   } finally { config.hierarchyService = readerConfiguration }
-  const original = fs.readFileSync(config.organizationStorePath, 'utf8')
+  const original = fs.readFileSync(legacyPath, 'utf8')
   const actor = actors.get('Basic director-fixture')
   actor.groups = ['GROUP_DSA', 'GROUP_STAFF']
   assert.equal((await put(director, assignments)).status, 403, 'role revoked after login')
@@ -312,7 +307,7 @@ test('provisional organization requires Direction and CSRF but never authorizes 
   actor.enabled = true; identityUnavailable = true
   assert.equal((await put(director, assignments)).status, 503, 'unavailable Alfresco fails closed')
   assert.equal((await patchUnit(director)).status, 503, 'write-disabled routes must still reject unconfirmed identity')
-  assert.equal(fs.readFileSync(config.organizationStorePath, 'utf8'), original, 'no rejected operation changes the organigram')
+  assert.equal(fs.readFileSync(legacyPath, 'utf8'), original, 'no rejected operation changes the organigram')
   identityUnavailable = false
   config.userInboxNodeIds = { staff: 'upload-folder', forbidden: 'dsa-emitted' }
   config.officeInboxNodeIds = { DSA: { emitidos: 'dsa-emitted' } }

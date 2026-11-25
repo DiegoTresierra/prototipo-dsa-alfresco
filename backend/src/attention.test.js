@@ -119,10 +119,10 @@ test('write errors preserve state, lost confirmation is idempotent, and partial 
 
 test('original metadata DTI, dispatch DSA, repository creator and cm:author are separate; unknown origins are never invented', () => {
   const settings = attentionFixture().settings
-  const identity = documentIdentity({ parentId: 'dti-emitted', createdByUser: { id: 'DTI_T' }, properties: { 'gd:dependenciaOrigen': 'DTI', 'cm:author': 'Home' } }, settings)
+  const identity = documentIdentity({ parentId: 'dti-emitted', createdByUser: { id: 'fixture_director_b' }, properties: { 'gd:dependenciaOrigen': 'DTI', 'cm:author': 'Home' } }, settings)
   assert.equal(identity.originalDependency, 'DTI')
-  assert.equal(identity.createdByUserId, 'DTI_T')
-  const unknown = documentIdentity({ parentId: 'dti-emitted', createdByUser: { id: 'DTI_T' }, properties: { 'cm:author': 'DSA' } }, settings)
+  assert.equal(identity.createdByUserId, 'fixture_director_b')
+  const unknown = documentIdentity({ parentId: 'dti-emitted', createdByUser: { id: 'fixture_director_b' }, properties: { 'cm:author': 'DSA' } }, settings)
   assert.equal(unknown.originalDependency, null)
   assert.deepEqual(unknown.emittedFolderEvidence, ['DTI'])
 })

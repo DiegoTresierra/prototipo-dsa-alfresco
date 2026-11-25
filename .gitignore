@@ -17,6 +17,7 @@ dist-ssr
 backend/data/dispatches.json
 backend/data/document-numbers.json
 backend/data/organization.json
+/backend/data/*.json.*.tmp
 backend/data/dispatch-pilot.lock
 backend/data/model-backups/
 frontend/artifacts/

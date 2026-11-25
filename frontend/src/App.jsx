@@ -20,7 +20,6 @@ import { useEmittedInbox } from './hooks/useEmittedInbox'
 import { ClosureInbox } from './components/ClosureInbox'
 import { getDashboardRoleId } from './auth/authorization'
 import { DocumentForm } from './components/DocumentForm'
-import { recipientDependencies } from './data/emisorCatalog'
 import { loadPersonalAttention, personalAttentionKey, personalAttentionDocuments } from './utils/documentViews'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { authorizedNotifications, documentNotificationStorageKey, loadDocumentNotificationState, saveDocumentNotificationState } from './utils/documentNotifications'
@@ -32,11 +31,10 @@ function getInitialAlfrescoDocuments() {
 
 function dependencyProfile(dependency) {
   const dependencyId = String(dependency || '').toLowerCase()
-  return recipientDependencies.find((entry) => entry.id === dependencyId) || {
+  return {
     id: dependencyId,
     name: dependency || '',
     acronym: String(dependency || '').toUpperCase(),
-    available: false,
   }
 }
 
@@ -130,6 +128,8 @@ function ApplicationShell({ session, onLogout }) {
     userId: session.alfresco?.id || session.user?.id || '',
     dependencyId: dependency.id,
     roleId: session.roleId,
+    distributionDependencies: session.distributionDependencies || [],
+    officialWritesEnabled: session.officialWritesEnabled === true,
     unitAcronym: unit?.acronym || unit?.code || '',
     unitName: unit?.name || '',
     issuerCode: session.institutionalDocumentCode || '',
@@ -138,7 +138,7 @@ function ApplicationShell({ session, onLogout }) {
   const isUnitHead = session.functionalRole === 'jefe-unidad'
   const isSpecialist = session.functionalRole === 'especialista'
   const isAssignmentUser = isUnitHead || isSpecialist
-  const recipientRoles = session.dispatchRecipientRoles || []
+  const recipientRoles = session.dispatchWritesEnabled === true ? session.dispatchRecipientRoles || [] : []
   const canDispatchInternal = canWriteAlfresco && recipientRoles.length > 0
   useEffect(() => {
     if (!canReadAlfresco || isAssignmentUser || !session.dependency) return undefined
@@ -416,7 +416,7 @@ function App() {
       : session.authorizationStatus === 'incomplete'
         ? 'Alfresco validó tu cuenta, pero no encontró una combinación configurada de dependencia y función.'
         : 'La función fue reconocida, pero no hay una interfaz habilitada para ella.'
-    return <main className="login-page"><section className="login-card"><p className="breadcrumb">Gestión Documental UAC</p><h1>Acceso pendiente de configuración</h1><p className="form-message">{accessMessage}</p><div className="access-diagnostics"><p>Estado de rol: <strong>{session.authorizationStatus || 'no disponible'}</strong></p><p>Rol asignado: <strong>{session.roleId || 'sin rol'}</strong></p><p>Dependencia: <strong>{session.dependency || 'sin asignar'}</strong></p><p>Funcion: <strong>{session.functionalRole || session.functionalIdentity?.functionalRole || 'sin asignar'}</strong></p></div><button className="button-primary" onClick={() => logout(session).then(() => setSession(null))} type="button">Cerrar sesión</button></section></main>
+    return <main className="login-page"><section className="login-card"><p className="breadcrumb">Gestión Documental</p><h1>Acceso pendiente de configuración</h1><p className="form-message">{accessMessage}</p><div className="access-diagnostics"><p>Estado de rol: <strong>{session.authorizationStatus || 'no disponible'}</strong></p><p>Rol asignado: <strong>{session.roleId || 'sin rol'}</strong></p><p>Dependencia: <strong>{session.dependency || 'sin asignar'}</strong></p><p>Funcion: <strong>{session.functionalRole || session.functionalIdentity?.functionalRole || 'sin asignar'}</strong></p></div><button className="button-primary" onClick={() => logout(session).then(() => setSession(null))} type="button">Cerrar sesión</button></section></main>
   }
   return <ApplicationShell key={`${session.alfresco?.id}:${session.dependency}`} onLogout={() => logout(session).then(() => setSession(null))} session={session} />
 }

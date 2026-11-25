@@ -4,7 +4,7 @@ import { assertEmissionModel, encodeEmissionMetadata, decodeEmissionMetadata, pr
 import { createInstitutionalEmissionReader, createAlfrescoNumberedIssuer } from './alfrescoNumbering.js'
 import { isForbiddenRetentionMutation } from './emittedRetentionPolicy.js'
 
-const record = { documentId: 'pdf', documentCode: 'DTI-UPSI', cycle: 2026, number: 12, actorId: 'issuer', requestKey: 'request', payloadHash: 'a'.repeat(64) }
+const record = { documentId: 'pdf', documentCode: 'DTI-UNIT', cycle: 2026, number: 12, actorId: 'issuer', requestKey: 'request', payloadHash: 'a'.repeat(64) }
 const node = (value) => ({ id: value.documentId, nodeType: 'cm:content', isFile: true, content: { mimeType: 'application/pdf' }, properties: {
   ...encodeEmissionMetadata(value), 'gd:estado': 'ANULADO',
 } })

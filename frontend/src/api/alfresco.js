@@ -243,12 +243,6 @@ export const reassignHierarchySpecialist = ({ userId, destinationUnitId, operati
   csrfToken,
   body: JSON.stringify({ destinationUnitId, operationId, ...(expectedRevision ? { expectedRevision } : {}) }),
 })
-export const saveHierarchy = (assignments, csrfToken) => hierarchyRequest('/api/hierarchy', {
-  method: 'PUT',
-  csrfToken,
-  body: JSON.stringify({ assignments }),
-})
-
 export async function getAssignmentInbox() {
   return loadAssignmentInbox(apiFetch, nodeToDocument)
 }

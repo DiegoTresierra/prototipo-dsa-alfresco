@@ -3,6 +3,13 @@ import { resolveRole } from './roleResolver.js'
 const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status) => Object.assign(new Error(code), { status })
 
+export function isServiceIdentity(settings, userId) {
+  const configured = [settings.hierarchyService?.username, settings.distributionService?.username,
+    ...(settings.technicalUserIds || [])]
+  return typeof userId === 'string' && configured.some(id =>
+    typeof id === 'string' && id.length > 0 && id.toLowerCase() === userId.toLowerCase())
+}
+
 // A request-local snapshot, never a cross-request authorization cache.
 export async function readInstitutionalGroups(target, userId, authorization, fetchImpl = (...args) => globalThis.fetch(...args)) {
   const groups = []
@@ -32,7 +39,7 @@ async function get(target, path, authorization, fetchImpl) {
 
 export async function revalidateInstitutionalIdentity(settings, session, fetchImpl = (...args) => globalThis.fetch(...args)) {
   const id = session?.alfresco?.id
-  if (!id || !session.authorization || session.authorizationStatus !== 'active') throw fail('INSTITUTIONAL_IDENTITY_REJECTED', 403)
+  if (!id || isServiceIdentity(settings, id) || !session.authorization || session.authorizationStatus !== 'active') throw fail('INSTITUTIONAL_IDENTITY_REJECTED', 403)
   const me = (await get(settings.alfrescoTarget, `${core}/people/-me-`, session.authorization, fetchImpl))?.entry
   if (me?.id !== id || me.enabled !== true) throw fail('INSTITUTIONAL_IDENTITY_REJECTED', 403)
   const groups = await readInstitutionalGroups(settings.alfrescoTarget, id, session.authorization, fetchImpl)

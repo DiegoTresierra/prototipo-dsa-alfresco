@@ -9,13 +9,13 @@ export function emittedFixture() {
     properties: { 'cm:title': id, ...properties } })
   const nodes = new Map([
     ['dti-root', { id: 'dti-root', isFolder: true }], ['dsa-root', { id: 'dsa-root', isFolder: true }],
-    ['dti-original', node('dti-original', 'DTI', 'DTI_T', { 'gd:dependenciaOrigen': 'DTI' })],
+    ['dti-original', node('dti-original', 'DTI', 'fixture_director_b', { 'gd:dependenciaOrigen': 'DTI' })],
     ['dti-legacy', node('dti-legacy', 'DTI', 'admin', { 'gd:numero': 'TEST-MF-001', 'cm:author': 'Home' })],
-    ['dti-unit', node('dti-unit', 'DTI', 'gd_distribucion', { 'gd:codigoDocumental': 'DTI-UPSI', 'gd:numero': '2' })],
-    ['dsa-original', node('dsa-original', 'DSA', 'DSA_T', { 'gd:codigoDocumental': 'DSA', 'gd:numero': '1' })],
+    ['dti-unit', node('dti-unit', 'DTI', 'fixture_distribution', { 'gd:codigoDocumental': 'DTI-UNIT', 'gd:numero': '2' })],
+    ['dsa-original', node('dsa-original', 'DSA', 'fixture_director_a', { 'gd:codigoDocumental': 'DSA', 'gd:numero': '1' })],
   ])
   // Received and internally dispatched original keeps its DTI UUID/creator/origin.
-  nodes.get('dti-original').properties['gd:asignaciones'] = JSON.stringify({ dispatches: [{ senderUserId: 'DSA_T', senderDependency: 'dsa', recipients: [{ userId: 'head', status: 'ASIGNADO' }] }] })
+  nodes.get('dti-original').properties['gd:asignaciones'] = JSON.stringify({ dispatches: [{ senderUserId: 'fixture_director_a', senderDependency: 'dsa', recipients: [{ userId: 'head', status: 'ASIGNADO' }] }] })
   const children = new Map([['dti-root', ['dti-original', 'dti-legacy', 'dti-unit', 'dsa-original']], ['dsa-root', ['dsa-original', 'dti-original']]])
   const calls = [], denied = new Set()
   const fetch = async (url, options) => {

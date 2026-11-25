@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { listEligibleDocumentRecipients } from '../api/alfresco'
-import { documentPriorities, documentTypes, recipientDependencies } from '../data/emisorCatalog'
+import { documentPriorities, documentTypes } from '../data/emisorCatalog'
 import { PdfPreview } from './PdfPreview'
 import { SearchableSelect } from './SearchableSelect'
 import { getDocumentSubmissionError, isDirectorRole } from '../utils/documentValidation'
@@ -38,7 +38,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const [reservedNumber, setReservedNumber] = useState('')
   const [confirmedNumbering, setConfirmedNumbering] = useState(null)
   const [recipients, setRecipients] = useState([])
-  const [recipientsLoading, setRecipientsLoading] = useState(!isDirector)
+  const [recipientsLoading, setRecipientsLoading] = useState(!isOfficial)
   const [recipientsError, setRecipientsError] = useState('')
   const [formError, setFormError] = useState('')
   const [submitted, setSubmitted] = useState(false)
@@ -79,6 +79,9 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const attachmentsInputRef = useRef(null)
   const documentYear = String(new Date().getFullYear())
   const academicPeriods = [...new Set([`${documentYear} - I`, `${documentYear} - II`, ...(restoredParameters.documentPeriod ? [restoredParameters.documentPeriod] : [])])]
+  const dependencyCodes = isDirector ? issuer.distributionDependencies || [] : [...new Set(recipients.map(r => r.dependency))]
+  const recipientDependencies = dependencyCodes.map(code => ({ id: code.toLowerCase(), name: code.toUpperCase(), available: true }))
+  const officialDisabled = isOfficial && issuer.officialWritesEnabled !== true && !(uncertainSubmission && !officialPending)
   const selectedDependency = recipientDependencies.find((dependency) => dependency.id === dependencyId)
   const dependencyRecipients = recipients.filter((recipient) => recipient.dependency === dependencyId)
   const selectedRecipient = dependencyRecipients.find((recipient) => recipient.id === selectedPositionId) || null
@@ -90,14 +93,14 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
   const counterError = ''
 
   useEffect(() => {
-    if (isDirector) return undefined
+    if (isOfficial) return undefined
     let active = true
     listEligibleDocumentRecipients()
       .then((entries) => { if (active) setRecipients(entries) })
       .catch((error) => { if (active) setRecipientsError(error.message) })
       .finally(() => { if (active) setRecipientsLoading(false) })
     return () => { active = false }
-  }, [isDirector])
+  }, [isOfficial])
 
   const unlockAfterEdit = () => {
     if (lock.current && !uncertainSubmission) {
@@ -151,7 +154,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    if (!allowAlfrescoUpload) {
+    if (!allowAlfrescoUpload || officialDisabled) {
       setFormError('El envío no está disponible en este momento.')
       return
     }
@@ -167,6 +170,10 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       return
     }
     if (lock.current || !event.currentTarget.reportValidity()) return
+    if (dependencyId && !selectedDependency) {
+      setFormError('La dependencia seleccionada ya no está disponible. Revisa el destino antes de continuar.')
+      return
+    }
     const values = new FormData(event.currentTarget)
     const validationError = getDocumentSubmissionError({
       fields: { documentType, documentPeriod, priority: values.get('priority'), subject: values.get('subject'), description: values.get('description') },
@@ -283,7 +290,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
     }
   }
 
-  const options = recipientDependencies.map((dependency) => ({ id: dependency.id, label: dependency.name, disabled: !dependency.available }))
+  const options = recipientDependencies.map((dependency) => ({ id: dependency.id, label: dependency.name, disabled: false }))
   const numberPreview = confirmedNumbering?.number && confirmedNumbering.code && confirmedNumbering.cycle
     ? `${documentType.toLocaleUpperCase('es')} N.° ${confirmedNumbering.number}-${confirmedNumbering.cycle}-${confirmedNumbering.code}`
     : 'Se confirma con los datos registrados por Alfresco al emitir'
@@ -294,13 +301,14 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
       <h1 id="document-form-title">Nuevo documento</h1>
       <form className="document-form" noValidate onChange={unlockAfterEdit} onSubmit={handleSubmit}>
         <p className="form-message">La emisión propia usa un código institucional configurado y comprobado en Alfresco. Sin destinatario, el original permanece en Emitidos y no genera recepción. El número se confirma únicamente al emitir. Anexos y antecedentes no están habilitados.</p>
-        <fieldset className="form-section"><legend>I. Destinatario</legend><div className="form-grid form-grid--recipient">
+        {(isDirector || !isOfficial) && <fieldset className="form-section"><legend>I. Destinatario</legend><div className="form-grid form-grid--recipient">
           <SearchableSelect label="Dependencia destinataria" onChange={(value) => { unlockAfterEdit(); setDependencyId(value); setSelectedPositionId('') }} options={options} placeholder="Sin destinatario (opcional)" required={!isOfficial} value={dependencyId} />
           {!isDirector && <label className="form-field"><span>Cuenta destinataria</span><select disabled={!dependencyId || recipientsLoading} onChange={(event) => { unlockAfterEdit(); setSelectedPositionId(event.target.value) }} required={Boolean(dependencyId) && !isOfficial} value={selectedPositionId}><option value="">Selecciona una cuenta verificada</option>{dependencyRecipients.map((recipient) => <option disabled={!recipient.inboxNodeId} key={recipient.id} value={recipient.id}>{recipient.displayName} · {recipient.id} · {recipient.functionalRole}</option>)}</select></label>}
-          <aside className="position-description" aria-live="polite"><h2>Destinatario seleccionado</h2><p><strong>{directionPosition?.recipientName || 'Selecciona una dependencia'}</strong></p><p>{directionPosition?.title || ''}</p>{!isDirector && <p>Unidad y código institucional pendientes de verificación. El organigrama provisional no acredita subordinación.</p>}</aside>
+          <aside className="position-description" aria-live="polite"><h2>Destinatario seleccionado</h2><p><strong>{directionPosition?.recipientName || 'Selecciona una dependencia'}</strong></p><p>{directionPosition?.title || ''}</p>{!isDirector && <p>Unidad y código institucional pendientes de verificación. La relación se verifica en Alfresco.</p>}</aside>
+          {isDirector && !options.length && <p className="form-message" role="status">Sin dependencias destinatarias configuradas para distribución.</p>}
           {recipientsError && !isDirector && <p className="form-message form-message--error" role="alert">{recipientsError}</p>}
           {!recipientsLoading && !recipientsError && !isDirector && recipients.length === 0 && <p className="form-message" role="status">No hay destinatarios habilitados con bandeja configurada.</p>}
-        </div></fieldset>
+        </div></fieldset>}
 
         <fieldset className="form-section"><legend>II. Identificación documental</legend><p className="form-message">El tipo documental se registra en Alfresco. La prioridad documental y el período académico aún no tienen propiedades verificadas: no se conservan como metadatos documentales y son opcionales en la carga genérica. La prioridad del despacho se registra por separado en sus asignaciones.</p><div className="form-grid">
           <label className="form-field"><span>Tipo documental <b aria-hidden="true">*</b></span><select name="documentType" onChange={(event) => { unlockAfterEdit(); setDocumentType(event.target.value) }} required value={documentType}><option value="">Selecciona un tipo</option>{documentTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
@@ -317,7 +325,7 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
           <label className="form-field"><span>Remitente</span><input readOnly value={issuer.name} /></label>
           <label className="form-field"><span>Cargo</span><input readOnly value={issuer.position} /></label>
           <label className="form-field form-field--full"><span>Oficina de origen</span><input readOnly value={issuer.office} /></label>
-          {!['director', 'director-dti', 'director-dsa'].includes(issuer.roleId) && <label className="form-field form-field--full"><span>Unidad de origen</span><input readOnly value={issuer.unitName || ''} /></label>}
+          {!isDirector && <label className="form-field form-field--full"><span>Unidad de origen</span><input readOnly value={issuer.unitName || ''} /></label>}
         </div></fieldset>
 
         <fieldset className="form-section"><legend>IV. Información del documento</legend><div className="form-grid">
@@ -347,7 +355,8 @@ export function DocumentForm({ onSubmit, user, allowAlfrescoUpload = false, pane
         {uncertainSubmission && !officialPending && !pendingNodeId && isDirector && <label className="form-field"><span>ID del PDF que ya está en Emitidos</span><input autoComplete="off" onChange={(event) => setRecoveryNodeId(event.target.value)} placeholder="Pega el ID Alfresco del documento existente" value={recoveryNodeId} /></label>}
         {uncertainSubmission && officialPending && <p className="form-message" role="alert">Emision pendiente de conciliacion. Conserva la misma clave y vuelve a seleccionar el mismo PDF y los mismos datos. No crees otra emision. Clave: {token.current}</p>}
         {pendingNodeId && isDirector && <p className="form-message" role="status">PDF almacenado en Emitidos. Distribución pendiente. ID Alfresco: {pendingNodeId}</p>}
-        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || validatingPdf || submitting || submitted || uncertainSubmission && !isOfficial} type="submit">{validatingPdf ? 'Validando PDF...' : submitting ? 'Procesando envío...' : submitted ? 'Envío confirmado' : uncertainSubmission ? !isOfficial ? 'Carga pendiente de verificación' : officialPending ? 'Conciliar emisión pendiente' : 'Reintentar solo la distribución' : 'Enviar documento'}</button></div>
+        {officialDisabled && <p className="form-message" role="status">La emisión oficial está deshabilitada.</p>}
+        <div className="form-actions"><button className="button-primary" disabled={!allowAlfrescoUpload || officialDisabled || validatingPdf || submitting || submitted || uncertainSubmission && !isOfficial} type="submit">{validatingPdf ? 'Validando PDF...' : submitting ? 'Procesando envío...' : submitted ? 'Envío confirmado' : uncertainSubmission ? !isOfficial ? 'Carga pendiente de verificación' : officialPending ? 'Conciliar emisión pendiente' : 'Reintentar solo la distribución' : 'Enviar documento'}</button></div>
       </form>
     </section>
   )

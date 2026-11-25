@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchyUnitEditService } from './hierarchyUnitEditService.js'
 
-const unitId = 'b0c78bf2-35f2-4787-878b-f235f21f7c95'
+const unitId = '77777777-0000-4000-8000-000000000011'
 const baseUnit = { id: unitId, name: 'Unidad original', code: 'DSA-01', description: 'Descripción original', dependency: 'DSA', status: 'ACTIVA', parentId: 'authorized-container' }
 
 function fixture({ writesEnabled = true, updateFailure = null, auditFailureAt = '' } = {}) {
@@ -44,7 +44,7 @@ function fixture({ writesEnabled = true, updateFailure = null, auditFailureAt = 
   return { service: createHierarchyUnitEditService({ repository, auditRepository, writesEnabled }), state }
 }
 
-const request = { unitId, name: 'Unidad actualizada', code: 'DSA-02', description: 'Nueva descripción', operationId: 'unit-edit-op-01', dependency: 'DSA', actorId: 'DSA_T', expectedRevision: 'a'.repeat(64) }
+const request = { unitId, name: 'Unidad actualizada', code: 'DSA-02', description: 'Nueva descripción', operationId: 'unit-edit-op-01', dependency: 'DSA', actorId: 'fixture_director_a', expectedRevision: 'a'.repeat(64) }
 
 test('edits the allowed fields, verifies the same unit and records INICIADA then COMPLETADA', async () => {
   const { service, state } = fixture()
@@ -70,7 +70,7 @@ test('detects a no-op without updating Alfresco or writing audit events', async 
 test('edits the name, code and description independently without changing the other values', async () => {
   for (const [field, value] of [['name', 'Solo nombre'], ['code', 'DSA-ONLY'], ['description', 'Solo descripción']]) {
     const { service, state } = fixture()
-    const result = await service.editUnit({ ...request, ...baseUnit, unitId, operationId: `unit-edit-${field}`, dependency: 'DSA', actorId: 'DSA_T', expectedRevision: 'a'.repeat(64), [field]: value })
+    const result = await service.editUnit({ ...request, ...baseUnit, unitId, operationId: `unit-edit-${field}`, dependency: 'DSA', actorId: 'fixture_director_a', expectedRevision: 'a'.repeat(64), [field]: value })
     assert.equal(result.status, 'COMPLETADA')
     assert.equal(result.unit[field], value)
     for (const other of ['name', 'code', 'description'].filter((key) => key !== field)) {
@@ -93,7 +93,7 @@ test('rejects empty names, unauthorized fields, invalid UUIDs, disabled writes a
   for (const [overrides, code] of [
     [{ name: '   ' }, 'HIERARCHY_UNIT_NAME_REQUIRED'],
     [{ unitId: 'not-a-uuid' }, 'HIERARCHY_UNIT_ID_INVALID'],
-    [{ unitId: 'c0c78bf2-35f2-4787-878b-f235f21f7c96' }, 'HIERARCHY_UNIT_NOT_FOUND'],
+    [{ unitId: '77777777-0000-4000-8000-000000000012' }, 'HIERARCHY_UNIT_NOT_FOUND'],
     [{ dependency: 'DTI' }, 'HIERARCHY_DEPENDENCY_MISMATCH'],
   ]) {
     const { service } = fixture()
@@ -107,7 +107,7 @@ test('rejects empty names, unauthorized fields, invalid UUIDs, disabled writes a
 })
 
 test('rejects duplicate institutional codes within the dependency', async () => {
-  const other = { ...baseUnit, id: 'c0c78bf2-35f2-4787-878b-f235f21f7c96', name: 'Otra unidad', code: 'DSA-02' }
+  const other = { ...baseUnit, id: '77777777-0000-4000-8000-000000000012', name: 'Otra unidad', code: 'DSA-02' }
   // Make the repository return a second unit for this focused duplicate check.
   const duplicateFixture = fixture()
   const repository = {

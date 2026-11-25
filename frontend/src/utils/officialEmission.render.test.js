@@ -17,7 +17,9 @@ test('official form restores same key and parameters after reload, including a p
     plugins: [react()], server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] } })
   try {
     const { DocumentForm } = await server.ssrLoadModule('/src/components/DocumentForm.jsx')
-    const html = renderToStaticMarkup(createElement(DocumentForm, { user: { userId: 'DSA_T', roleId: 'director-dsa', issuerCode: 'DSA' }, allowAlfrescoUpload: true }))
+    const html = renderToStaticMarkup(createElement(DocumentForm, { user: { userId: 'fixture_director_a', roleId: 'director-dsa', issuerCode: 'DSA' }, allowAlfrescoUpload: true }))
+    assert.ok(html.includes('La emisión oficial está deshabilitada'))
+    assert.match(html, /<button[^>]*disabled=""[^>]*type="submit"/)
     assert.ok(html.includes('same-original-key'))
     assert.ok(html.includes('Original subject'))
     assert.ok(html.includes('Original description'))

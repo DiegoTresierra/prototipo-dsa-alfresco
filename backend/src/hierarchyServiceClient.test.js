@@ -8,7 +8,7 @@ const labContainerId = '33333333-3333-4333-8333-333333333333'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
   hierarchyService: {
-    username: 'gd_jerarquias_servicio',
+    username: 'fixture_hierarchy',
     password: 'not-a-real-secret',
     containerNodeId: containerId,
     auditContainerNodeId: auditContainerId,
@@ -98,7 +98,7 @@ test('read-only diagnostic verifies dedicated identity, container, groups, peopl
     dependencies: { DSA: 'GROUP_GD_DSA' },
     functions: { direccion: 'GROUP_GD_DIRECCION', 'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD', especialista: 'GROUP_GD_ESPECIALISTA' },
   })
-  assert.equal(report.authentication.id, 'gd_jerarquias_servicio')
+  assert.equal(report.authentication.id, 'fixture_hierarchy')
   assert.equal(report.authentication.enabled, true)
   assert.equal(report.authentication.isAdmin, false)
   assert.equal(report.container.name, 'GD_JERARQUIAS')

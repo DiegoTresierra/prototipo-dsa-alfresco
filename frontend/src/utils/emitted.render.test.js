@@ -23,7 +23,7 @@ test('actual HTTP mapping and React workspace render institutional historical or
     }
     const { getEmittedDocuments } = await server.ssrLoadModule('/src/api/alfresco.js')
     const { DirectorWorkspacePage } = await server.ssrLoadModule('/src/pages/DirectorWorkspacePage.jsx')
-    const props = { activePanel: 'documentos-enviados', title: 'Emitidos', office: { userId: 'DTI_T', office: 'DTI' },
+    const props = { activePanel: 'documentos-enviados', title: 'Emitidos', office: { userId: 'fixture_director_b', office: 'DTI' },
       allowAlfresco: true, alfrescoDocuments: [], inbox: { documents: [] } }
     const render = (inbox, extra = {}) => renderToStaticMarkup(createElement(DirectorWorkspacePage, { ...props, ...extra, emittedInbox: { ...inbox, refresh() {} } }))
     const inbox = await getEmittedDocuments()
@@ -31,16 +31,16 @@ test('actual HTTP mapping and React workspace render institutional historical or
     for (const id of ['dti-original', 'dti-legacy', 'dti-unit']) assert.ok(html.includes(id))
     assert.ok(!html.includes('dsa-original'))
     assert.ok(html.includes('admin'))
-    assert.ok(html.includes('gd_distribucion'))
+    assert.ok(html.includes('fixture_distribution'))
     assert.ok(html.includes('Actualizar bandeja'))
     assert.ok(html.includes('Registro en Alfresco'))
     assert.ok(!html.includes('Fecha de envío'))
     assert.ok(html.includes('PDF registrado sin contenido'))
-    assert.ok(!html.includes('DSA_T'), 'dispatcher is not substituted for creator')
+    assert.ok(!html.includes('fixture_director_a'), 'dispatcher is not substituted for creator')
     const mine = render(inbox, { activePanel: 'mis-documentos' })
     assert.ok(mine.includes('dti-original'))
     assert.ok(!mine.includes('dti-legacy'))
-    const emptyDSA = render({ documents: [], loading: false, error: '' }, { office: { userId: 'DSA_T' }, inbox: { documents: inbox.documents } })
+    const emptyDSA = render({ documents: [], loading: false, error: '' }, { office: { userId: 'fixture_director_a' }, inbox: { documents: inbox.documents } })
     assert.ok(!emptyDSA.includes('dti-original'))
     assert.ok(emptyDSA.includes('No hay documentos emitidos'))
     assert.ok(render({ documents: [], error: 'ACL failed' }).includes('ACL failed'))

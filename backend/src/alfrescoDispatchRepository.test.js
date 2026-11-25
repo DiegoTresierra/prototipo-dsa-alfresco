@@ -14,7 +14,7 @@ const input = (key = 'one', recipients = ['head-a']) => ({ documentId, requestKe
   recipients: recipients.map((id) => ({ id, dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null })) })
 
 function fixture() {
-  const settings = { alfrescoTarget: 'https://alfresco.invalid', distributionService: { username: 'gd_distribucion', password: 'test-only' },
+  const settings = { alfrescoTarget: 'https://alfresco.invalid', distributionService: { username: 'fixture_distribution', password: 'test-only' },
     dispatchPilot: { writesEnabled: true, environment: 'dev', environments: {
       dev: { enabled: true, acknowledgement: pilotAcknowledgements.dev, expectedTarget: 'https://alfresco.invalid' },
     } },
@@ -26,7 +26,7 @@ function fixture() {
     const pathname = new URL(url).pathname
     state.calls.push({ pathname, ...options })
     assert.equal(new URL(url).hostname, 'alfresco.invalid')
-    if (pathname.endsWith('/people/-me-')) return Response.json({ entry: { id: 'gd_distribucion', enabled: true, capabilities: { isAdmin: false } } })
+    if (pathname.endsWith('/people/-me-')) return Response.json({ entry: { id: 'fixture_distribution', enabled: true, capabilities: { isAdmin: false } } })
     if (pathname.endsWith('/classes/gd_tramite')) return Response.json({ properties: state.model ? Object.fromEntries([
       [assignmentProperty, false], [responsibleProperty, true], [dependencyProperty, true],
     ].map(([name, multiValued]) => [name, { dataType: 'd:text', multiValued, protected: false, indexed: name !== assignmentProperty }])) : {} })
@@ -41,7 +41,7 @@ function fixture() {
       if (state.writeStatus !== 200) return Response.json({}, { status: state.writeStatus })
       const body = JSON.parse(options.body)
       assert.deepEqual(Object.keys(body.properties).sort(), [assignmentProperty, responsibleProperty, dependencyProperty].sort())
-      assert.equal(options.headers.Authorization, 'Basic '+Buffer.from('gd_distribucion:test-only').toString('base64'))
+      assert.equal(options.headers.Authorization, 'Basic '+Buffer.from('fixture_distribution:test-only').toString('base64'))
       state.node.properties = { ...state.node.properties, ...body.properties }
       if (body.aspectNames) state.node.aspectNames = body.aspectNames
       await state.onPut?.()

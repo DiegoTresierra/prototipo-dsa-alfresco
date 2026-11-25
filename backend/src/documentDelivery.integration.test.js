@@ -6,7 +6,7 @@ import { identityResponse } from './testFixtures/institutionalIdentity.js'
 
 test('legacy creation cannot bypass official emission; recovery only associates an authorized original without ACL changes', async (t) => {
   Object.assign(process.env, {
-    DISPATCH_PERSISTENCE: 'local', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false',
+    DISPATCH_PERSISTENCE: 'alfresco', DISPATCH_ALFRESCO_WRITES_ENABLED: 'false', OFFICIAL_EMISSION_WRITES_ENABLED: 'false',
     PORT: '0', SESSION_SECRET: 'delivery-fixture', ALFRESCO_TARGET: 'https://alfresco.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DTI: 'GROUP_DTI', DSA: 'GROUP_DSA' }, functions: { direccion: 'GROUP_DIRECTORS' } }),
@@ -43,7 +43,7 @@ test('legacy creation cannot bypass official emission; recovery only associates 
     calls.push({ p, method })
     assert.notEqual(method, 'PUT', 'recovery must never change ACLs or properties')
     if (p.endsWith('/tickets')) return Response.json({ entry: { id: 'service-ticket' } }, { status: 201 })
-    if (p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'distribution', enabled: true } })
+    if (p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'distribution', enabled: true, capabilities: { isAdmin: false } } })
     if (p.endsWith('/pdf-node')) {
       if (deniedRead) return Response.json({}, { status: 403 })
       return Response.json({ entry: { id: 'pdf-node', nodeType: 'cm:content', parentId: source.toLowerCase() + '-emitted', createdByUser: { id: creator }, isFile: true, content: { mimeType: 'application/pdf' },

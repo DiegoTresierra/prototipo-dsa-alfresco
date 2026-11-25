@@ -7,7 +7,7 @@ import { planDispatchModel } from '../src/dispatchModelPlan.js'
 
 const apply = process.argv.includes('--apply')
 const modelAuthorization = process.env.ALFRESCO_MODEL_AUTHORIZATION
-if (apply && !modelAuthorization) throw new Error('MODEL_AUTHORIZATION_REQUIRED: use an already authorized model administrator, never elevate gd_distribucion')
+if (apply && !modelAuthorization) throw new Error('MODEL_AUTHORIZATION_REQUIRED: use an already authorized model administrator, never elevate the distribution service account')
 const service = config.distributionService
 const authorization = modelAuthorization || `Basic ${Buffer.from(`${service.username}:${service.password}`).toString('base64')}`
 const base = `${config.alfrescoTarget}/alfresco/api/-default-/private/alfresco/versions/1/cmm/gd_uac`

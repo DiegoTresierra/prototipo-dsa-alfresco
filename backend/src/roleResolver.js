@@ -1,15 +1,3 @@
-const DEFAULT_GROUP_MAPPINGS = {
-  dependencies: {
-    DTI: 'GROUP_GD_DTI',
-    DSA: 'GROUP_GD_DSA',
-  },
-  functions: {
-    direccion: 'GROUP_GD_DIRECCION',
-    'jefe-unidad': 'GROUP_GD_JEFE_UNIDAD',
-    especialista: 'GROUP_GD_ESPECIALISTA',
-  },
-}
-
 function matchingKeys(groups, mappings) {
   return Object.entries(mappings || {})
     .filter(([, configuredGroups]) => {
@@ -24,12 +12,12 @@ function roleIdFor(dependency, functionalRole) {
   return `${functionalRole}-${dependency.toLowerCase()}`
 }
 
-export function resolveRole(groups = [], groupMappings = DEFAULT_GROUP_MAPPINGS, userId = null) {
+export function resolveRole(groups = [], groupMappings = {}, userId = null) {
   const normalizedGroups = new Set(groups.filter((group) => typeof group === 'string'))
   const dependencies = matchingKeys(normalizedGroups, groupMappings.dependencies)
   const functions = matchingKeys(normalizedGroups, groupMappings.functions)
   const hasOneDependency = dependencies.length === 1
-  const hasOneFunction = functions.length === 1
+  const hasOneFunction = functions.length === 1 && ['direccion', 'jefe-unidad', 'especialista'].includes(functions[0])
   const authorizationStatus = hasOneDependency && hasOneFunction
     ? 'active'
     : dependencies.length > 1 || functions.length > 1
@@ -49,5 +37,3 @@ export function resolveRole(groups = [], groupMappings = DEFAULT_GROUP_MAPPINGS,
     groups,
   }
 }
-
-export { DEFAULT_GROUP_MAPPINGS }

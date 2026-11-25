@@ -23,7 +23,7 @@ export async function getDistributionAuthorization() {
         if (!result?.entry?.id) throw new Error('Missing ticket')
         const authorization = `Basic ${Buffer.from(result.entry.id, 'utf8').toString('base64')}`
         const identity = await getAlfrescoIdentity(config.alfrescoTarget, authorization)
-        if (identity.id !== username || identity.enabled === false) throw new Error('Invalid service identity')
+        if (identity.id !== username || identity.enabled !== true || identity.capabilities?.isAdmin !== false) throw new Error('Invalid service identity')
         return authorization
       } catch {
         authenticationPromise = undefined

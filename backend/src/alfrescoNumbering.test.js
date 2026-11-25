@@ -40,7 +40,7 @@ test('same sequence waits through emission and GET; maximum includes cancelled r
 test('complete codes and January 2 cycles remain independent', async () => {
   const { adapter } = fixture()
   const issue = createAlfrescoNumberedIssuer(adapter)
-  const results = await Promise.all(['DTI', 'DTI-UPSI', 'DTI-UPSI-AMMR'].map((code) => issue(request(code, code))))
+  const results = await Promise.all(['DTI', 'DTI-UNIT', 'DTI-UNIT-SIGN'].map((code) => issue(request(code, code))))
   assert.deepEqual(results.map((r) => r.number), [1, 1, 1])
   assert.equal((await issue({ ...request('jan1'), now: new Date('2027-01-01T20:00:00Z') })).number, 2)
   assert.equal((await issue({ ...request('jan2'), now: new Date('2027-01-02T05:00:00Z') })).number, 1)

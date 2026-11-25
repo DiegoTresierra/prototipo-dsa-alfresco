@@ -1,4 +1,4 @@
-import { isValidDispatchUnit } from './dispatchPolicy.js'
+import { isServiceIdentity } from './institutionalIdentity.js'
 
 function failure(code, status = 502) {
   return Object.assign(new Error(code), { status })
@@ -27,7 +27,7 @@ export async function loadInstitutionalDirectory(settings, fetchImpl = globalThi
   }
   const core = '/alfresco/api/-default-/public/alfresco/versions/1'
   const identity = (await get(`${core}/people/-me-`))?.entry
-  if (identity?.id !== username || identity.enabled !== true) throw failure('DISPATCH_DIRECTORY_IDENTITY_INVALID')
+  if (identity?.id !== username || identity.enabled !== true || identity.capabilities?.isAdmin !== false) throw failure('DISPATCH_DIRECTORY_IDENTITY_INVALID')
   const asArray = (value) => Array.isArray(value) ? value : [value]
   const groups = [...new Set([...Object.values(mappings.dependencies), ...Object.values(mappings.functions)].flatMap(asArray))]
   const memberships = new Map()
@@ -46,11 +46,9 @@ export async function loadInstitutionalDirectory(settings, fetchImpl = globalThi
     if (dependencies.length !== 1 || roles.length !== 1 || !recipientRoles.includes(roles[0])) continue
     const person = (await get(`${core}/people/${encodeURIComponent(userId)}`))?.entry
     if (person?.id !== userId || typeof person.enabled !== 'boolean') throw failure('DISPATCH_DIRECTORY_INVALID_RESPONSE')
-    if (!person.enabled) continue
+    if (!person.enabled || isServiceIdentity(settings, person.id)) continue
     const dependency = dependencies[0].toLowerCase()
-    const configuredUnit = settings.userUnitAssignments?.[userId]
-    const unit = isValidDispatchUnit(configuredUnit, dependency) ? configuredUnit : null
-    recipients.push({ ...member, displayName: person.displayName || member.displayName, dependency, functionalRole: roles[0], unit })
+    recipients.push({ ...member, displayName: person.displayName || member.displayName, dependency, functionalRole: roles[0], unit: null })
   }
   return { recipients: recipients.sort((a, b) => a.displayName.localeCompare(b.displayName, 'es')), configurationErrors }
 }

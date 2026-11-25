@@ -11,7 +11,7 @@ test('institutional originals include all creators and historical numbers; secon
   assert.equal(dti.documents[1].emittedOrigin.evidence, 'institutional-primary-folder')
   assert.equal(dti.documents[1].documentIdentity.originalDependency, null)
   assert.equal(dti.documents[1].contentWarning, 'EMPTY_PDF_CONTENT')
-  assert.equal(dti.documents[0].createdByUser.id, 'DTI_T')
+  assert.equal(dti.documents[0].createdByUser.id, 'fixture_director_b')
   assert.equal(dti.documents[0].emittedOrigin.dependency, 'DTI')
   const dsa = await listInstitutionalEmitted(f.settings, f.session('DSA'), f.fetch)
   assert.deepEqual(dsa.documents.map((n) => n.id), ['dsa-original'])

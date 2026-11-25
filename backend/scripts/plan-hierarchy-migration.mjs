@@ -1,3 +1,4 @@
+import { parseGroupMappings } from '../src/groupMappings.js'
 import dotenv from 'dotenv'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -22,30 +23,7 @@ function parseJson(name, fallback) {
   try { return JSON.parse(process.env[name]) } catch { throw Object.assign(new Error(), { code: `INVALID_JSON_${name}` }) }
 }
 
-function canonicalize(mapping, aliases) {
-  return Object.fromEntries(Object.entries(mapping || {}).map(([key, value]) => {
-    const normalized = key.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    const values = (Array.isArray(value) ? value : [value]).map((item) =>
-      item && typeof item === 'object' ? item.id || item.groupId || item.name || '' : item).filter(Boolean)
-    return [aliases[normalized] || key, values.length === 1 ? values[0] : values]
-  }))
-}
-
-function loadMappings() {
-  if (process.env.ALFRESCO_GROUP_MAPPINGS_JSON) {
-    const value = parseJson('ALFRESCO_GROUP_MAPPINGS_JSON', {})
-    return {
-      dependencies: canonicalize(value.dependencies, { dti: 'DTI', gddti: 'DTI', dsa: 'DSA', gddsa: 'DSA' }),
-      functions: canonicalize(value.functions, { director: 'direccion', direccion: 'direccion', jefeunidad: 'jefe-unidad', especialista: 'especialista' }),
-    }
-  }
-  return {
-    dependencies: canonicalize(parseJson('ALFRESCO_DEPENDENCY_GROUP_MAPPINGS_JSON', {}), { dti: 'DTI', gddti: 'DTI', dsa: 'DSA', gddsa: 'DSA' }),
-    functions: canonicalize(parseJson('ALFRESCO_ROLE_MAPPINGS_JSON', {}), { director: 'direccion', direccion: 'direccion', jefeunidad: 'jefe-unidad', especialista: 'especialista' }),
-  }
-}
-
-const groupMappings = loadMappings()
+const groupMappings = parseGroupMappings()
 const settings = {
   alfrescoTarget: (process.env.ALFRESCO_TARGET || '').replace(/\/+$/, ''),
   groupMappings,

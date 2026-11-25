@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  assertHierarchyJsonWritesEnabled,
   assertHierarchyReadConfiguration,
   createHierarchyReadService,
   hierarchyStorageMode,
@@ -96,12 +95,10 @@ test('surfaces an Alfresco read error instead of using a fallback source', async
   })
 })
 
-test('defaults to Alfresco and permits JSON only when explicitly requested for provisional presentation', () => {
+test('defaults to Alfresco and rejects local organization data even if configured', () => {
   assert.equal(hierarchyStorageMode({}), 'alfresco')
   assert.equal(hierarchyStorageMode({ hierarchyReadStorage: 'alfresco' }), 'alfresco')
-  assert.doesNotThrow(() => assertHierarchyJsonWritesEnabled({ hierarchyReadStorage: 'json' }))
-  assert.throws(() => assertHierarchyJsonWritesEnabled({ hierarchyReadStorage: 'alfresco' }), (error) =>
-    error.code === 'HIERARCHY_ALFRESCO_READ_ONLY' && error.status === 409)
+  assert.throws(() => hierarchyStorageMode({ hierarchyReadStorage: 'json' }), /HIERARCHY_READ_STORAGE_INVALID/)
   assert.throws(() => hierarchyStorageMode({ hierarchyReadStorage: 'unexpected' }), /HIERARCHY_READ_STORAGE_INVALID/)
 })
 

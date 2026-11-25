@@ -1,5 +1,5 @@
 import { buildAlfrescoUrl } from './alfrescoClient.js'
-import { isAttentionAssignment } from './dispatchStore.js'
+import { isAttentionAssignment } from './attentionPolicy.js'
 
 const core = '/api/-default-/public/alfresco/versions/1'
 const searchPath = '/api/-default-/public/search/versions/1/search'

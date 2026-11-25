@@ -59,11 +59,13 @@ export function createInstitutionalHierarchyProvider({ repository, directory, gr
     const own = active.filter(a => a.userId === userId)
     if (role !== 'direccion' && (own.length !== 1 || own[0].role !== role)) fail('HIERARCHY_ACTIVE_RELATION_AMBIGUOUS')
     let people
+    let managedUnit
     if (stage === 'direccion') {
       people = await directory.listCandidates({ dependency: key, role: 'direccion' })
       if (people.length !== 1) fail('HIERARCHY_DIRECTION_AMBIGUOUS')
     } else {
       const unitId = own[0]?.unitId
+      if (stage === 'especialistas') managedUnit = units.find(unit => unit.id === unitId)
       const heads = active.filter(a => a.unitId === unitId && a.role === 'jefe-unidad')
       if (heads.length !== 1) fail('HIERARCHY_UNIT_HEAD_AMBIGUOUS')
       const selected = stage === 'jefatura' ? heads : active.filter(a => a.unitId === unitId && a.role === 'especialista')
@@ -81,7 +83,8 @@ export function createInstitutionalHierarchyProvider({ repository, directory, gr
     const after = await repository.getRevision()
     if (after !== before || !Array.isArray(pendingAfter) || pendingAfter.length) fail('HIERARCHY_REVISION_CONFLICT')
     return { verified: true, source: 'alfresco', revision: after,
-      members: people.map(person => ({ userId: person.id, groupIds: person.groups })) }
+      members: people.map(person => ({ userId: person.id, groupIds: person.groups })),
+      ...(managedUnit ? { unit: { id: managedUnit.id, code: managedUnit.code, name: managedUnit.name, dependency: scope } } : {}) }
   }
   return {
     resolveSpecialists: input => resolve({ ...input, role: 'jefe-unidad', stage: 'especialistas' }),

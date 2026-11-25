@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHierarchyDirectory } from './hierarchyDirectory.js'
 
-const serviceUsername = 'gd_jerarquias_servicio'
+const serviceUsername = 'fixture_hierarchy'
 const settings = {
   alfrescoTarget: 'https://alfresco.test',
   hierarchyService: { username: serviceUsername, password: 'not-a-real-secret', containerNodeId: '11111111-1111-4111-8111-111111111111', storage: 'alfresco' },
