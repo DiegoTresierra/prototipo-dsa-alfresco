@@ -7,19 +7,27 @@ import os from 'node:os'
 import path from 'node:path'
 import { once } from 'node:events'
 
-test('HTTP Alfresco pilot authorizes secondary membership, persists all readers, and rejects forged scope/ACL/roles', async (t) => {
-  process.env.ALFRESCO_HIERARCHY_STORAGE = '' // Provider absence is an explicit fixture, independent of private DEV configuration.
+test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves documentary scope, ACL and legacy flows', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'alfresco-dispatch-http-'))
   const documentId = '11111111-2222-4333-8444-2a29efcb482b'
   const foreignId = '00000000-0000-0000-0000-000000000001'
   const secondId = '00000000-0000-0000-0000-000000000002'
   const additionalId = '00000000-0000-0000-0000-000000000003'
+  const hierarchyContainer = '10000000-0000-4000-8000-000000000001'
+  const auditContainer = '10000000-0000-4000-8000-000000000002'
+  const unitId = '20000000-0000-4000-8000-000000000001'
+  const otherUnitId = '20000000-0000-4000-8000-000000000002'
+  const inactiveUnitId = '20000000-0000-4000-8000-000000000003'
+  const foreignUnitId = '20000000-0000-4000-8000-000000000004'
   const localPath = path.join(directory, 'dispatches.json')
   fs.writeFileSync(localPath, 'legacy data must never be read or changed')
   Object.assign(process.env, {
     PORT: '0', SESSION_SECRET: 'test-only', ALFRESCO_TARGET: 'https://alfresco.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
     ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'gd_distribucion', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'test-only',
+    HIERARCHY_READ_STORAGE: 'alfresco', ALFRESCO_HIERARCHY_STORAGE: 'alfresco',
+    ALFRESCO_HIERARCHY_SERVICE_USERNAME: 'hierarchy-fixture', ALFRESCO_HIERARCHY_SERVICE_PASSWORD: 'fixture-only',
+    ALFRESCO_HIERARCHY_CONTAINER_NODE_ID: hierarchyContainer, ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID: auditContainer,
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DSA: 'GROUP_DSA', DTI: 'GROUP_DTI' },
       functions: { direccion: 'GROUP_DIRECTORS', 'jefe-unidad': 'GROUP_HEADS', especialista: 'GROUP_STAFF' } }),
     ALFRESCO_OFFICE_INBOX_NODE_IDS_JSON: JSON.stringify({ DSA: { porAtender: 'dsa-folder' }, DTI: { emitidos: 'dti-folder' } }),
@@ -30,17 +38,7 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     DISPATCH_PILOT_LEASE_PATH: path.join(directory, 'pilot.lock'), DISPATCH_STORE_PATH: localPath,
   })
   const originalFetch = globalThis.fetch
-  const { server } = await import('./index.js')
-  const { config } = await import('./config.js')
-  const { createSession } = await import('./sessionStore.js')
-  if (!server.listening) await once(server, 'listening')
-  const base = `http://127.0.0.1:${server.address().port}`
-  t.after(async () => {
-    globalThis.fetch = originalFetch
-    server.closeAllConnections()
-    await new Promise((resolve) => server.close(resolve))
-    fs.rmSync(directory, { recursive: true, force: true })
-  })
+  let base = ''
   const actors = new Map()
   const session = (id, role, dependency = 'DSA') => {
     actors.set(`Basic ${id}`, { id, functionalRole: role, dependency })
@@ -49,11 +47,33 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     const signature = crypto.createHmac('sha256', config.sessionSecret).update(value.id).digest('base64url')
     return { Cookie: `gd_session=${value.id}.${signature}`, 'X-CSRF-Token': value.csrfToken, 'Content-Type': 'application/json' }
   }
-  const director = session('DSA_T', 'direccion')
-  const director2 = session('director-2', 'direccion')
-  const directorDti = session('DTI_T', 'direccion', 'DTI')
-  const head = session('head', 'jefe-unidad')
-  const staff = session('staff', 'especialista')
+  const makeUnit = (id, name, dependency, status = 'ACTIVA') => ({
+    id, name, parentId: hierarchyContainer, nodeType: 'gdo:unidad', properties: {
+      'gdo:nombreUnidad': name, 'gdo:codigoDependencia': dependency, 'gdo:estadoUnidad': status,
+    },
+  })
+  const units = [
+    makeUnit(unitId, 'Unidad DSA de prueba', 'DSA'), makeUnit(otherUnitId, 'Segunda unidad', 'DSA'),
+    makeUnit(inactiveUnitId, 'Unidad inactiva', 'DSA', 'INACTIVA'), makeUnit(foreignUnitId, 'Unidad DTI', 'DTI'),
+  ]
+  const assignment = (id, unit, user, role) => ({
+    id, name: id, parentId: unit, nodeType: 'gdo:asignacion', properties: {
+      'gdo:idUsuario': user, 'gdo:idUnidad': unit, 'gdo:dependenciaAsignacion': 'DSA',
+      'gdo:rolAsignacion': role, 'gdo:estadoAsignacion': 'ACTIVA', 'gdo:asignadoPor': 'fixture-director',
+    },
+  })
+  const unitAssignments = [
+    assignment('head-assignment', unitId, 'head', 'jefe-unidad'),
+    assignment('staff-assignment', unitId, 'staff', 'especialista'),
+    assignment('staff-peer-assignment', unitId, 'staff-peer', 'especialista'),
+    assignment('other-head-assignment', otherUnitId, 'head-2', 'jefe-unidad'),
+  ]
+  const disabledPeople = new Set()
+  const hierarchyAuthorization = 'Basic ' + Buffer.from('hierarchy-fixture-ticket').toString('base64')
+  const list = (entries) => Response.json({ list: {
+    entries: entries.map((entry) => ({ entry })), pagination: { hasMoreItems: false },
+  } })
+  let auditReadsBeforeChange = 0
   const node = { id: documentId, nodeType: 'cm:content', isFile: true, content: { mimeType: 'application/pdf' }, parentId: 'dti-folder',
     aspectNames: ['cm:versionable'], allowableOperations: ['update'], properties: { 'gd:estado': 'preserve' } }
   const secondNode = { ...structuredClone(node), id: secondId }
@@ -74,16 +94,41 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     if (identity) return identity
     const p = parsed.pathname
     const method = options.method || 'GET'
+    if (p.endsWith('/authentication/versions/1/tickets') && method === 'POST') {
+      return Response.json({ entry: { id: 'hierarchy-fixture-ticket' } }, { status: 201 })
+    }
     if (method === 'GET') reads.push(p)
     assert.ok(['GET', 'PUT'].includes(method))
-    if (p.endsWith('/people/-me-')) return Response.json({ entry: { id: 'gd_distribucion', enabled: true, capabilities: { isAdmin: false } } })
+    if (p.endsWith('/people/-me-')) return Response.json({ entry: {
+      id: options.headers.Authorization === hierarchyAuthorization ? 'hierarchy-fixture' : 'gd_distribucion',
+      enabled: true, capabilities: { isAdmin: false },
+    } })
+    if (options.headers.Authorization === hierarchyAuthorization && p.includes('/nodes/')) {
+      assert.equal(method, 'GET', 'the hierarchy reader cannot write units or audit events')
+      const id = p.split('/').at(-1)
+      if (id === hierarchyContainer || id === auditContainer) return Response.json({ entry: {
+        id, name: id === hierarchyContainer ? 'GD_JERARQUIAS' : 'GD_JERARQUIAS_AUDITORIA', nodeType: 'cm:folder', isFolder: true,
+      } })
+      const parentId = p.split('/').at(-2)
+      assert.equal(id, 'children')
+      if (parentId === hierarchyContainer) return list(units)
+      if (parentId === auditContainer) {
+        if (auditReadsBeforeChange > 0 && --auditReadsBeforeChange === 0) units[0].properties['gdo:codigoUnidad'] = 'CAMBIO'
+        return list([])
+      }
+      assert.ok(units.some((unit) => unit.id === parentId))
+      return list(unitAssignments.filter((item) => item.parentId === parentId))
+    }
     if (p.includes('/service/api/groups/')) {
       const group = p.split('/').at(-2)
-      const members = { DSA: ['DSA_T', 'director-2', 'head', 'head-2', 'staff'], DTI: ['DTI_T', 'staff-dti'],
-        DIRECTORS: ['DSA_T', 'director-2', 'DTI_T'], HEADS: ['head', 'head-2'], STAFF: ['staff', 'staff-dti'] }[group]
+      const members = { DSA: ['DSA_T', 'director-2', 'head', 'head-2', 'staff', 'staff-peer', 'unassigned'], DTI: ['DTI_T', 'staff-dti'],
+        DIRECTORS: ['DSA_T', 'director-2', 'DTI_T'], HEADS: ['head', 'head-2'], STAFF: ['staff', 'staff-peer', 'unassigned', 'staff-dti'] }[group]
       return Response.json({ data: members.map((shortName) => ({ shortName, authorityType: 'USER' })), paging: { skipCount: 0, totalItems: members.length } })
     }
-    if (p.includes('/people/')) return Response.json({ entry: { id: p.split('/').at(-1), enabled: true } })
+    if (p.includes('/people/')) {
+      const id = p.split('/').at(-1)
+      return Response.json({ entry: { id, enabled: !disabledPeople.has(id) } })
+    }
     if (p.endsWith('/classes/gd_tramite')) return Response.json({ properties: modelReady ? {
       'gd:asignaciones': { dataType: 'd:text', multiValued: false, indexed: false },
       'gd:responsablesActuales': { dataType: 'd:text', multiValued: true },
@@ -112,8 +157,62 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
     if (p.endsWith('/content')) return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
     return Response.json({ entry: nodes.get(id) || { ...node, id, parentId: 'foreign', properties: {}, aspectNames: [] } })
   }
-  const post = (headers, body) => fetch(`${base}/api/documents/dispatch`, { method: 'POST', headers, body: JSON.stringify(body) })
-  const payload = { documentId, recipientUserIds: ['head', 'head-2'], instruction: 'Atender', priority: 'Normal', requestKey: 'first', originAssignmentId: null }
+  const { config } = await import('./config.js')
+  const { createSession } = await import('./sessionStore.js')
+  const { server } = await import('./index.js')
+  if (!server.listening) await once(server, 'listening')
+  base = `http://127.0.0.1:${server.address().port}`
+  t.after(async () => {
+    globalThis.fetch = originalFetch
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+  const director = session('DSA_T', 'direccion')
+  const director2 = session('director-2', 'direccion')
+  const directorDti = session('DTI_T', 'direccion', 'DTI')
+  const head = session('head', 'jefe-unidad')
+  const staff = session('staff', 'especialista')
+  const peer = session('staff-peer', 'especialista')
+  const unassigned = session('unassigned', 'especialista')
+  const post = (headers, body) => fetch(base + '/api/documents/dispatch', { method: 'POST', headers, body: JSON.stringify(body) })
+  const directoryResponse = await fetch(base + '/api/directory/dispatch-recipients', { headers: director })
+  assert.equal(directoryResponse.status, 200, await directoryResponse.clone().text())
+  const destinations = await directoryResponse.json()
+  assert.equal(destinations.requiresUnit, true)
+  assert.deepEqual(destinations.units.map((unit) => unit.id), [unitId, otherUnitId])
+  assert.equal(destinations.units[0].head.id, 'head')
+  assert.deepEqual(destinations.units[0].specialists.map((person) => person.id), ['staff', 'staff-peer'])
+  assert.ok(!destinations.recipients.some((person) => person.id === 'unassigned'))
+  const legacyPayload = { documentId, recipientUserIds: ['head', 'staff-peer'], instruction: 'Atender', priority: 'Normal', requestKey: 'first', originAssignmentId: null }
+  const payload = { ...legacyPayload, unitId, hierarchyRevision: destinations.hierarchyRevision }
+  const expectError = async (headers, input, status, code) => {
+    const rejected = await post(headers, input)
+    assert.equal(rejected.status, status, code)
+    assert.equal((await rejected.json()).error, code)
+  }
+  await expectError(director, legacyPayload, 400, 'DISPATCH_UNIT_REQUIRED')
+  await expectError(director, { ...payload, unitId: 'una-unidad-por-nombre' }, 400, 'DISPATCH_UNIT_REQUIRED')
+  await expectError(director, { ...payload, hierarchyRevision: undefined }, 400, 'DISPATCH_HIERARCHY_REVISION_REQUIRED')
+  await expectError(director, { ...payload, unitId: foreignUnitId, dependency: 'DTI' }, 403, 'DISPATCH_UNIT_NOT_ALLOWED')
+  await expectError(director, { ...payload, unitId: inactiveUnitId }, 403, 'DISPATCH_UNIT_NOT_ALLOWED')
+  await expectError(director, { ...payload, recipientUserIds: ['head', 'head-2'] }, 403, 'DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED')
+  await expectError(director, { ...payload, hierarchyRevision: 'f'.repeat(64) }, 409, 'DISPATCH_HIERARCHY_REVISION_CONFLICT')
+  await expectError({ ...director, 'X-CSRF-Token': 'wrong' }, payload, 403, 'CSRF_VALIDATION_FAILED')
+  disabledPeople.add('staff-peer')
+  await expectError(director, payload, 409, 'DISPATCH_HIERARCHY_DATA_INVALID')
+  disabledPeople.clear()
+  unitAssignments.push(assignment('ambiguous-head-assignment', unitId, 'head-2', 'jefe-unidad'))
+  await expectError(director, payload, 409, 'DISPATCH_HIERARCHY_DATA_INVALID')
+  unitAssignments.pop()
+  auditReadsBeforeChange = 3 // Start of the second directory read, after initial destination validation.
+  await expectError(director, payload, 409, 'DISPATCH_HIERARCHY_REVISION_CONFLICT')
+  assert.equal(auditReadsBeforeChange, 0)
+  delete units[0].properties['gdo:codigoUnidad']
+  config.dispatchPilot.writesEnabled = false
+  await expectError(director, payload, 503, 'DISPATCH_ALFRESCO_WRITES_DISABLED')
+  config.dispatchPilot.writesEnabled = true
+  assert.equal(puts.length, 0, 'invalid or stale destinations do not mutate the PDF')
   modelReady = false
   assert.equal((await post(director, payload)).status, 503)
   modelReady = true
@@ -127,8 +226,23 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   assert.equal(firstResponse.status, 201)
   const parent = (await firstResponse.json()).dispatch
   assert.equal(parent.recipients.length, 2)
+  assert.equal(parent.unitId, unitId)
+  assert.ok(parent.recipients.every((person) => person.unitId === unitId && person.unit.name === 'Unidad DSA de prueba'))
+  assert.equal((await (await post(director, { ...payload, recipientUserIds: [...payload.recipientUserIds].reverse() })).json()).dispatch.id, parent.id)
   assert.equal((await post(director, payload)).status, 200)
+  await expectError(director, { ...payload, unitId: otherUnitId }, 409, 'DISPATCH_REQUEST_CONFLICT')
+  await expectError(director, { ...payload, recipientUserIds: ['head'] }, 409, 'DISPATCH_REQUEST_CONFLICT')
   assert.equal(puts.length, 1)
+  const peerInbox = await fetch(base + '/api/documents/dispatches?include=documents', { headers: peer })
+  assert.equal(peerInbox.status, 200)
+  const peerAssignments = await peerInbox.json()
+  assert.equal(peerAssignments.documents[0].id, documentId)
+  assert.equal(peerAssignments.dispatches[0].recipients.find((person) => person.userId === 'staff-peer').unitId, unitId)
+  const originalUrl = base + '/api/alfresco/api/-default-/public/alfresco/versions/1/nodes/' + documentId + '/content'
+  assert.equal((await fetch(originalUrl, { headers: peer })).status, 200)
+  assert.equal((await fetch(originalUrl, { headers: unassigned })).status, 403)
+  const directorDispatches = await (await fetch(base + '/api/documents/dispatches', { headers: director })).json()
+  assert.equal(directorDispatches.dispatches.find((record) => record.id === parent.id).unitId, unitId)
   const secondResponse = await post(director, { ...payload, documentId: secondId, requestKey: 'second-pdf', recipientUserIds: ['head'] })
   assert.equal(secondResponse.status, 201, 'second PDF is authorized by folders without a UUID registration')
   assert.equal((await secondResponse.json()).persistence, 'alfresco')
@@ -137,24 +251,23 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   assert.equal(additionalResponse.status, 201, 'any authorized institutional PDF is in scope without a separate test-folder association')
   assert.equal(JSON.parse(additionalNode.properties['gd:asignaciones']).documentId, additionalId)
   assert.equal((await post(director, { ...payload, documentId: foreignId, requestKey: 'foreign', dependency: 'DSA', folderId: 'dsa-folder' })).status, 403)
-  assert.equal((await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'hierarchy-unconfigured' })).status, 503)
-  config.organizationalHierarchyProvider = {
-    async resolveSpecialists() {
-      return { verified: true, members: [{ userId: 'staff', groupIds: ['GROUP_fixture_supervision'] }] }
-    },
-  }
-  t.after(() => { delete config.organizationalHierarchyProvider })
-  assert.equal((await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'no-origin' })).status, 403)
-  assert.equal((await post(staff, { ...payload, recipientUserIds: ['head'] })).status, 403)
-  const derived = await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'child', originAssignmentId: parent.recipients[0].id })
+  const provider = config.organizationalHierarchyProvider
+  delete config.organizationalHierarchyProvider
+  await expectError(director, { ...payload, requestKey: 'directory-unconfigured' }, 503, 'DISPATCH_HIERARCHY_UNAVAILABLE')
+  assert.equal((await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'hierarchy-unconfigured', originAssignmentId: parent.recipients[0].id })).status, 503)
+  config.organizationalHierarchyProvider = provider
+  assert.equal((await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'no-origin' })).status, 403)
+  assert.equal((await post(staff, { ...legacyPayload, recipientUserIds: ['head'] })).status, 403)
+  const derived = await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'child', originAssignmentId: parent.recipients[0].id })
   assert.equal(derived.status, 201)
   const concurrent = await Promise.all([
     post(director, { ...payload, requestKey: 'parallel-a' }), post(director2, { ...payload, requestKey: 'parallel-b' }),
   ])
   assert.deepEqual(concurrent.map((response) => response.status), [201, 201])
-  assert.equal((await post(directorDti, { ...payload, recipientUserIds: ['staff-dti'], requestKey: 'dti' })).status, 201)
+  assert.equal((await post(directorDti, { ...legacyPayload, recipientUserIds: ['staff-dti'], requestKey: 'dti' })).status, 201)
   const envelope = JSON.parse(node.properties['gd:asignaciones'])
   assert.equal(envelope.dispatches.length, 5)
+  assert.equal(envelope.dispatches.find((record) => record.requestKey === 'dti').unitId, undefined)
   assert.equal(envelope.dispatches[0].recipients[0].status, 'ASIGNADO')
   assert.ok(envelope.dispatches.every((record) => record.documentId === documentId))
   assert.equal(node.properties['gd:estado'], 'preserve')
@@ -173,7 +286,7 @@ test('HTTP Alfresco pilot authorizes secondary membership, persists all readers,
   assert.equal(content.status, 200)
   const completedPuts = puts.length
   originalInInstitutionalScope = false
-  const removedOrigin = await post(head, { ...payload, recipientUserIds: ['staff'], requestKey: 'removed-from-institutional-scope', originAssignmentId: parent.recipients[0].id })
+  const removedOrigin = await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'removed-from-institutional-scope', originAssignmentId: parent.recipients[0].id })
   assert.equal(removedOrigin.status, 403, 'an assigned Jefatura still needs verified institutional membership')
   assert.equal((await post(director, payload)).status, 403, 'retry must revalidate scope too')
   assert.equal(puts.length, completedPuts)

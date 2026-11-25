@@ -16,10 +16,13 @@ assert.ok(fs.existsSync(path.join(dist, 'index.html')), 'Run npm run build first
 fs.mkdirSync(artifacts, { recursive: true })
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-browser-'))
 const id = '11111111-2222-4333-8444-2a29efcb482b'
+const firstUnit = { id: '20000000-0000-4000-8000-000000000001', name: 'Unidad de origen', code: 'DSA-01', dependency: 'dsa' }
+const targetUnit = { id: '20000000-0000-4000-8000-000000000002', name: 'Unidad de destino verificada', code: 'DSA-02', dependency: 'dsa' }
+const hierarchyRevision = 'a'.repeat(64)
 const people = [
-  { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
-  { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
-  { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: null },
+  { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: firstUnit },
+  { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: targetUnit },
+  { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: targetUnit },
 ]
 const node = { id, name: 'oficio-prueba.pdf', isFile: true, nodeType: 'cm:content', parentId: 'dsa-attention',
   content: { mimeType: 'application/pdf', sizeInBytes: 500 }, aspectNames: ['gd:tramite'],
@@ -122,7 +125,16 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === '/api/documents/assignments/response' && request.method === 'POST') return json({ persistence: 'alfresco', documentId: id, response: { documentId: 'official-response' } })
     if (url.pathname === '/api/directory/office-inboxes') return json({ folders: { porAtender: 'dsa-attention', porConocimiento: 'dsa-knowledge' } })
-    if (url.pathname === '/api/directory/dispatch-recipients') { counters.directory++; return json({ recipients: people, allowedRecipientRoles: session.dispatchRecipientRoles }) }
+    if (url.pathname === '/api/directory/dispatch-recipients') {
+      counters.directory++
+      const requiresUnit = session.functionalRole === 'direccion' && session.dependency === 'DSA'
+      return json({ recipients: people, allowedRecipientRoles: session.dispatchRecipientRoles,
+        ...(requiresUnit ? { requiresUnit, hierarchyRevision, units: [
+          { ...firstUnit, head: people[0], specialists: [] },
+          { ...targetUnit, head: people[1], specialists: [people[2]] },
+        ] } : {}),
+      })
+    }
     if (url.pathname === '/api/documents/dispatches') {
       counters.assignments++
       return json({ persistence: 'alfresco', dispatches: session.functionalRole === 'direccion' ? records : records.filter((record) => record.recipients.some((assignment) => assignment.userId === session.alfresco.id)),
@@ -156,6 +168,12 @@ const server = http.createServer(async (request, response) => {
       for await (const chunk of request) body += chunk
       const input = JSON.parse(body)
       const created = record(input.requestKey, people.filter((person) => input.recipientUserIds.includes(person.id)))
+      assert.equal(input.documentId, id)
+      assert.equal(input.unitId, targetUnit.id)
+      assert.equal(input.hierarchyRevision, hierarchyRevision)
+      assert.deepEqual(input.recipientUserIds, [people[1].id, people[2].id])
+      created.unitId = input.unitId
+      for (const recipient of created.recipients) recipient.unitId = input.unitId
       records.push(created)
       counters.mockDispatches++
       return json({ persistence: 'alfresco', dispatch: created }, 201)
@@ -201,8 +219,9 @@ async function evaluate(expression) {
   return response.result?.value
 }
 const clickText = (text) => evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===${JSON.stringify(text)}); if(!b)throw Error('button missing');b.click();return true})()`)
-const labels = () => evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');return s?[...s.options].map(o=>({value:o.value,text:o.textContent})):null})()`)
-async function waitAssigned(count) { return until(async () => { const values = await labels(); return values?.filter((option) => option.text.includes('Ya asignado')).length === count }, `${count} assigned options`) }
+async function waitAssigned(count) {
+  return until(async () => (await evaluate("document.querySelectorAll('.document-assignment-markers [data-user-id]').length")) === count, `${count} assigned recipients`)
+}
 async function waitIdle() { return until(() => evaluate("Boolean(document.querySelector('.received-inbox__refresh button')) && !document.querySelector('.received-inbox__refresh button').disabled"), 'inbox refresh settled') }
 try {
   const activePort = path.join(profile, 'DevToolsActivePort')
@@ -257,10 +276,15 @@ try {
   await until(() => evaluate("!document.querySelector('.received-inbox__refresh button')?.disabled"), 'refresh complete')
   assert.equal(counters.assignments - before, 1, 'one assignment query per manual refresh')
   const beforeSelection = counters.assignments
-  await evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');s.value='dispatch:JEFE_UNIDAD_DSA_2';s.dispatchEvent(new Event('change',{bubbles:true}));})()`)
+  await until(() => evaluate("Boolean(document.querySelector('option[value=\"dispatch-unit\"]'))"), 'verified organizational destinations')
+  await evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');s.value='dispatch-unit';s.dispatchEvent(new Event('change',{bubbles:true}));})()`)
   await until(() => evaluate("Boolean(document.querySelector('.dispatch-panel textarea'))"), 'dispatch confirmation form')
   assert.equal(counters.assignments, beforeSelection, 'opening the PDF does not scan assignments again')
-  await evaluate(`(()=>{[...document.querySelectorAll('.dispatch-panel__recipient')].find(x=>x.textContent.includes('Especialista DSA')).querySelector('input').click(); const t=document.querySelector('.dispatch-panel textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'Prueba de integración local');t.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+  assert.equal(await evaluate("document.querySelectorAll('.dispatch-panel__recipient').length"), 0)
+  await evaluate("(() => { const s = document.querySelector('.dispatch-panel select'); s.selectedIndex = 2; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+  const candidates = await evaluate("[...document.querySelectorAll('.dispatch-panel__recipient strong')].map(x => x.textContent)")
+  assert.deepEqual(candidates, [people[1].displayName, people[2].displayName])
+  await evaluate(`(()=>{for(const label of document.querySelectorAll('.dispatch-panel__recipient')) label.querySelector('input').click(); const t=document.querySelector('.dispatch-panel textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'Prueba de integración local');t.dispatchEvent(new Event('input',{bubbles:true}));})()`)
   await clickText('Confirmar derivación')
   await waitAssigned(3)
   assert.equal(counters.mockDispatches, 1)
@@ -270,6 +294,11 @@ try {
   assert.equal(new Set(visual.segments.map((segment) => segment.color)).size, 3)
   assert.ok(visual.background.includes('gradient'))
   assert.ok(Math.max(...visual.segments.map((segment) => segment.height)) - Math.min(...visual.segments.map((segment) => segment.height)) < 1)
+  await clickText('Seguimiento')
+  await until(() => evaluate("document.body.textContent.includes('Unidad de destino verificada')"), 'persisted unit visible in documentary tracking')
+  assert.ok(await evaluate("document.body.textContent.includes('Unidad no registrada')"))
+  await evaluate("document.querySelector('.document-table .document-link').click()")
+  await until(() => evaluate("document.body.textContent.includes('Encargos activos') && document.body.textContent.includes('Historial de encargos')"), 'tracking detail separates active and historical assignments')
   await clickText('Inicio')
   await clickText('Documentos recibidos')
   await waitAssigned(3)

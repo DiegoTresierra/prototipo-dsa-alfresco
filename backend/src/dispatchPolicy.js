@@ -1,4 +1,10 @@
 const allowedPriorities = new Set(['Normal', 'Alta', 'Urgente'])
+const unitIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const hierarchyRevisionPattern = /^[0-9a-f]{64}$/
+const fail = (code, status) => Object.assign(new Error(code), { status })
+
+export const isDispatchUnitId = (id) => typeof id === 'string' && unitIdPattern.test(id)
+export const isDispatchHierarchyRevision = (revision) => typeof revision === 'string' && hierarchyRevisionPattern.test(revision)
 
 export const dispatchRecipientRoles = {
   direccion: ['jefe-unidad', 'especialista'],
@@ -22,12 +28,18 @@ export function canDispatch(session) {
   return allowedRecipientRoles(session).length > 0
 }
 
-export function validateDispatchRequest(input = {}, session, recipients = []) {
+export function requiresDispatchUnit(session, persistence) {
+  return persistence === 'alfresco' && session?.functionalRole === 'direccion' &&
+    String(session.dependency).toLowerCase() === 'dsa'
+}
+
+export function parseDispatchRequest(input = {}, session, { requireUnit = false } = {}) {
   if (!canDispatch(session)) {
     const error = new Error('HIERARCHICAL_DISPATCH_REQUIRED')
     error.status = 403
     throw error
   }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('INVALID_DISPATCH_REQUEST', 400)
 
   const documentId = String(input.documentId || '').trim()
   const instruction = String(input.instruction || '').trim()
@@ -57,28 +69,49 @@ export function validateDispatchRequest(input = {}, session, recipients = []) {
       (session.functionalRole === 'direccion' && originAssignmentId)) {
     throw Object.assign(new Error('INVALID_DISPATCH_ORIGIN'), { status: 400 })
   }
-  const roles = allowedRecipientRoles(session)
-  const allowedRecipients = new Map(recipients
-    .filter((recipient) => roles.includes(recipient.functionalRole) &&
-      recipient.dependency === senderDependency)
-    .map((recipient) => [recipient.id, recipient]))
-  const selectedRecipients = recipientUserIds.map((userId) => allowedRecipients.get(userId))
-  if (selectedRecipients.some((recipient) => !recipient)) {
-    const error = new Error('DISPATCH_RECIPIENT_NOT_ALLOWED')
-    error.status = 403
-    throw error
+  const unitId = typeof input.unitId === 'string' ? input.unitId.trim().toLowerCase() : ''
+  if (requireUnit) {
+    if (!isDispatchUnitId(unitId)) throw fail('DISPATCH_UNIT_REQUIRED', 400)
+    if (!isDispatchHierarchyRevision(input.hierarchyRevision)) throw fail('DISPATCH_HIERARCHY_REVISION_REQUIRED', 400)
+  } else if (Object.hasOwn(input, 'unitId') || Object.hasOwn(input, 'hierarchyRevision')) {
+    throw fail('DISPATCH_UNIT_NOT_APPLICABLE', 400)
   }
 
   return {
-    documentId,
-    instruction,
-    priority,
-    requestKey,
-    senderDependency,
-    senderRole: session.functionalRole,
-    originAssignmentId,
-    recipients: selectedRecipients,
+    documentId, instruction, priority, requestKey, senderDependency, senderRole: session.functionalRole,
+    originAssignmentId, recipientUserIds,
+    ...(requireUnit ? { unitId, hierarchyRevision: input.hierarchyRevision } : {}),
   }
+}
+
+export function selectDispatchRecipients(input, recipients) {
+  const roles = dispatchRecipientRoles[input.senderRole] || []
+  const allowedRecipients = new Map(recipients
+    .filter((recipient) => roles.includes(recipient.functionalRole) &&
+      recipient.dependency === input.senderDependency)
+    .map((recipient) => [recipient.id, recipient]))
+  const selectedRecipients = input.recipientUserIds.map((userId) => allowedRecipients.get(userId))
+  if (selectedRecipients.some((recipient) => !recipient)) {
+    throw fail(input.unitId ? 'DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED' : 'DISPATCH_RECIPIENT_NOT_ALLOWED', 403)
+  }
+  return selectedRecipients
+}
+
+export function validateDispatchRequest(input, session, recipients = []) {
+  const parsed = parseDispatchRequest(input, session)
+  return { ...parsed, recipients: selectDispatchRecipients(parsed, recipients) }
+}
+
+export function dispatchRequestMatches(record, input) {
+  if (record.documentId !== input.documentId || record.instruction !== input.instruction ||
+      record.priority !== input.priority || record.senderRole !== input.senderRole ||
+      record.senderDependency !== input.senderDependency ||
+      (record.originAssignmentId || null) !== (input.originAssignmentId || null) ||
+      (record.unitId || null) !== (input.unitId || null)) return false
+  // A verified replay compares the stored destination, even if the live hierarchy has since changed.
+  const recorded = record.recipients.map((r) => input.recipients ? [r.userId, r.functionalRole] : r.userId)
+  const requested = input.recipients ? input.recipients.map((r) => [r.id, r.functionalRole]) : [...input.recipientUserIds]
+  return JSON.stringify(recorded.sort()) === JSON.stringify(requested.sort())
 }
 
 export function dispatchIdentity(session, requestKey) {

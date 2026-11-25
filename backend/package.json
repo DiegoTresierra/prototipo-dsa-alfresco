@@ -8,6 +8,7 @@
     "dev": "node --watch-path=src src/index.js",
     "start": "node src/index.js",
     "hierarchy:check": "node scripts/check-hierarchy-service.mjs",
+    "hierarchy:pilot:check": "node scripts/check-hierarchy-pilot.mjs",
     "hierarchy:migration:plan": "node scripts/plan-hierarchy-migration.mjs",
     "hierarchy:lab": "node scripts/lab-hierarchy-persistence.mjs",
     "hierarchy:audit:lab": "node scripts/lab-hierarchy-audit.mjs",

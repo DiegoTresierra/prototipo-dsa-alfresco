@@ -5,7 +5,7 @@ import { verifyPilotDocumentScope, verifyAttentionDocumentScope, belongsToFolder
 import { mapConcurrent } from './mapConcurrent.js'
 import { assignmentIsActive, canAttendSession, canLinkResponse, ownsAssignment, attentionSummary } from './attentionPolicy.js'
 import { documentIdentity } from './documentIdentity.js'
-import { allowedRecipientRoles } from './dispatchPolicy.js'
+import { allowedRecipientRoles, dispatchRequestMatches, isDispatchUnitId } from './dispatchPolicy.js'
 import { validateReviewProcesses, assertReviewResponseLink, reviewHash } from './responseReview.js'
 import { decodeEmissionMetadata } from './officialEmissionContract.js'
 import { listInstitutionalEmitted } from './emittedDocuments.js'
@@ -24,6 +24,8 @@ const fail = (code, status = 503) => { throw Object.assign(new Error(code), { st
 const text = (value) => typeof value === 'string' && value.trim().length > 0
 const date = (value) => text(value) && Number.isFinite(Date.parse(value))
 const dependencies = ['dsa', 'dti']
+const unitSnapshotMatches = (unit, unitId, dependency) =>
+  unit?.id === unitId && unit.dependency === dependency && text(unit.name)
 const sameProjection = (actual, expected) => actual === undefined && expected.length === 0 ||
   Array.isArray(actual) && JSON.stringify([...actual].sort()) === JSON.stringify(expected)
 
@@ -46,6 +48,9 @@ export function parseAssignments(raw, documentId) {
         !['Normal', 'Alta', 'Urgente'].includes(record.priority) || !date(record.createdAt) || record.status !== 'ASIGNADO' ||
         !Array.isArray(record.recipients) || !record.recipients.length ||
         (record.senderRole === 'direccion' ? record.originAssignmentId !== null : !text(record.originAssignmentId))) fail('DISPATCH_INVALID_ASSIGNMENTS')
+    if (record.unitId !== undefined && (!isDispatchUnitId(record.unitId) || record.senderRole !== 'direccion')) {
+      fail('DISPATCH_INVALID_ASSIGNMENTS')
+    }
     ids.add(record.id)
     keys.add(key)
     const users = new Set()
@@ -59,6 +64,10 @@ export function parseAssignments(raw, documentId) {
           recipient.senderUserId !== record.senderUserId || recipient.senderRole !== record.senderRole ||
           recipient.senderDependency !== record.senderDependency || recipient.originAssignmentId !== record.originAssignmentId ||
           recipient.instruction !== record.instruction) fail('DISPATCH_INVALID_ASSIGNMENTS')
+      if (recipient.unitId !== record.unitId ||
+          record.unitId && !unitSnapshotMatches(recipient.unit, record.unitId, record.senderDependency)) {
+        fail('DISPATCH_INVALID_ASSIGNMENTS')
+      }
       users.add(recipient.userId)
       assignments.set(recipient.id, recipient)
       if (recipient.responses !== undefined && !Array.isArray(recipient.responses)) fail('DISPATCH_INVALID_ASSIGNMENTS')
@@ -127,14 +136,6 @@ export function projections(envelope) {
   }
 }
 
-function matches(record, input) {
-  return record.documentId === input.documentId && record.instruction === input.instruction && record.priority === input.priority &&
-    record.senderRole === input.senderRole && record.senderDependency === input.senderDependency &&
-    record.originAssignmentId === (input.originAssignmentId || null) &&
-    JSON.stringify(record.recipients.map((recipient) => [recipient.userId, recipient.functionalRole]).sort()) ===
-      JSON.stringify(input.recipients.map((recipient) => [recipient.id, recipient.functionalRole]).sort())
-}
-
 export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args) => globalThis.fetch(...args)) {
   const withDocument = createDocumentQueue()
   const pilot = () => settings.dispatchPilot || {}
@@ -189,13 +190,15 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
   function assertWriteEnabled() {
     if (!pilot().writesEnabled) fail('DISPATCH_ALFRESCO_WRITES_DISABLED')
   }
-  async function createDispatch(input, session) {
+  async function createDispatch(input, session, { resolveDestination } = {}) {
     // Caller holds withDocument throughout business authorization and this R/M/W/verify.
     assertWriteEnabled()
     await assertModel()
     if (!session?.authorization || input.senderUserId !== (session.alfresco?.id || session.user?.id)) fail('SESSION_IDENTITY_REQUIRED', 403)
-    if (input.senderRole !== session.functionalRole || input.senderDependency !== String(session.dependency).toLowerCase() ||
-        input.recipients.some((recipient) => !allowedRecipientRoles(session).includes(recipient.functionalRole) || recipient.dependency !== input.senderDependency)) fail('DISPATCH_RECIPIENT_NOT_ALLOWED', 403)
+    if (input.senderRole !== session.functionalRole || input.senderDependency !== String(session.dependency).toLowerCase()) fail('DISPATCH_RECIPIENT_NOT_ALLOWED', 403)
+    if (input.unitId !== undefined && (!isDispatchUnitId(input.unitId) || input.senderRole !== 'direccion' || typeof resolveDestination !== 'function')) {
+      fail('DISPATCH_UNIT_NOT_ALLOWED', 403)
+    }
     const actor = await read(input.documentId, session.authorization) // Actor ACL cannot be bypassed by the writer.
     await verifyPilotDocumentScope(settings, session, actor.node, request)
     const { node, envelope, raw } = await read(input.documentId)
@@ -203,7 +206,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     if (!node.allowableOperations?.includes('update')) fail('DISPATCH_NODE_UPDATE_DENIED', 403)
     const existing = envelope.dispatches.find((record) => record.senderUserId === input.senderUserId && record.requestKey === input.requestKey)
     if (existing) {
-      if (!matches(existing, input)) fail('DISPATCH_REQUEST_CONFLICT', 409)
+      if (!dispatchRequestMatches(existing, input)) fail('DISPATCH_REQUEST_CONFLICT', 409)
       return existing
     }
     if (input.senderRole === 'jefe-unidad') {
@@ -212,16 +215,32 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
         recipient.dependency === input.senderDependency && recipient.functionalRole === 'jefe-unidad' && active(recipient))
       if (!origin) fail('DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED', 403)
     }
+    const getRecipients = async () => {
+      const recipients = input.unitId ? await resolveDestination() : input.recipients
+      if (!Array.isArray(recipients) || !recipients.length || recipients.some((recipient) =>
+        !allowedRecipientRoles(session).includes(recipient.functionalRole) || recipient.dependency !== input.senderDependency)) {
+        fail('DISPATCH_RECIPIENT_NOT_ALLOWED', 403)
+      }
+      if (input.unitId && (!Array.isArray(input.recipientUserIds) ||
+          JSON.stringify(recipients.map((person) => person.id).sort()) !== JSON.stringify([...input.recipientUserIds].sort()) ||
+          recipients.some((person) => !unitSnapshotMatches(person.unit, input.unitId, input.senderDependency)))) {
+        fail('DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED', 403)
+      }
+      return recipients
+    }
+    const recipients = await getRecipients()
     const id = randomUUID()
     const at = new Date().toISOString()
     const record = {
       id, requestKey: input.requestKey, documentId: input.documentId, senderUserId: input.senderUserId,
       senderDependency: input.senderDependency, senderRole: input.senderRole, originAssignmentId: input.originAssignmentId || null,
       instruction: input.instruction, priority: input.priority, createdAt: at, status: 'ASIGNADO', assignmentCompletedAt: at,
-      recipients: input.recipients.map((recipient) => ({
+      ...(input.unitId ? { unitId: input.unitId } : {}),
+      recipients: recipients.map((recipient) => ({
         id: randomUUID(), dispatchId: id, documentId: input.documentId, userId: recipient.id,
         displayName: recipient.displayName || recipient.id, functionalRole: recipient.functionalRole, dependency: recipient.dependency,
         unit: recipient.unit || null, status: 'ASIGNADO', createdAt: at, assignedAt: at,
+        ...(input.unitId ? { unitId: input.unitId } : {}),
         senderUserId: input.senderUserId, senderRole: input.senderRole, senderDependency: input.senderDependency,
         instruction: input.instruction, originAssignmentId: input.originAssignmentId || null,
       })),
@@ -229,13 +248,19 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     const next = { ...envelope, revision: envelope.revision + 1, dispatches: [...envelope.dispatches, record],
       history: [...envelope.history, { id: randomUUID(), action: 'DISPATCH_CREATED', at, actorUserId: input.senderUserId,
         dispatchId: id, assignmentIds: record.recipients.map((recipient) => recipient.id) }] }
-    await persistEnvelope(input.documentId, next, raw)
+    const destinationSnapshot = (people) => people.map(({ id, functionalRole, unit }) => [id, functionalRole, unit.id, unit.name, unit.code])
+    await persistEnvelope(input.documentId, next, raw, input.unitId ? async () => {
+      if (JSON.stringify(destinationSnapshot(await getRecipients())) !== JSON.stringify(destinationSnapshot(recipients))) {
+        fail('DISPATCH_HIERARCHY_REVISION_CONFLICT', 409)
+      }
+    } : undefined)
     return record
   }
-  async function persistEnvelope(documentId, next, raw) {
+  async function persistEnvelope(documentId, next, raw, confirmDestination) {
     const serialized = JSON.stringify(next)
     if (Buffer.byteLength(serialized) > maxAssignmentBytes) fail('DISPATCH_ASSIGNMENTS_SIZE_LIMIT', 413)
     parseAssignments(serialized, documentId)
+    if (confirmDestination) await confirmDestination()
     // Best-effort external-change detection, NOT compare-and-swap: a writer can still race after this GET.
     const current = await read(documentId)
     if (current.raw !== raw) fail('DISPATCH_EXTERNAL_MODIFICATION', 409)

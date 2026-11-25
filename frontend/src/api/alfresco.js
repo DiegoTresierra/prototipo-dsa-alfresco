@@ -76,16 +76,26 @@ export async function listDispatchRecipients() {
       GROUP_MAPPINGS_REQUIRED: 'Falta configurar los grupos institucionales del despacho en el backend.',
       DISPATCH_DIRECTORY_NESTED_GROUPS_UNSUPPORTED: 'El directorio contiene subgrupos y requiere verificar su política de membresías antes de despachar.',
     }
-    if (configurationMessages[body.error]) throw new Error(configurationMessages[body.error])
     const messages = {
       403: 'Tu rol no permite realizar derivaciones internas.',
       502: 'No se pudo consultar el directorio institucional de destinatarios.',
     }
-    throw new Error(messages[response.status] || body.error || 'No se pudieron cargar las jefaturas autorizadas.')
+    throw new Error(dispatchPersistenceError(body.error, configurationMessages[body.error] ||
+      messages[response.status] || body.error || 'No se pudieron cargar los destinos autorizados.'))
   }
   const result = await response.json()
   if (!Array.isArray(result?.recipients)) throw new Error('El directorio de jefaturas no tiene un formato válido.')
-  return { recipients: result.recipients, allowedRecipientRoles: result.allowedRecipientRoles || [] }
+  const requiresUnit = result.requiresUnit === true
+  if (requiresUnit && (!Array.isArray(result.units) || !/^[0-9a-f]{64}$/.test(result.hierarchyRevision || ''))) {
+    throw new Error('No se pudo verificar la lista de unidades y su revisión.')
+  }
+  return {
+    recipients: result.recipients,
+    allowedRecipientRoles: result.allowedRecipientRoles || [],
+    requiresUnit,
+    units: requiresUnit ? result.units : [],
+    hierarchyRevision: requiresUnit ? result.hierarchyRevision : '',
+  }
 }
 
 async function hierarchyRequest(url, options = {}) {
@@ -116,6 +126,10 @@ async function hierarchyRequest(url, options = {}) {
       HIERARCHY_ALFRESCO_READ_ONLY: 'La jerarquía se está consultando desde Alfresco, pero todavía no se pueden guardar cambios.',
       HIERARCHY_ALFRESCO_REQUIRED: 'La creación de unidades solo está disponible cuando la jerarquía se consulta desde Alfresco.',
       HIERARCHY_UNIT_WRITES_DISABLED: 'El servidor mantiene deshabilitada la creación de unidades.',
+      HIERARCHY_PILOT_NOT_READY: 'El piloto de jerarquías no está preparado para escribir en esta dependencia.',
+      HIERARCHY_PILOT_CREATE_PERMISSION_REQUIRED: 'La cuenta técnica no tiene permiso efectivo de creación en jerarquías o auditoría.',
+      HIERARCHY_PENDING_RECONCILIATION: 'Hay una operación de jerarquía pendiente de reconciliación; no se inició otro cambio.',
+      HIERARCHY_AUDIT_COVERAGE_INCOMPLETE: 'No se pudo verificar todo el historial de auditoría; el guardado permanece bloqueado.',
       HIERARCHY_UNIT_EDITS_DISABLED: 'La edición de unidades está deshabilitada por el backend.',
       HIERARCHY_UNIT_CHANGE_FIELDS_INVALID: 'La solicitud contiene propiedades que no se pueden editar.',
       HIERARCHY_OPERATION_DUPLICATE_CONFLICT: 'Ese identificador de operación ya se usó con otros datos.',
@@ -303,12 +317,15 @@ export async function reserveDocumentNumber(documentType, documentPeriod, csrfTo
   return body.number
 }
 
-export async function dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, csrfToken, originAssignmentId = null) {
+export async function dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, csrfToken, originAssignmentId = null, destination) {
   const response = await apiFetch('/api/documents/dispatch', {
     method: 'POST',
     credentials: 'include',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify({ documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId }),
+    body: JSON.stringify({
+      documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId,
+      ...(destination ? { unitId: destination.unitId, hierarchyRevision: destination.hierarchyRevision } : {}),
+    }),
   })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
@@ -326,6 +343,7 @@ export async function dispatchDocument(documentId, recipientUserIds, instruction
       DISTRIBUTION_SERVICE_AUTH_FAILED: 'No se pudo autenticar la cuenta técnica de distribución.',
     }
     const error = new Error(dispatchPersistenceError(body.error, messages[body.error] || 'No se pudo completar el despacho documental.'))
+    error.code = body.error
     error.status = response.status
     error.dispatchId = body.dispatchId || ''
     error.documentId = body.documentId || documentId

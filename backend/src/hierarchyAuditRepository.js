@@ -202,7 +202,7 @@ export function createHierarchyAuditRepository(settings, {
 
   function assertWritesEnabled() {
     assertConfigured({ writing: true })
-    if (allowWrites !== true) throw failure('HIERARCHY_AUDIT_WRITES_DISABLED', 403)
+    if (typeof allowWrites === 'function' ? !allowWrites() : allowWrites !== true) throw failure('HIERARCHY_AUDIT_WRITES_DISABLED', 403)
   }
 
   async function getContainer() {

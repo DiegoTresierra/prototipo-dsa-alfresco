@@ -1,10 +1,11 @@
 import { documentPriority } from '../utils/documentViews'
 
 /* eslint-disable react/prop-types */
-function formatDetectedAt(value) {
+function formatDetectedAt(value, type) {
   const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return 'Fecha de detección no disponible'
-  return `Detectado ${date.toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+  if (!Number.isFinite(date.getTime())) return 'Fecha no disponible'
+  const label = type === 'assignment-created' ? 'Encargo registrado' : 'Documento creado'
+  return `${label} ${date.toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
 }
 
 export function NotificationList({ notifications, onViewDocument, emptyMessage = 'No se detectaron documentos nuevos desde la última consulta guardada.' }) {
@@ -17,12 +18,12 @@ export function NotificationList({ notifications, onViewDocument, emptyMessage =
         return (
           <li className={`notification-item${notification.isRead ? ' notification-item--read' : ' notification-item--unread'}`} key={notification.id}>
             <div className="notification-item__top">
-              <span className={`notification-item__state${notification.isRead ? ' notification-item__state--read' : ''}`}>{notification.isRead ? 'Revisado en este navegador' : 'Nuevo'}</span>
+              <span className={`notification-item__state${notification.isRead ? ' notification-item__state--read' : ''}`}>{notification.isRead ? 'Revisado en este navegador' : 'Sin revisar'}</span>
               <span className={`inbox-priority inbox-priority--${priority.className}`}>{priority.label}</span>
             </div>
-            <h3>{notification.title || 'Documento sin título'}</h3>
+            <h3>{notification.type === 'assignment-created' ? 'Nuevo encargo · ' : 'Documento en bandeja · '}{notification.title || 'Documento sin título'}</h3>
             {notification.sender && <p className="notification-item__sender">De {notification.sender}</p>}
-            <time className="notification-item__time" dateTime={notification.detectedAt}>{formatDetectedAt(notification.detectedAt)}</time>
+            <time className="notification-item__time" dateTime={notification.detectedAt}>{formatDetectedAt(notification.detectedAt, notification.type)}</time>
             <button className="notification-item__open" onClick={() => onViewDocument(notification)} type="button">Ver documento</button>
           </li>
         )

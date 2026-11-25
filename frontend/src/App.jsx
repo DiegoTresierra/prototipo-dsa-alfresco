@@ -23,7 +23,7 @@ import { DocumentForm } from './components/DocumentForm'
 import { recipientDependencies } from './data/emisorCatalog'
 import { loadPersonalAttention, personalAttentionKey, personalAttentionDocuments } from './utils/documentViews'
 import { NotificationsPage } from './pages/NotificationsPage'
-import { authorizedNotifications, documentNotificationStorageKey, loadDocumentNotificationState, saveDocumentNotificationState } from './utils/documentNotifications'
+import { persistedDocumentNotifications, documentNotificationStorageKey, loadDocumentNotificationState, saveDocumentNotificationState } from './utils/documentNotifications'
 
 /* eslint-disable react/prop-types */
 function getInitialAlfrescoDocuments() {
@@ -66,7 +66,9 @@ function ApplicationShell({ session, onLogout }) {
   const [notificationData, setNotificationData] = useState(() => loadDocumentNotificationState(window.localStorage, notificationStorageKey))
   const [officeInboxFolders, setOfficeInboxFolders] = useState(null)
   const [officeInboxError, setOfficeInboxError] = useState('')
-  const [recipients, setRecipients] = useState([])
+  const [dispatchDirectory, setDispatchDirectory] = useState({ recipients: [] })
+  const [dispatchDirectoryRefresh, setDispatchDirectoryRefresh] = useState(0)
+  const { recipients } = dispatchDirectory
   const [recipientsLoading, setRecipientsLoading] = useState(false)
   const [recipientsError, setRecipientsError] = useState('')
   const [dispatchRecords, setDispatchRecords] = useState([])
@@ -112,7 +114,6 @@ function ApplicationShell({ session, onLogout }) {
     return () => window.removeEventListener('storage', syncBrowserSelections)
   }, [attentionStorageKey, notificationStorageKey])
   const uploadInFlight = useRef(false)
-  const processedInboxUpdate = useRef(null)
   useEffect(() => {
     saveDocumentNotificationState(window.localStorage, notificationStorageKey, notificationData)
   }, [notificationData, notificationStorageKey])
@@ -158,9 +159,12 @@ function ApplicationShell({ session, onLogout }) {
       setRecipientsLoading(true)
       try {
         const result = await listDispatchRecipients()
-        if (active) { setRecipients(result.recipients); setRecipientsError('') }
+          if (active) { setDispatchDirectory(result); setRecipientsError('') }
       } catch (error) {
-        if (active) { setRecipients([]); setRecipientsError(error.message) }
+          if (active) {
+            setDispatchDirectory((current) => ({ ...current, recipients: [], units: [], hierarchyRevision: '' }))
+            setRecipientsError(error.message)
+          }
       } finally {
         inFlight = false
         if (active) setRecipientsLoading(false)
@@ -171,7 +175,7 @@ function ApplicationShell({ session, onLogout }) {
     window.addEventListener('focus', onVisible)
     const timer = window.setInterval(onVisible, 60_000)
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', onVisible) }
-  }, [canDispatchInternal, session.dependency, session.functionalRole])
+  }, [canDispatchInternal, session.dependency, session.functionalRole, dispatchDirectoryRefresh])
   const visibleMenu = role.menu.filter((item) => !item.devOnly || import.meta.env.DEV)
   const activeItem = visibleMenu.find((item) => item.id === activePanel) || visibleMenu[0]
   const inboxFolderIds = isDirector || isUnitHead
@@ -193,41 +197,9 @@ function ApplicationShell({ session, onLogout }) {
   const inbox = isAssignmentUser ? assignmentInbox : institutionalInbox
   const receivedDocuments = inbox.documents
   const visibleNotifications = canReadAlfresco && !inbox.loading && !inbox.refreshing && !inbox.error && inbox.lastUpdated
-    ? authorizedNotifications(notificationData.notifications, inbox.documents) : []
-  useEffect(() => {
-    if (!canReadAlfresco) return
-    if (inbox.loading || inbox.error || !inbox.lastUpdated || processedInboxUpdate.current === inbox.lastUpdated) return
-
-    const currentSnapshot = new Map(inbox.documents.map((document) => [document.id, document]))
-    const currentDocumentIds = [...currentSnapshot.keys()]
-    processedInboxUpdate.current = inbox.lastUpdated
-    const previousIds = new Set(notificationData.knownDocumentIds)
-    const arrivingDocuments = notificationData.initialized
-      ? [...currentSnapshot.values()].filter((document) => !previousIds.has(document.id))
-      : []
-
-    setNotificationData((current) => {
-      const knownEvents = new Set(current.notifications.map((notification) => notification.id))
-      const newNotifications = arrivingDocuments
-        .map((document) => ({
-          id: `${document.id}:document-received`,
-          type: 'document-received',
-          documentId: document.id,
-          title: document.subject || document.attachmentName || 'Documento sin título',
-          sender: document.sender || '',
-          priority: document.priority,
-          inboxKinds: document.inboxKinds || ['personal'],
-          detectedAt: inbox.lastUpdated,
-          isRead: false,
-        }))
-        .filter((notification) => !knownEvents.has(notification.id))
-      return {
-        initialized: true,
-        knownDocumentIds: [...new Set([...current.knownDocumentIds, ...currentDocumentIds])],
-        notifications: [...newNotifications, ...current.notifications],
-      }
-    })
-  }, [canReadAlfresco, inbox.documents, inbox.error, inbox.lastUpdated, inbox.loading, notificationData])
+    ? persistedDocumentNotifications(inbox.documents,
+      isAssignmentUser ? inbox.dispatchRecords : dispatchRecords,
+      currentOffice.userId, notificationData.notifications) : []
   const inboxDocumentsForPanel = activePanel === 'para-conocimiento'
     ? receivedDocuments.filter((document) => document.inboxKinds?.includes('por-conocimiento'))
     : receivedDocuments
@@ -261,7 +233,10 @@ function ApplicationShell({ session, onLogout }) {
     catch { setResponseNotice('No se pudo verificar el acceso actual al documento. Actualiza la bandeja.'); return }
     setNotificationData((current) => ({
       ...current,
-      notifications: current.notifications.map((entry) => entry.id === notification.id ? { ...entry, isRead: true } : entry),
+      notifications: current.notifications.some(entry => entry.id === notification.id)
+        ? current.notifications.map(entry => entry.id === notification.id ? { ...entry, isRead: true } : entry)
+        : [...current.notifications, { id: notification.id, type: notification.type, documentId: notification.documentId,
+          detectedAt: notification.detectedAt, isRead: true }],
     }))
     setSelectedDocumentId(notification.documentId)
     setActivePanel('documentos-recibidos')
@@ -274,12 +249,19 @@ function ApplicationShell({ session, onLogout }) {
     setIsSidebarOpen(false)
   }
 
-  const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId = null) => {
-    const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken, originAssignmentId)
-    assignmentRequestVersion.current++ // Do not let an older in-flight GET erase this verified success.
-    setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
-    window.dispatchEvent(new Event('uac:alfresco-document-created'))
-    return dispatch
+  const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId = null, destination) => {
+    try {
+      const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken, originAssignmentId, destination)
+      assignmentRequestVersion.current++ // Do not let an older in-flight GET erase this verified success.
+      setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
+      window.dispatchEvent(new Event('uac:alfresco-document-created'))
+      return dispatch
+    } catch (error) {
+      if (destination && ['DISPATCH_HIERARCHY_REVISION_CONFLICT', 'DISPATCH_UNIT_NOT_ALLOWED', 'DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED'].includes(error.code)) {
+        setDispatchDirectoryRefresh((current) => current + 1)
+      }
+      throw error
+    }
   }
 
   const handleAttentionChanged = (result) => {
@@ -387,8 +369,8 @@ function ApplicationShell({ session, onLogout }) {
           : isSpecialist && ['documentos-recibidos', 'mis-asignaciones'].includes(activePanel)
             ? <EspecialistaPage key={activePanel} activePanel={activePanel} allowAlfresco={canReadAlfresco} description={activeItem.description} inbox={visibleInbox} title={activeItem.label} userId={currentOffice.userId} {...attentionProps} />
           : activePanel === 'documentos-recibidos' || activePanel === 'para-conocimiento' || activePanel === 'para-atencion'
-            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} {...attentionProps} />
-          : <ActivePage canLinkExisting={session.canLinkOfficialResponse === true} activePanel={activePanel} emittedInbox={emittedInbox} csrfToken={session.csrfToken} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
+            ? <DirectorPage key={activePanel} allowAlfresco={canReadAlfresco} dispatchDirectory={dispatchDirectory} canDispatch={isDirector && canDispatchInternal && activePanel === 'documentos-recibidos'} description={activeItem.description} dispatchRecords={dispatchRecords} inbox={visibleInbox} title={activeItem.label} mode={activePanel === 'para-atencion' ? 'attention' : 'received'} attentionIds={attentionIds} onDispatch={handleDispatch} onPersonalAttentionChange={selectPersonalAttention} recipients={recipients} recipientRoles={recipientRoles} recipientsError={recipientsError} recipientsLoading={recipientsLoading} assignmentError={attentionError} openDocumentId={selectedDocumentId} onDocumentPreviewClose={() => setSelectedDocumentId('')} {...attentionProps} />
+          : <ActivePage dispatchRecords={dispatchRecords} dispatchError={dispatchError} canLinkExisting={session.canLinkOfficialResponse === true} activePanel={activePanel} emittedInbox={emittedInbox} csrfToken={session.csrfToken} alfrescoDocuments={alfrescoDocuments} allowAlfresco={canReadAlfresco} allowAlfrescoUpload={canWriteAlfresco} description={activeItem.description} documents={alfrescoDocuments} inbox={{ ...inbox, documents: receivedDocuments }} office={currentOffice} onDocumentSubmit={handleDocumentSubmit} title={activeItem.label} />}</main>
       </div>
     </div>
   )

@@ -16,10 +16,10 @@ export function loadDocumentNotificationState(storage, key) {
     if (!parsed || !Array.isArray(parsed.knownDocumentIds) || !Array.isArray(parsed.notifications)) return emptyState()
 
     const notifications = parsed.notifications
-      .filter((notification) => notification?.type === notificationEventType && typeof notification.id === 'string' && typeof notification.documentId === 'string')
+      .filter((notification) => [notificationEventType, 'assignment-created'].includes(notification?.type) && typeof notification.id === 'string' && typeof notification.documentId === 'string')
       .map((notification) => ({
         id: notification.id,
-        type: notificationEventType,
+        type: notification.type,
         documentId: notification.documentId,
         detectedAt: typeof notification.detectedAt === 'string' ? notification.detectedAt : '',
         isRead: notification.isRead === true,
@@ -57,4 +57,42 @@ export function authorizedNotifications(notifications, documents) {
     return { ...notice, title: document.subject || document.attachmentName || '', sender: document.sender || '',
       priority: document.priority || '', inboxKinds: document.inboxKinds || [], source: 'browser-detection' }
   })
+}
+
+// The current Alfresco inbox and persisted gd:asignaciones are the only event
+// sources. Browser state can mark an event read, but can never create one.
+export function persistedDocumentNotifications(documents, dispatches, userId, readState = []) {
+  const readIds = new Set(readState.filter(item => item.isRead).map(item => item.id))
+  const events = new Map()
+  for (const document of documents || []) {
+    if (!document?.id) continue
+    const id = JSON.stringify([document.id, '', userId, 'DOCUMENT_IN_INBOX'])
+    events.set(id, {
+      id, type: 'document-received', documentId: document.id,
+      detectedAt: document.createdAt || document.modifiedAt || '',
+      title: document.subject || document.attachmentName || '',
+      sender: document.sender || '', priority: document.priority || '',
+      isRead: readIds.has(id), source: 'alfresco-inbox',
+    })
+  }
+  const available = new Set((documents || []).map(document => document.id))
+  for (const dispatch of dispatches || []) {
+    if (!available.has(dispatch.documentId)) continue
+    const document = documents.find(item => item.id === dispatch.documentId)
+    for (const assignment of dispatch.recipients || []) {
+      if (!assignment.id || assignment.userId !== userId ||
+          !['ASIGNADO', 'DESPACHADO'].includes(assignment.status)) continue
+      const id = JSON.stringify([dispatch.documentId, assignment.id, userId, 'ASSIGNMENT_CREATED'])
+      events.set(id, {
+        id, type: 'assignment-created', documentId: dispatch.documentId,
+        assignmentId: assignment.id,
+        detectedAt: assignment.createdAt || dispatch.createdAt || '',
+        title: document?.subject || document?.attachmentName || '',
+        sender: document?.sender || dispatch.senderUserId || '',
+        priority: dispatch.priority || document?.priority || '',
+        isRead: readIds.has(id), source: 'alfresco-assignment',
+      })
+    }
+  }
+  return [...events.values()]
 }

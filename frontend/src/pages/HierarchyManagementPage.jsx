@@ -83,7 +83,7 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
       .catch((error) => { if (active) setAuditError(error.message || 'No se pudo consultar el historial.') })
       .finally(() => { if (active) setAuditLoading(false) })
     return () => { active = false }
-  }, [auditFilters, auditPage])
+  }, [auditFilters, auditPage, revision])
   const [pendingSpecialistOperations, setPendingSpecialistOperations] = useState({})
   const [pendingSpecialistReassignmentOperations, setPendingSpecialistReassignmentOperations] = useState({})
   const [headSavingUnitId, setHeadSavingUnitId] = useState('')

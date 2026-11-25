@@ -6,16 +6,16 @@ export function NotificationsPage({ notifications, onViewDocument }) {
   const orderedNotifications = [...notifications].sort((left, right) => new Date(right.detectedAt) - new Date(left.detectedAt))
 
   return (
-    <PanelPage description="Documentos detectados desde la última consulta guardada en este navegador." title="Notificaciones">
+    <PanelPage description="Documentos y encargos disponibles en Alfresco para tu sesión." title="Notificaciones">
       <div className="notifications-page">
         <div className="notifications-page__session-note" role="status">
-          Avisos locales de este navegador: se guardan identificadores, detección y preferencia de lectura. Los detalles se obtienen de la bandeja autorizada actual. La detección no acredita fecha de distribución institucional ni sincroniza lecturas entre dispositivos.
+          Los avisos se reconstruyen desde la bandeja y los encargos autorizados de Alfresco. La preferencia de revisión se guarda solo en este navegador y no se sincroniza entre dispositivos.
         </div>
         <section aria-labelledby="notifications-new-title" className="notifications-page__section">
           <div className="notifications-page__section-heading">
             <div>
               <p className="breadcrumb">Documentos entrantes</p>
-              <h2 id="notifications-new-title">Documentos nuevos</h2>
+              <h2 id="notifications-new-title">Documentos y encargos</h2>
             </div>
             <span className="notifications-page__count">{notifications.filter((notification) => !notification.isRead).length} sin revisar</span>
           </div>

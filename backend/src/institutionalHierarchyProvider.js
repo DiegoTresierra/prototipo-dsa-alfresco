@@ -1,3 +1,6 @@
+import { isDispatchHierarchyRevision, isDispatchUnitId } from './dispatchPolicy.js'
+import { createHierarchyReadService } from './hierarchyReadService.js'
+
 // All administrative journals matter, including an orphan partial event without
 // a confirmed initiation. Missing audit evidence is never a clearance.
 export async function readPendingHierarchyOperations(repository, dependency) {
@@ -83,7 +86,43 @@ export function createInstitutionalHierarchyProvider({ repository, directory, gr
     return { verified: true, source: 'alfresco', revision: after,
       members: people.map(person => ({ userId: person.id, groupIds: person.groups })) }
   }
+
+  async function listDispatchUnits({ dependency }) {
+    const key = Object.keys(groupMappings?.dependencies || {}).find(key => key.toLowerCase() === String(dependency).toLowerCase())
+    if (!key || typeof pendingOperations !== 'function') fail()
+    const assertNoPendingOperations = async () => {
+      const pending = await pendingOperations(key)
+      if (!Array.isArray(pending) || pending.length) fail('HIERARCHY_PENDING_RECONCILIATION')
+    }
+    await assertNoPendingOperations()
+    const reader = createHierarchyReadService({ repository, directory, groupMappings })
+    const { units, assignments, recipients, revision } = await reader.readDependency(key)
+    await assertNoPendingOperations()
+    if (!isDispatchHierarchyRevision(revision) || await repository.getRevision() !== revision) fail('HIERARCHY_REVISION_CONFLICT')
+
+    const catalog = new Map()
+    for (const unit of units) {
+      if (!isDispatchUnitId(unit.id) || catalog.has(unit.id) || typeof unit.name !== 'string' || !unit.name.trim()) {
+        fail('HIERARCHY_DISPATCH_UNIT_INVALID')
+      }
+      catalog.set(unit.id, { ...unit, head: null, specialists: [] })
+    }
+    const people = new Map(recipients.map((person) => [person.id, person]))
+    for (const assignment of assignments) {
+      const person = people.get(assignment.userId)
+      const unit = catalog.get(assignment.unitId)
+      if (!person || !unit || person.functionalRole !== (assignment.laneId === 'jefes' ? 'jefe-unidad' : 'especialista')) {
+        fail('HIERARCHY_ASSIGNMENT_MEMBERSHIP_INVALID')
+      }
+      const recipient = { id: person.id, displayName: person.displayName, dependency: person.dependency, functionalRole: person.functionalRole }
+      if (recipient.functionalRole === 'jefe-unidad') unit.head = recipient
+      else unit.specialists.push(recipient)
+    }
+    return { verified: true, source: 'alfresco', revision, units: [...catalog.values()] }
+  }
+
   return {
+    listDispatchUnits,
     resolveSpecialists: input => resolve({ ...input, role: 'jefe-unidad', stage: 'especialistas' }),
     async resolveReviewers(input) {
       if (!['jefatura', 'direccion'].includes(input.stage) ||

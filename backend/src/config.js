@@ -119,6 +119,14 @@ export const config = {
   numberingStorePath: process.env.NUMBERING_STORE_PATH || path.join(backendRoot, 'data', 'document-numbers.json'),
   organizationStorePath: process.env.ORGANIZATION_STORE_PATH || path.join(backendRoot, 'data', 'organization.json'),
   hierarchyReadStorage: process.env.HIERARCHY_READ_STORAGE || 'alfresco',
+    hierarchyPilot: {
+      enabled: process.env.ALFRESCO_HIERARCHY_DSA_PILOT_ENABLED === 'true',
+      dependency: process.env.ALFRESCO_HIERARCHY_PILOT_DEPENDENCY || '',
+      expectedTarget: process.env.ALFRESCO_HIERARCHY_PILOT_EXPECTED_TARGET || '',
+      acknowledgement: process.env.ALFRESCO_HIERARCHY_PILOT_ACKNOWLEDGEMENT || '',
+      externalWritersDisabled: process.env.ALFRESCO_HIERARCHY_PILOT_NO_EXTERNAL_WRITERS_CONFIRMED === 'true',
+      leasePath: process.env.ALFRESCO_HIERARCHY_PILOT_LEASE_PATH || path.join(backendRoot, 'data', 'hierarchy-pilot.lock'),
+    },
   responseTimes: {
     storage: process.env.ALFRESCO_RESPONSE_TIMES_STORAGE || '',
     username: process.env.ALFRESCO_RESPONSE_TIMES_SERVICE_USERNAME || '',
