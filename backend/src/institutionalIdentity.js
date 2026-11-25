@@ -4,7 +4,7 @@ const core = '/alfresco/api/-default-/public/alfresco/versions/1'
 const fail = (code, status) => Object.assign(new Error(code), { status })
 
 export function isServiceIdentity(settings, userId) {
-  const configured = [settings.hierarchyService?.username, settings.distributionService?.username,
+  const configured = [settings.hierarchyService?.username, settings.distributionService?.username, settings.responseTimes?.username,
     ...(settings.technicalUserIds || [])]
   return typeof userId === 'string' && configured.some(id =>
     typeof id === 'string' && id.length > 0 && id.toLowerCase() === userId.toLowerCase())

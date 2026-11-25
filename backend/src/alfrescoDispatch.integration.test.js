@@ -1,3 +1,4 @@
+import { sessionDispatchRoles } from '../../frontend/src/utils/sessionDispatch.js'
 import { identityResponse } from './testFixtures/institutionalIdentity.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -24,7 +25,7 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   Object.assign(process.env, {
     PORT: '0', SESSION_SECRET: 'test-only', ALFRESCO_TARGET: 'https://alfresco.invalid',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
-    ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'gd_distribucion', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'test-only',
+    ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'fixture_distribution', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'test-only',
     HIERARCHY_READ_STORAGE: 'alfresco', ALFRESCO_HIERARCHY_STORAGE: 'alfresco',
     ALFRESCO_HIERARCHY_SERVICE_USERNAME: 'hierarchy-fixture', ALFRESCO_HIERARCHY_SERVICE_PASSWORD: 'fixture-only',
     ALFRESCO_HIERARCHY_CONTAINER_NODE_ID: hierarchyContainer, ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID: auditContainer,
@@ -100,7 +101,7 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
     if (method === 'GET') reads.push(p)
     assert.ok(['GET', 'PUT'].includes(method))
     if (p.endsWith('/people/-me-')) return Response.json({ entry: {
-      id: options.headers.Authorization === hierarchyAuthorization ? 'hierarchy-fixture' : 'gd_distribucion',
+      id: options.headers.Authorization === hierarchyAuthorization ? 'hierarchy-fixture' : 'fixture_distribution',
       enabled: true, capabilities: { isAdmin: false },
     } })
     if (options.headers.Authorization === hierarchyAuthorization && p.includes('/nodes/')) {
@@ -121,8 +122,8 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
     }
     if (p.includes('/service/api/groups/')) {
       const group = p.split('/').at(-2)
-      const members = { DSA: ['DSA_T', 'director-2', 'head', 'head-2', 'staff', 'staff-peer', 'unassigned'], DTI: ['DTI_T', 'staff-dti'],
-        DIRECTORS: ['DSA_T', 'director-2', 'DTI_T'], HEADS: ['head', 'head-2'], STAFF: ['staff', 'staff-peer', 'unassigned', 'staff-dti'] }[group]
+      const members = { DSA: ['fixture_director_a', 'director-2', 'head', 'head-2', 'staff', 'staff-peer', 'unassigned'], DTI: ['fixture_director_b', 'staff-dti'],
+        DIRECTORS: ['fixture_director_a', 'director-2', 'fixture_director_b'], HEADS: ['head', 'head-2'], STAFF: ['staff', 'staff-peer', 'unassigned', 'staff-dti'] }[group]
       return Response.json({ data: members.map((shortName) => ({ shortName, authorityType: 'USER' })), paging: { skipCount: 0, totalItems: members.length } })
     }
     if (p.includes('/people/')) {
@@ -143,12 +144,12 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
     }
     if (p.endsWith('/parents')) return Response.json({}, { status: 403 })
     const id = p.endsWith('/content') ? p.split('/').at(-2) : p.split('/').at(-1)
-    if (denied && options.headers.Authorization === 'Basic DSA_T') return Response.json({}, { status: 403 })
+    if (denied && options.headers.Authorization === 'Basic fixture_director_a') return Response.json({}, { status: 403 })
     if (method === 'PUT') {
       if (updateDenied) return Response.json({}, { status: 403 })
       assert.ok([documentId, secondId, additionalId].includes(id), 'PUT only mocked institutional PDFs')
       const body = JSON.parse(options.body)
-      assert.equal(options.headers.Authorization, 'Basic '+Buffer.from('gd_distribucion:test-only').toString('base64'))
+      assert.equal(options.headers.Authorization, 'Basic '+Buffer.from('fixture_distribution:test-only').toString('base64'))
       puts.push(body)
       const target = nodes.get(id)
       Object.assign(target.properties, body.properties)
@@ -168,14 +169,17 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
     await new Promise((resolve) => server.close(resolve))
     fs.rmSync(directory, { recursive: true, force: true })
   })
-  const director = session('DSA_T', 'direccion')
+  const director = session('fixture_director_a', 'direccion')
   const director2 = session('director-2', 'direccion')
-  const directorDti = session('DTI_T', 'direccion', 'DTI')
+  const directorDti = session('fixture_director_b', 'direccion', 'DTI')
   const head = session('head', 'jefe-unidad')
   const staff = session('staff', 'especialista')
   const peer = session('staff-peer', 'especialista')
   const unassigned = session('unassigned', 'especialista')
   const post = (headers, body) => fetch(base + '/api/documents/dispatch', { method: 'POST', headers, body: JSON.stringify(body) })
+  const sessionContract = async () => (await fetch(base + '/api/auth/me', { headers: director })).json()
+  assert.deepEqual(sessionDispatchRoles(await sessionContract()), ['jefe-unidad', 'especialista'])
+  assert.equal((await sessionContract()).officialWritesEnabled, false)
   const directoryResponse = await fetch(base + '/api/directory/dispatch-recipients', { headers: director })
   assert.equal(directoryResponse.status, 200, await directoryResponse.clone().text())
   const destinations = await directoryResponse.json()
@@ -210,6 +214,7 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   assert.equal(auditReadsBeforeChange, 0)
   delete units[0].properties['gdo:codigoUnidad']
   config.dispatchPilot.writesEnabled = false
+  assert.deepEqual(sessionDispatchRoles(await sessionContract()), [])
   await expectError(director, payload, 503, 'DISPATCH_ALFRESCO_WRITES_DISABLED')
   config.dispatchPilot.writesEnabled = true
   assert.equal(puts.length, 0, 'invalid or stale destinations do not mutate the PDF')
@@ -222,6 +227,11 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   updateDenied = true
   assert.equal((await post(director, payload)).status, 403)
   updateDenied = false
+  const hierarchySnapshot = await fetch(base + '/api/hierarchy', { headers: director })
+  assert.equal(hierarchySnapshot.status, 200)
+  const administrativeCapabilities = (await hierarchySnapshot.json()).capabilities
+  assert.equal(administrativeCapabilities.assignHeads, false)
+  assert.equal(administrativeCapabilities.createUnits, false)
   const firstResponse = await post(director, payload)
   assert.equal(firstResponse.status, 201)
   const parent = (await firstResponse.json()).dispatch
@@ -285,6 +295,14 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   const content = await fetch(`${base}/api/alfresco/api/-default-/public/alfresco/versions/1/nodes/${documentId}/content`, { headers: staff })
   assert.equal(content.status, 200)
   const completedPuts = puts.length
+  const savedEnvelope = node.properties['gd:asignaciones']
+  const changed = JSON.parse(savedEnvelope)
+  changed.dispatches.find(record => record.id === parent.id).recipients.find(person => person.userId === 'head').status = 'ANULADO'
+  node.properties['gd:asignaciones'] = JSON.stringify(changed)
+  const staleReplay = await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'child', instruction: 'changed', originAssignmentId: parent.recipients[0].id })
+  assert.equal(staleReplay.status, 403)
+  assert.deepEqual(await staleReplay.json(), { error: 'DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED' })
+  node.properties['gd:asignaciones'] = savedEnvelope
   originalInInstitutionalScope = false
   const removedOrigin = await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'removed-from-institutional-scope', originAssignmentId: parent.recipients[0].id })
   assert.equal(removedOrigin.status, 403, 'an assigned Jefatura still needs verified institutional membership')
@@ -293,7 +311,22 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   assert.equal(fs.readFileSync(localPath, 'utf8'), 'legacy data must never be read or changed')
   originalInInstitutionalScope = true
   const current = node.properties['gd:asignaciones']
-  actors.get('Basic DSA_T').groups = ['GROUP_DSA', 'GROUP_STAFF']
+  actors.get('Basic fixture_director_a').groups = ['GROUP_DSA', 'GROUP_STAFF']
+  for (const path of ['/api/directory/office-inboxes', '/api/documents/dispatches', originalUrl.slice(base.length)]) {
+    const read = await fetch(base + path, { headers: director })
+    assert.equal(read.status, 403)
+    assert.equal((await read.json()).error, 'INSTITUTIONAL_IDENTITY_REJECTED')
+  }
+  actors.get('Basic head').enabled = false
+  assert.equal((await fetch(base + '/api/documents/dispatches', { headers: head })).status, 403)
+  actors.get('Basic head').enabled = true
+  const previousAccount = config.responseTimes.username
+  try {
+    config.responseTimes.username = 'head'
+    assert.equal((await fetch(base + '/api/documents/dispatches', { headers: head })).status, 403)
+  } finally {
+    config.responseTimes.username = previousAccount
+  }
   const revoked = await post(director, { ...payload, requestKey: 'revoked-director' })
   assert.equal(revoked.status, 403)
   assert.equal((await revoked.json()).error, 'INSTITUTIONAL_IDENTITY_REJECTED')

@@ -13,12 +13,13 @@ function fixture(leasePath) {
     hierarchyReadStorage: 'alfresco',
     hierarchyService: {
       storage: 'alfresco', username: 'service-fixture', password: 'fixture-only',
-      containerNodeId: 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93',
-      auditContainerNodeId: '097bf6f7-af28-4de1-bbf6-f7af28ede134',
-      labContainerNodeId: '284caaa3-8187-4af3-8caa-a38187aaf30b',
+      containerNodeId: '10000000-0000-4000-8000-000000000001',
+      auditContainerNodeId: '10000000-0000-4000-8000-000000000002',
+      labContainerNodeId: '10000000-0000-4000-8000-000000000003',
       unitWritesEnabled: true,
     },
     hierarchyPilot: {
+      expectedContainers: ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'],
       enabled: true, dependency: 'DSA', expectedTarget: 'https://alfresco.example.invalid',
       acknowledgement: HIERARCHY_PILOT_ACKNOWLEDGEMENT, externalWritersDisabled: true,
       leasePath,
