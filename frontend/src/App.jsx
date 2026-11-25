@@ -1,3 +1,4 @@
+import { sessionDispatchRoles } from './utils/sessionDispatch.js'
 import { emitOfficialDocument, getAuthorizedDocument } from './api/alfresco'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
@@ -139,7 +140,7 @@ function ApplicationShell({ session, onLogout }) {
   const isUnitHead = session.functionalRole === 'jefe-unidad'
   const isSpecialist = session.functionalRole === 'especialista'
   const isAssignmentUser = isUnitHead || isSpecialist
-  const recipientRoles = session.dispatchWritesEnabled === true ? session.dispatchRecipientRoles || [] : []
+  const recipientRoles = sessionDispatchRoles(session)
   const canDispatchInternal = canWriteAlfresco && recipientRoles.length > 0
   useEffect(() => {
     if (!canReadAlfresco || isAssignmentUser || !session.dependency) return undefined

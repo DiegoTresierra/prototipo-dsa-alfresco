@@ -4,9 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 export const HIERARCHY_PILOT_ACKNOWLEDGEMENT = 'single-host-exclusive-writer-hierarchy-dsa-dev'
-const productionContainer = 'd0c78bf2-35f2-4f7c-878b-f235f21f7c93'
-const auditContainer = '097bf6f7-af28-4de1-bbf6-f7af28ede134'
-const laboratoryContainer = '284caaa3-8187-4af3-8caa-a38187aaf30b'
+const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 const held = new Map()
 
 function fail(code) {
@@ -16,15 +14,16 @@ function fail(code) {
 export function hierarchyPilotConfigurationReady(settings) {
   const pilot = settings.hierarchyPilot || {}
   const service = settings.hierarchyService || {}
+  const containers = [service.containerNodeId, service.auditContainerNodeId, service.labContainerNodeId]
   if (pilot.enabled !== true || pilot.externalWritersDisabled !== true ||
       pilot.acknowledgement !== HIERARCHY_PILOT_ACKNOWLEDGEMENT ||
       pilot.expectedTarget !== settings.alfrescoTarget ||
       String(pilot.dependency).toUpperCase() !== 'DSA' ||
       settings.hierarchyReadStorage !== 'alfresco' || service.storage !== 'alfresco' ||
       !service.username || !service.password ||
-      service.containerNodeId?.toLowerCase() !== productionContainer ||
-      service.auditContainerNodeId?.toLowerCase() !== auditContainer ||
-      service.labContainerNodeId?.toLowerCase() !== laboratoryContainer) return false
+      containers.some(id => !uuid.test(id || '')) ||
+      new Set(containers.map(id => id.toLowerCase())).size !== 3 ||
+      containers.some((id, index) => id.toLowerCase() !== pilot.expectedContainers?.[index]?.toLowerCase())) return false
   try {
     const target = new URL(settings.alfrescoTarget)
     if (target.protocol !== 'https:' || target.username || target.password ||

@@ -86,6 +86,7 @@ export const config = {
   },
   hierarchyReadStorage: process.env.HIERARCHY_READ_STORAGE || 'alfresco',
     hierarchyPilot: {
+      expectedContainers: [process.env.ALFRESCO_HIERARCHY_PILOT_EXPECTED_CONTAINER, process.env.ALFRESCO_HIERARCHY_PILOT_EXPECTED_AUDIT, process.env.ALFRESCO_HIERARCHY_PILOT_EXPECTED_LAB],
       enabled: process.env.ALFRESCO_HIERARCHY_DSA_PILOT_ENABLED === 'true',
       dependency: process.env.ALFRESCO_HIERARCHY_PILOT_DEPENDENCY || '',
       expectedTarget: process.env.ALFRESCO_HIERARCHY_PILOT_EXPECTED_TARGET || '',

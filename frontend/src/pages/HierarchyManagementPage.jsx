@@ -1,15 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PanelPage } from '../components/PanelPage'
 import { assignHierarchyHead as postHierarchyHead, assignHierarchySpecialist as postHierarchySpecialist, changeHierarchyHead as postHierarchyHeadChange, createHierarchyUnit as postHierarchyUnit, editHierarchyUnit as patchHierarchyUnit, getHierarchy, getHierarchyAudit, getResponseTimes, reassignHierarchySpecialist as postHierarchySpecialistReassignment, updateResponseTimes } from '../api/alfresco'
 import { createHierarchyManagementModel } from '../utils/hierarchyManagementModel'
 
 const moduleViews = { home: 'home', office: 'office', timings: 'timings' }
-const lanes = [
-  { id: 'direccion', role: 'direccion', title: 'Dirección', description: 'Dirección de la dependencia' },
-  { id: 'jefes', role: 'jefe-unidad', title: 'Jefes de unidad', description: 'Responsables de oficina o unidad' },
-  { id: 'especialistas', role: 'especialista', title: 'Especialistas', description: 'Responsables de atención documental' },
-]
 const timingPriorities = [
   { id: 'NORMAL', className: 'normal', title: 'Normal' },
   { id: 'ALTA', className: 'high', title: 'Alta' },
@@ -483,159 +478,6 @@ function AlfrescoReadOnlyHierarchy({ officeName, dependency, units, members, ass
   )
 }
 
-function OfficeHierarchy({ officeName, dependency, members, specialistUnits, recipients, staleCount, revision, pendingHeadChanges, pendingSpecialistReassignments, units, assignments, alfrescoReadOnly, loading, loadingError, saving, unitCreationEnabled, unitEditEnabled, headAssignmentEnabled, headChangeEnabled, specialistAssignmentEnabled, specialistReassignmentEnabled, creationPending, pendingUnitOperation, creationMessage, creationError, onCreateUnit, onEditUnit, onAssignHead, onChangeHead, onAssignSpecialist, onReassignSpecialist, onRefresh, onAddMembers, onRemoveMember, onBack }) {
-  const [addOpen, setAddOpen] = useState(false)
-  const [laneId, setLaneId] = useState('jefes')
-  const [unitHeadUserId, setUnitHeadUserId] = useState('')
-  const [unitDrafts, setUnitDrafts] = useState({})
-  const [selectedIds, setSelectedIds] = useState([])
-  const [search, setSearch] = useState('')
-
-  useEffect(() => {
-    if (!addOpen) return undefined
-    const onKeyDown = (event) => { if (event.key === 'Escape') setAddOpen(false) }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [addOpen])
-
-  const selectedLane = lanes.find((lane) => lane.id === laneId) || lanes[1]
-  const assignedIds = useMemo(() => new Set([...members.jefes, ...members.especialistas]), [members.jefes, members.especialistas])
-  const unitHeads = members.jefes.map((id) => recipients.find((recipient) => recipient.id === id)).filter(Boolean)
-  const unassignedSpecialists = members.especialistas.filter((id) => !specialistUnits[id] || !members.jefes.includes(specialistUnits[id]))
-  const availableMembers = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase('es')
-    return recipients.filter((recipient) => recipient.functionalRole === selectedLane.role &&
-      String(recipient.dependency || '').toLowerCase() === String(dependency || '').toLowerCase() &&
-      !assignedIds.has(recipient.id) &&
-      (!query || `${recipient.displayName} ${recipient.id}`.toLocaleLowerCase('es').includes(query)))
-  }, [assignedIds, dependency, recipients, search, selectedLane])
-
-  const openAdd = () => {
-    setLaneId('jefes')
-    setUnitHeadUserId('')
-    setSelectedIds([])
-    setSearch('')
-    setAddOpen(true)
-  }
-  const addSelected = async () => {
-    if (!selectedIds.length) return
-    const saved = await onAddMembers(laneId, selectedIds, laneId === 'especialistas' ? unitHeadUserId : '')
-    if (saved) {
-      setSelectedIds([])
-      setAddOpen(false)
-    }
-  }
-
-  if (alfrescoReadOnly) {
-    return <AlfrescoReadOnlyHierarchy
-      assignments={assignments}
-      dependency={dependency}
-      headAssignmentEnabled={headAssignmentEnabled}
-      headChangeEnabled={headChangeEnabled}
-      specialistAssignmentEnabled={specialistAssignmentEnabled}
-      specialistReassignmentEnabled={specialistReassignmentEnabled}
-      revision={revision}
-      pendingHeadChanges={pendingHeadChanges}
-      pendingSpecialistReassignments={pendingSpecialistReassignments}
-      creationError={creationError}
-      creationMessage={creationMessage}
-      creationPending={creationPending}
-      pendingUnitOperation={pendingUnitOperation}
-      loading={loading}
-      loadingError={loadingError}
-      members={members}
-      onCreateUnit={onCreateUnit}
-      onEditUnit={onEditUnit}
-      onAssignHead={onAssignHead}
-      onChangeHead={onChangeHead}
-      onAssignSpecialist={onAssignSpecialist}
-      onReassignSpecialist={onReassignSpecialist}
-      onBack={onBack}
-      onRefresh={onRefresh}
-      officeName={officeName}
-      recipients={recipients}
-      staleCount={staleCount}
-      units={units}
-      unitCreationEnabled={unitCreationEnabled}
-      unitEditEnabled={unitEditEnabled}
-    />
-  }
-
-  return (
-    <div className="settings-detail">
-      <button className="button-secondary settings-back" onClick={onBack} type="button"><span aria-hidden="true">‹</span> Volver a Ajustes</button>
-      <div className="settings-detail__toolbar">
-        <div><h2>Administrar mi oficina</h2><p>Organiza la estructura de {officeName} con usuarios disponibles en los grupos de Alfresco.</p></div>
-        <div className="settings-detail__actions">
-          <button className="button-secondary" disabled={loading || saving} onClick={onRefresh} type="button">Actualizar usuarios</button>
-          <button className="button-primary" disabled={loading || Boolean(loadingError) || saving} onClick={openAdd} type="button">Añadir miembros</button>
-        </div>
-      </div>
-      {loading && <p className="hierarchy-message" role="status">Consultando usuarios y estructura de la oficina…</p>}
-      {loadingError && <p className="form-message form-message--error" role="alert">{loadingError}</p>}
-      {staleCount > 0 && !loadingError && <p className="settings-stale-note" role="status">Hay {staleCount} asignación(es) cuyo usuario ya no aparece en los grupos actuales de la oficina. Revisa la membresía en Alfresco.</p>}
-      <div aria-label={`Jerarquía de ${officeName}`} className="settings-lanes">
-        {lanes.map((lane) => {
-          const laneMembers = lane.id === 'direccion'
-            ? members.direccion ? [members.direccion] : []
-            : (members[lane.id] || []).map((id) => recipients.find((recipient) => recipient.id === id)).filter(Boolean)
-          return (
-            <section className="settings-lane" key={lane.id}>
-              <header className="settings-lane__header"><div><h3>{lane.title}</h3><p>{lane.description}</p></div><span className="settings-lane__count">{laneMembers.length}</span></header>
-              {laneMembers.length ? <ul className="settings-lane__members">
-                {laneMembers.map((member) => <li key={member.id}>
-                  <span aria-hidden="true" className="settings-lane__avatar"><Icon name="user" size={17} /></span>
-                  <span className="settings-lane__identity"><strong>{member.displayName}</strong><small>{member.id}</small></span>
-                  {lane.id !== 'direccion' && <button aria-label={`Quitar a ${member.displayName} de ${lane.title}`} className="hierarchy-remove" disabled={saving || loading} onClick={() => onRemoveMember(lane.id, member.id)} type="button">Quitar</button>}
-                  {lane.id === 'direccion' && <small className="settings-lane__current">Sesión actual</small>}
-                </li>)}
-              </ul> : <p className="hierarchy-empty">{lane.id === 'direccion' ? 'No se pudo identificar la sesión de Dirección.' : 'Aún no hay miembros asignados a este nivel.'}</p>}
-            </section>
-          )
-        })}
-      </div>
-      <section aria-labelledby="office-chart-title" className="office-chart-section">
-        <div className="office-chart-section__heading"><div><h2 id="office-chart-title">Organigrama de la oficina</h2><p>Los especialistas se muestran debajo de la jefatura/unidad seleccionada al añadirlos.</p></div></div>
-        <div className="office-chart">
-          <div className="office-chart__director"><span className="settings-lane__avatar"><Icon name="user" size={18} /></span><span><strong>{members.direccion?.displayName || 'Dirección'}</strong><small>Dirección</small></span></div>
-          {unitHeads.length ? <div className="office-chart__units" data-unit-count={unitHeads.length} style={{ '--office-unit-count': unitHeads.length }}>
-            {unitHeads.map((head) => {
-              const linkedSpecialists = members.especialistas
-                .filter((id) => specialistUnits[id] === head.id)
-                .map((id) => recipients.find((recipient) => recipient.id === id))
-                .filter(Boolean)
-              const unitLabel = head.unit?.name || head.unit?.code || `Unidad a cargo de ${head.displayName}`
-              return <article className="office-chart__unit" key={head.id}>
-                <div className="office-chart__head"><span className="settings-lane__avatar"><Icon name="user" size={18} /></span><span><small>{unitLabel}</small><strong>{head.displayName}</strong><small>Jefatura de unidad</small></span></div>
-                <div className="office-chart__specialists">
-                  {linkedSpecialists.length ? linkedSpecialists.map((specialist) => <div className="office-chart__specialist" key={specialist.id}><span className="settings-lane__avatar"><Icon name="user" size={16} /></span><span><strong>{specialist.displayName}</strong><small>Especialista</small></span></div>) : <p className="office-chart__empty">Sin especialistas asociados</p>}
-                </div>
-              </article>
-            })}
-          </div> : <p className="hierarchy-empty">Añade una jefatura para iniciar el organigrama de unidades.</p>}
-          {unassignedSpecialists.length > 0 && <div className="office-chart__unassigned"><strong>Especialistas sin unidad asociada</strong><div className="office-chart__unassigned-list">{unassignedSpecialists.map((id) => <div className="office-chart__unassigned-row" key={id}><span>{recipients.find((recipient) => recipient.id === id)?.displayName || id}</span><select aria-label={`Unidad para ${recipients.find((recipient) => recipient.id === id)?.displayName || id}`} disabled={saving || loading || unitHeads.length === 0} onChange={(event) => setUnitDrafts((current) => ({ ...current, [id]: event.target.value }))} value={unitDrafts[id] ?? specialistUnits[id] ?? ''}><option value="">Selecciona unidad/jefatura</option>{unitHeads.map((head) => <option key={head.id} value={head.id}>{head.unit?.name || head.unit?.code || `Unidad a cargo de ${head.displayName}`} · {head.displayName}</option>)}</select><button className="button-secondary" disabled={saving || loading || !unitDrafts[id] || !unitHeads.some((head) => head.id === unitDrafts[id])} onClick={() => onAssignSpecialist(id, unitDrafts[id])} type="button">Asociar</button></div>)}</div></div>}
-        </div>
-      </section>
-      {saving && <p className="hierarchy-message" role="status">Guardando organización de la oficina…</p>}
-      <p className="hierarchy-notice">Organigrama provisional guardado en el BFF. No acredita subordinación institucional ni habilita despachos de Jefatura a Especialista. Esta pantalla no modifica usuarios, grupos ni permisos de Alfresco.</p>
-      {addOpen && <div className="settings-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAddOpen(false) }}>
-        <section aria-labelledby="settings-add-title" aria-modal="true" className="settings-modal" onMouseDown={(event) => event.stopPropagation()} role="dialog">
-          <header className="settings-modal__header"><div><h2 id="settings-add-title">Añadir miembros</h2><p>Elige usuarios activos de los grupos funcionales de {officeName}.</p></div><button aria-label="Cerrar" className="settings-modal__close" onClick={() => setAddOpen(false)} type="button">×</button></header>
-          <label className="form-field"><span>Nivel de la jerarquía</span><select onChange={(event) => { setLaneId(event.target.value); setSelectedIds([]); if (event.target.value === 'especialistas') setUnitHeadUserId(unitHeads[0]?.id || '') }} value={laneId}><option value="jefes">Jefes de unidad</option><option value="especialistas">Especialistas</option></select></label>
-          {laneId === 'especialistas' && <label className="form-field"><span>Unidad o jefatura donde trabajará</span><select onChange={(event) => setUnitHeadUserId(event.target.value)} value={unitHeadUserId}><option value="">Selecciona una unidad/jefatura</option>{unitHeads.map((head) => <option key={head.id} value={head.id}>{head.unit?.name || head.unit?.code || `Unidad a cargo de ${head.displayName}`} · {head.displayName}</option>)}</select><small>La unidad se vincula a una jefatura que ya está en el organigrama.</small></label>}
-          <label className="form-field settings-modal__search"><span>Buscar usuario</span><input onChange={(event) => setSearch(event.target.value)} placeholder="Nombre o cuenta" type="search" value={search} /></label>
-          <div aria-live="polite" className="settings-modal__results">
-            {availableMembers.length === 0
-              ? <p className="hierarchy-empty">{laneId === 'especialistas' && !unitHeads.length ? 'Primero añade al menos una jefatura para asociar la unidad.' : 'No hay usuarios disponibles para este nivel en la dependencia actual.'}</p>
-              : availableMembers.map((member) => <label className="settings-member-option" key={member.id}><input checked={selectedIds.includes(member.id)} onChange={() => setSelectedIds((current) => current.includes(member.id) ? current.filter((id) => id !== member.id) : [...current, member.id])} type="checkbox" /><span><strong>{member.displayName}</strong><small>{member.id}</small></span></label>)}
-          </div>
-          <footer className="settings-modal__footer"><button className="button-secondary" onClick={() => setAddOpen(false)} type="button">Cancelar</button><button className="button-primary" disabled={!selectedIds.length || saving || (laneId === 'especialistas' && (!unitHeadUserId || !unitHeads.some((head) => head.id === unitHeadUserId)))} onClick={addSelected} type="button">Añadir seleccionados</button></footer>
-        </section>
-      </div>}
-    </div>
-  )
-}
-
 function OfficeTimings({ onBack, csrfToken }) {
   const [settings, setSettings] = useState(null)
   const [draft, setDraft] = useState([])
@@ -743,13 +585,11 @@ function OfficeTimings({ onBack, csrfToken }) {
 export function HierarchyManagementPage({ office, csrfToken }) {
   const [view, setView] = useState(moduleViews.home)
   const [members, setMembers] = useState(emptyMembers)
-  const [specialistUnits, setSpecialistUnits] = useState({})
   const [units, setUnits] = useState([])
   const [hierarchyAssignments, setHierarchyAssignments] = useState([])
   const [hierarchyRevision, setHierarchyRevision] = useState('')
   const [pendingHeadChanges, setPendingHeadChanges] = useState([])
   const [pendingSpecialistReassignments, setPendingSpecialistReassignments] = useState([])
-  const [alfrescoReadOnly, setAlfrescoReadOnly] = useState(false)
   const [unitCreationEnabled, setUnitCreationEnabled] = useState(false)
   const [unitEditEnabled, setUnitEditEnabled] = useState(false)
   const [headAssignmentEnabled, setHeadAssignmentEnabled] = useState(false)
@@ -764,37 +604,37 @@ export function HierarchyManagementPage({ office, csrfToken }) {
   const [staleCount, setStaleCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadingError, setLoadingError] = useState('')
-  const [saving] = useState(false)
   const officeName = office?.office || office?.acronym || 'la oficina actual'
 
-  const loadOffice = async (activeCheck = () => true) => {
+  function applyHierarchy(result) {
+    const model = createHierarchyManagementModel(result)
+    setRecipients(model.recipients)
+    setStaleCount(model.staleCount)
+    setMembers(model.members)
+    setUnits(model.units)
+    setHierarchyAssignments(model.assignments)
+    setHierarchyRevision(result.revision || '')
+    setPendingHeadChanges(Array.isArray(result.pendingHeadChanges) ? result.pendingHeadChanges : [])
+    setPendingSpecialistReassignments(Array.isArray(result.pendingSpecialistReassignments) ? result.pendingSpecialistReassignments : [])
+    setUnitCreationEnabled(result.capabilities?.createUnits === true)
+    setUnitEditEnabled(result.capabilities?.editUnits === true)
+    setHeadAssignmentEnabled(result.capabilities?.assignHeads === true)
+    setHeadChangeEnabled(result.capabilities?.changeHeads === true)
+    setSpecialistAssignmentEnabled(result.capabilities?.assignSpecialists === true)
+    setSpecialistReassignmentEnabled(result.capabilities?.reassignSpecialists === true)
+  }
+
+  const loadOffice = useCallback(async (activeCheck = () => true) => {
     setLoading(true)
     setLoadingError('')
     try {
       const result = await getHierarchy()
       if (!activeCheck()) return
-      const model = createHierarchyManagementModel(result)
-      setRecipients(model.recipients)
-      setStaleCount(model.staleCount)
-      setMembers(model.members)
-      setSpecialistUnits(model.specialistUnits)
-      setUnits(model.units)
-      setHierarchyAssignments(model.assignments)
-      setHierarchyRevision(result.revision || '')
-      setPendingHeadChanges(Array.isArray(result.pendingHeadChanges) ? result.pendingHeadChanges : [])
-      setPendingSpecialistReassignments(Array.isArray(result.pendingSpecialistReassignments) ? result.pendingSpecialistReassignments : [])
-      setAlfrescoReadOnly(model.alfrescoReadOnly)
-      setUnitCreationEnabled(model.alfrescoReadOnly && result.capabilities?.createUnits === true)
-      setUnitEditEnabled(model.alfrescoReadOnly && result.capabilities?.editUnits === true)
-      setHeadAssignmentEnabled(model.alfrescoReadOnly && result.capabilities?.assignHeads === true)
-      setHeadChangeEnabled(model.alfrescoReadOnly && result.capabilities?.changeHeads === true)
-      setSpecialistAssignmentEnabled(model.alfrescoReadOnly && result.capabilities?.assignSpecialists === true)
-      setSpecialistReassignmentEnabled(model.alfrescoReadOnly && result.capabilities?.reassignSpecialists === true)
+      applyHierarchy(result)
     } catch (error) {
       if (activeCheck()) {
         setLoadingError(error.message || 'No se pudo consultar la oficina.')
         setMembers(emptyMembers)
-        setSpecialistUnits({})
         setUnits([])
         setHierarchyAssignments([])
         setHierarchyRevision('')
@@ -808,12 +648,11 @@ export function HierarchyManagementPage({ office, csrfToken }) {
         setHeadChangeEnabled(false)
         setSpecialistAssignmentEnabled(false)
         setSpecialistReassignmentEnabled(false)
-        if (String(error.code || '').startsWith('HIERARCHY_ALFRESCO_')) setAlfrescoReadOnly(true)
       }
     } finally {
       if (activeCheck()) setLoading(false)
     }
-  }
+  }, [])
 
   const createUnit = async (draft) => {
     if (!unitCreationEnabled || creationPending) return false
@@ -841,21 +680,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
       setPendingUnitOperation(null)
       setCreationMessage(`Unidad creada y verificada: ${result.unit.name} · UUID ${result.unit.id}. Operación ${result.operationId}.`)
       try {
-        const refreshed = await getHierarchy()
-        const model = createHierarchyManagementModel(refreshed)
-        setRecipients(model.recipients)
-        setStaleCount(model.staleCount)
-        setMembers(model.members)
-        setSpecialistUnits(model.specialistUnits)
-        setUnits(model.units)
-        setHierarchyAssignments(model.assignments)
-        setHierarchyRevision(refreshed.revision || '')
-        setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
-        setAlfrescoReadOnly(model.alfrescoReadOnly)
-        setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
-        setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
-        setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
-        setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
+        applyHierarchy(await getHierarchy())
       } catch (refreshError) {
         setCreationError(`El BFF confirmó la creación y auditoría, pero no se pudo actualizar la lista: ${refreshError.message || 'error de lectura'}. Operación ${result.operationId}. Usa «Actualizar datos».`)
       }
@@ -881,24 +706,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
   const editUnit = async ({ unitId, name, code, description, operationId, expectedRevision }) => {
     const result = await patchHierarchyUnit({ unitId, name, code, description, operationId, expectedRevision }, csrfToken)
     try {
-      const refreshed = await getHierarchy()
-      const model = createHierarchyManagementModel(refreshed)
-      setRecipients(model.recipients)
-      setStaleCount(model.staleCount)
-      setMembers(model.members)
-      setSpecialistUnits(model.specialistUnits)
-      setUnits(model.units)
-      setHierarchyAssignments(model.assignments)
-      setHierarchyRevision(refreshed.revision || '')
-      setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
-      setPendingSpecialistReassignments(Array.isArray(refreshed.pendingSpecialistReassignments) ? refreshed.pendingSpecialistReassignments : [])
-      setAlfrescoReadOnly(model.alfrescoReadOnly)
-      setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
-      setUnitEditEnabled(model.alfrescoReadOnly && refreshed.capabilities?.editUnits === true)
-      setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
-      setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
-      setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
-      setSpecialistReassignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.reassignSpecialists === true)
+      applyHierarchy(await getHierarchy())
     } catch (refreshError) {
       return { ...result, refreshError: refreshError.message || 'No se pudo actualizar la vista desde Alfresco.' }
     }
@@ -907,87 +715,25 @@ export function HierarchyManagementPage({ office, csrfToken }) {
 
   const assignHead = async ({ unitId, userId, operationId }) => {
     const result = await postHierarchyHead({ unitId, userId, operationId }, csrfToken)
-    const refreshed = await getHierarchy()
-    const model = createHierarchyManagementModel(refreshed)
-    setRecipients(model.recipients)
-    setStaleCount(model.staleCount)
-    setMembers(model.members)
-    setSpecialistUnits(model.specialistUnits)
-    setUnits(model.units)
-    setHierarchyAssignments(model.assignments)
-    setHierarchyRevision(refreshed.revision || '')
-    setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
-    setPendingSpecialistReassignments(Array.isArray(refreshed.pendingSpecialistReassignments) ? refreshed.pendingSpecialistReassignments : [])
-    setAlfrescoReadOnly(model.alfrescoReadOnly)
-    setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
-    setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
-    setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
-    setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
-    setSpecialistReassignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.reassignSpecialists === true)
+    applyHierarchy(await getHierarchy())
     return result
   }
 
   const reassignSpecialist = async ({ userId, destinationUnitId, operationId, expectedRevision }) => {
     const result = await postHierarchySpecialistReassignment({ userId, destinationUnitId, operationId, expectedRevision }, csrfToken)
-    const refreshed = await getHierarchy()
-    const model = createHierarchyManagementModel(refreshed)
-    setRecipients(model.recipients)
-    setStaleCount(model.staleCount)
-    setMembers(model.members)
-    setSpecialistUnits(model.specialistUnits)
-    setUnits(model.units)
-    setHierarchyAssignments(model.assignments)
-    setHierarchyRevision(refreshed.revision || '')
-    setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
-    setPendingSpecialistReassignments(Array.isArray(refreshed.pendingSpecialistReassignments) ? refreshed.pendingSpecialistReassignments : [])
-    setAlfrescoReadOnly(model.alfrescoReadOnly)
-    setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
-    setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
-    setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
-    setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
-    setSpecialistReassignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.reassignSpecialists === true)
+    applyHierarchy(await getHierarchy())
     return result
   }
 
   const assignSpecialist = async ({ unitId, userId, operationId }) => {
     const result = await postHierarchySpecialist({ unitId, userId, operationId }, csrfToken)
-    const refreshed = await getHierarchy()
-    const model = createHierarchyManagementModel(refreshed)
-    setRecipients(model.recipients)
-    setStaleCount(model.staleCount)
-    setMembers(model.members)
-    setSpecialistUnits(model.specialistUnits)
-    setUnits(model.units)
-    setHierarchyAssignments(model.assignments)
-    setHierarchyRevision(refreshed.revision || '')
-    setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
-    setPendingSpecialistReassignments(Array.isArray(refreshed.pendingSpecialistReassignments) ? refreshed.pendingSpecialistReassignments : [])
-    setAlfrescoReadOnly(model.alfrescoReadOnly)
-    setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
-    setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
-    setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
-    setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
-    setSpecialistReassignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.reassignSpecialists === true)
+    applyHierarchy(await getHierarchy())
     return result
   }
 
   const changeHead = async ({ unitId, newHeadUserId, operationId, expectedRevision }) => {
     const result = await postHierarchyHeadChange({ unitId, newHeadUserId, operationId, expectedRevision }, csrfToken)
-    const refreshed = await getHierarchy()
-    const model = createHierarchyManagementModel(refreshed)
-    setRecipients(model.recipients)
-    setStaleCount(model.staleCount)
-    setMembers(model.members)
-    setSpecialistUnits(model.specialistUnits)
-    setUnits(model.units)
-    setHierarchyAssignments(model.assignments)
-    setHierarchyRevision(refreshed.revision || '')
-    setPendingHeadChanges(Array.isArray(refreshed.pendingHeadChanges) ? refreshed.pendingHeadChanges : [])
-    setAlfrescoReadOnly(model.alfrescoReadOnly)
-    setUnitCreationEnabled(model.alfrescoReadOnly && refreshed.capabilities?.createUnits === true)
-    setHeadAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignHeads === true)
-    setHeadChangeEnabled(model.alfrescoReadOnly && refreshed.capabilities?.changeHeads === true)
-    setSpecialistAssignmentEnabled(model.alfrescoReadOnly && refreshed.capabilities?.assignSpecialists === true)
+    applyHierarchy(await getHierarchy())
     return result
   }
 
@@ -1005,35 +751,16 @@ export function HierarchyManagementPage({ office, csrfToken }) {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', refresh)
     }
-  }, [view, office?.dependencyId])
-
-  const persistMembers = async () => {
-    setLoadingError('La jerarquía institucional solo se modifica mediante las operaciones verificadas de Alfresco.')
-    return false
-  }
+  }, [view, office?.dependencyId, loadOffice])
 
   if (view === moduleViews.office) {
     return <PanelPage description={`Organiza la jerarquía documental de ${officeName}.`} title="Administrar mi oficina">
-      <OfficeHierarchy officeName={officeName} dependency={office?.dependencyId} members={members} specialistUnits={specialistUnits} recipients={recipients} staleCount={staleCount} revision={hierarchyRevision} pendingHeadChanges={pendingHeadChanges} pendingSpecialistReassignments={pendingSpecialistReassignments} units={units} assignments={hierarchyAssignments} alfrescoReadOnly={alfrescoReadOnly} loading={loading} loadingError={loadingError} saving={saving} unitCreationEnabled={unitCreationEnabled} unitEditEnabled={unitEditEnabled} headAssignmentEnabled={headAssignmentEnabled} headChangeEnabled={headChangeEnabled} specialistAssignmentEnabled={specialistAssignmentEnabled} specialistReassignmentEnabled={specialistReassignmentEnabled} creationPending={creationPending} pendingUnitOperation={pendingUnitOperation} creationMessage={creationMessage} creationError={creationError} onCreateUnit={createUnit} onEditUnit={editUnit} onAssignHead={assignHead} onChangeHead={changeHead} onReassignSpecialist={reassignSpecialist} onRefresh={() => loadOffice()} onAddMembers={(laneId, ids, unitHeadUserId) => {
-        const nextMembers = { ...members, [laneId]: [...new Set([...members[laneId], ...ids])] }
-        const nextSpecialistUnits = laneId === 'especialistas'
-          ? { ...specialistUnits, ...Object.fromEntries(ids.map((id) => [id, unitHeadUserId])) }
-          : specialistUnits
-        return persistMembers(nextMembers, nextSpecialistUnits)
-      }} onRemoveMember={(laneId, id) => {
-        const nextMembers = { ...members, [laneId]: members[laneId].filter((memberId) => memberId !== id) }
-        const nextSpecialistUnits = { ...specialistUnits }
-        if (laneId === 'especialistas') delete nextSpecialistUnits[id]
-        if (laneId === 'jefes') {
-          for (const [specialistId, headId] of Object.entries(nextSpecialistUnits)) if (headId === id) delete nextSpecialistUnits[specialistId]
-        }
-        return persistMembers(nextMembers, nextSpecialistUnits)
-      }} onAssignSpecialist={alfrescoReadOnly ? assignSpecialist : (specialistId, unitHeadUserId) => persistMembers(members, { ...specialistUnits, [specialistId]: unitHeadUserId })} onBack={() => setView(moduleViews.home)} />
+      <AlfrescoReadOnlyHierarchy officeName={officeName} dependency={office?.dependencyId} members={members} recipients={recipients} staleCount={staleCount} revision={hierarchyRevision} pendingHeadChanges={pendingHeadChanges} pendingSpecialistReassignments={pendingSpecialistReassignments} units={units} assignments={hierarchyAssignments} loading={loading} loadingError={loadingError} unitCreationEnabled={unitCreationEnabled} unitEditEnabled={unitEditEnabled} headAssignmentEnabled={headAssignmentEnabled} headChangeEnabled={headChangeEnabled} specialistAssignmentEnabled={specialistAssignmentEnabled} specialistReassignmentEnabled={specialistReassignmentEnabled} creationPending={creationPending} pendingUnitOperation={pendingUnitOperation} creationMessage={creationMessage} creationError={creationError} onCreateUnit={createUnit} onEditUnit={editUnit} onAssignHead={assignHead} onChangeHead={changeHead} onReassignSpecialist={reassignSpecialist} onRefresh={() => loadOffice()} onAssignSpecialist={assignSpecialist} onBack={() => setView(moduleViews.home)} />
     </PanelPage>
   }
 
   if (view === moduleViews.timings) {
-    return <PanelPage description="Plazos de respuesta institucionales clasificados por prioridad." title="Tiempos de respuesta"><OfficeTimings csrfToken={csrfToken} onBack={() => setView(moduleViews.home)} /></PanelPage>
+    return <PanelPage description="Plazos de entrega y asignación dentro de la oficina." title="Tiempos de respuesta"><OfficeTimings csrfToken={csrfToken} onBack={() => setView(moduleViews.home)} /></PanelPage>
   }
 
   return <PanelPage description={`Opciones de organización para ${officeName}.`} title="Ajustes"><SettingsHome officeName={officeName} onOpen={setView} /></PanelPage>
