@@ -86,6 +86,10 @@ function createFetch({ identity = { id: settings.hierarchyService.username, enab
       'idAsignacionEvento', 'idUsuarioEvento', 'actorEvento', 'fechaEvento', 'datosAntesEvento', 'datosDespuesEvento',
       'revisionAntesEvento', 'revisionDespuesEvento', 'codigoErrorEvento',
     ].map((name) => ({ name })) })
+    if (parsed.pathname.endsWith('/service/api/classes/gdc_tiemposRespuesta')) return response(200, { properties: [
+      'codigoDependencia', 'normalValor', 'normalUnidad', 'altaValor', 'altaUnidad', 'urgenteValor',
+      'urgenteUnidad', 'revisionConfiguracion', 'idOperacion', 'modificadoPor', 'fechaModificacion',
+    ].map((name) => ({ name })) })
     return response(404, { error: 'not found' })
   }
   return { fetchImpl, calls }
@@ -123,6 +127,12 @@ test('diagnostic rejects an unexpected, disabled, or administrator service ident
     const client = createHierarchyServiceClient(settings, fetchImpl)
     await assert.rejects(client.getAuthorization(), /HIERARCHY_SERVICE_IDENTITY_INVALID/)
   }
+})
+
+test('client can verify the proposed response-time configuration model contract', async () => {
+  const { fetchImpl } = createFetch()
+  const client = createHierarchyServiceClient(settings, fetchImpl)
+  assert.deepEqual(await client.inspectType('tiemposRespuesta'), { available: true, missingProperties: [] })
 })
 
 test('diagnostic rejects a different container name and invalid configuration before network access', async () => {

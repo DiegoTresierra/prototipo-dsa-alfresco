@@ -1,3 +1,5 @@
+import { dispatchUnitLabel } from './dispatchTracking.js'
+
 // FNV-1a + avalanche: similar institutional IDs must not yield adjacent hues.
 // Pure user-ID mapping; no role, state, random value or page context participates.
 export function responsibleColor(userId) {
@@ -14,7 +16,6 @@ export function responsibleColor(userId) {
 export function responsibilityBadges(recipients) {
   return recipients.map((recipient) => {
     const person = recipient.displayName || recipient.userId
-    const unit = recipient.unit?.name || recipient.unit?.acronym || recipient.unit?.code
-    return { key: recipient.userId, label: unit ? `${person} · ${unit}` : person, color: responsibleColor(recipient.userId) }
+    return { key: recipient.userId, label: person + ' · ' + dispatchUnitLabel(recipient), color: responsibleColor(recipient.userId) }
   })
 }

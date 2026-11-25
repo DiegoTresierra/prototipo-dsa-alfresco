@@ -1,5 +1,14 @@
 export function dispatchPersistenceError(code, fallback) {
   return {
+    DISPATCH_HIERARCHY_UNAVAILABLE: 'No se pudo verificar la jerarquía institucional. Revisa la configuración de lectura y actualiza los destinos.',
+    DISPATCH_HIERARCHY_DATA_INVALID: 'La jerarquía tiene relaciones ambiguas o datos incompatibles. Solicita una revisión antes de despachar.',
+    DISPATCH_HIERARCHY_RECONCILIATION_REQUIRED: 'Hay una operación de jerarquía pendiente de confirmar. Los despachos por unidad siguen bloqueados hasta que se resuelva.',
+    DISPATCH_HIERARCHY_REVISION_CONFLICT: 'La jerarquía cambió. Vuelve a seleccionar la unidad y el destinatario cuando se actualicen los destinos.',
+    DISPATCH_HIERARCHY_REVISION_REQUIRED: 'Actualiza los destinos antes de confirmar el despacho.',
+    DISPATCH_UNIT_REQUIRED: 'Selecciona una unidad organizacional válida.',
+    DISPATCH_UNIT_NOT_APPLICABLE: 'La selección por unidad se usa en el despacho institucional de Dirección DSA.',
+    DISPATCH_UNIT_NOT_ALLOWED: 'La unidad no está activa o no pertenece a esta dependencia.',
+    DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED: 'Uno o más destinatarios ya no tienen una asignación activa y habilitada en esta unidad.',
     DISPATCH_ALFRESCO_MODEL_NOT_READY: 'La persistencia Alfresco aún no está habilitada: falta desplegar o validar las propiedades del modelo gd:tramite.',
     DISPATCH_ALFRESCO_WRITES_DISABLED: 'La escritura de asignaciones en Alfresco está desactivada para este piloto.',
     DISPATCH_INSTITUTIONAL_SCOPE_REQUIRED: 'Falta configurar las bandejas institucionales del despacho.',

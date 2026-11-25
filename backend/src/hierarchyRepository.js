@@ -89,7 +89,7 @@ export function createHierarchyRepository(settings, {
 
   function assertWriteEnabled() {
     assertConfigured()
-    if (allowWrites !== true) throw failure('HIERARCHY_REPOSITORY_WRITES_DISABLED', 403)
+    if (typeof allowWrites === 'function' ? !allowWrites() : allowWrites !== true) throw failure('HIERARCHY_REPOSITORY_WRITES_DISABLED', 403)
   }
 
   async function getContainer() {
@@ -144,6 +144,16 @@ export function createHierarchyRepository(settings, {
     const entry = await service.getNode(unitId)
     if (entry.nodeType !== unitType || entry.parentId !== container.id) throw failure('HIERARCHY_UNIT_OUT_OF_SCOPE', 403)
     return readProperties(entry, unitType)
+  }
+
+  async function getUnitAllowableOperations(unitId, dependency) {
+    const container = await getContainer()
+    const entry = await service.getNode(unitId)
+    if (entry.nodeType !== unitType || entry.parentId !== container.id ||
+        !sameDependency(entry.properties?.['gdo:codigoDependencia'], dependency)) {
+      throw failure('HIERARCHY_UNIT_OUT_OF_SCOPE', 403)
+    }
+    return Array.isArray(entry.allowableOperations) ? entry.allowableOperations : []
   }
 
   async function listAssignments({ dependency, unitId, includeInactive = true } = {}) {
@@ -395,7 +405,7 @@ export function createHierarchyRepository(settings, {
     }
   }
 
-  return { getContainer, listUnits, getUnit, listAssignments, getRevision, createUnit, createAssignment, updateUnit, deactivateAssignment }
+  return { getContainer, listUnits, getUnit, getUnitAllowableOperations, listAssignments, getRevision, createUnit, createAssignment, updateUnit, deactivateAssignment }
 }
 
 export { unitType as HIERARCHY_UNIT_TYPE, assignmentType as HIERARCHY_ASSIGNMENT_TYPE }

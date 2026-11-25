@@ -26,6 +26,13 @@ const expectedTypes = {
       'datosAntesEvento', 'datosDespuesEvento', 'revisionAntesEvento', 'revisionDespuesEvento', 'codigoErrorEvento',
     ],
   },
+  tiemposRespuesta: {
+    endpointName: 'gdc_tiemposRespuesta',
+    properties: [
+      'codigoDependencia', 'normalValor', 'normalUnidad', 'altaValor', 'altaUnidad',
+      'urgenteValor', 'urgenteUnidad', 'revisionConfiguracion', 'idOperacion', 'modificadoPor', 'fechaModificacion',
+    ],
+  },
 }
 
 function failure(code, status = 502) {
@@ -439,7 +446,8 @@ export function createHierarchyServiceClient(settings, fetchImpl = globalThis.fe
   }
 
   return {
-    getAuthorization, getPerson, getPersonGroups, getGroupDetails, getGroupMembers, getInstitutionalGroupMembers, listGroupAuthorities,
+    getAuthorization, getPerson, getPersonGroups, getGroupDetails, getGroupMembers, getInstitutionalGroupMembers,
+    listGroupAuthorities, inspectType,
     inspectGroupHierarchy, getNode, listNodeChildren, createChild, updateNode, runReadOnlyDiagnostics,
   }
 }

@@ -22,7 +22,7 @@ test('institutional hierarchy requires Direction and CSRF but never authorizes h
     ORGANIZATION_STORE_PATH: path.join(temporary, 'organization.json'), DISPATCH_STORE_PATH: path.join(temporary, 'dispatches.json'),
     ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'directory', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'fixture-password',
     ALFRESCO_HIERARCHY_SERVICE_USERNAME: 'hierarchy-service', ALFRESCO_HIERARCHY_SERVICE_PASSWORD: 'fixture-hierarchy-password',
-    ALFRESCO_HIERARCHY_CONTAINER_NODE_ID: containerId, ALFRESCO_HIERARCHY_STORAGE: 'alfresco', HIERARCHY_READ_STORAGE: 'json',
+    ALFRESCO_HIERARCHY_CONTAINER_NODE_ID: containerId, ALFRESCO_HIERARCHY_STORAGE: 'alfresco', HIERARCHY_READ_STORAGE: 'alfresco',
     ALFRESCO_HIERARCHY_AUDIT_CONTAINER_NODE_ID: auditContainerId,
     ALFRESCO_HIERARCHY_LAB_CONTAINER_NODE_ID: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
     ALFRESCO_HIERARCHY_UNIT_WRITES_ENABLED: 'true',
@@ -31,6 +31,12 @@ test('institutional hierarchy requires Direction and CSRF but never authorizes h
     ALFRESCO_HIERARCHY_SPECIALIST_WRITES_ENABLED: 'true',
     ALFRESCO_HIERARCHY_HEAD_CHANGES_ENABLED: 'true',
     ALFRESCO_HIERARCHY_SPECIALIST_REASSIGNMENTS_ENABLED: 'true',
+    ALFRESCO_RESPONSE_TIMES_WRITES_ENABLED: 'false',
+    ALFRESCO_RESPONSE_TIMES_SINGLE_INSTANCE_PILOT_ENABLED: 'false',
+    ALFRESCO_RESPONSE_TIMES_STORAGE: '',
+    ALFRESCO_RESPONSE_TIMES_SERVICE_USERNAME: '',
+    ALFRESCO_RESPONSE_TIMES_SERVICE_PASSWORD: '',
+    ALFRESCO_RESPONSE_TIMES_CONTAINER_NODE_ID: '',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DSA: 'GROUP_DSA', DTI: 'GROUP_DTI' }, functions: { direccion: 'GROUP_DIR', 'jefe-unidad': 'GROUP_HEAD', especialista: 'GROUP_STAFF' } }),
   })
   const groups = { DSA: ['director', 'head', 'staff'], DTI: ['foreign'], DIR: ['director'], HEAD: ['head'], STAFF: ['staff', 'foreign'] }
@@ -132,8 +138,28 @@ test('institutional hierarchy requires Direction and CSRF but never authorizes h
     return { Cookie: `gd_session=${session.id}.${signature}`, 'X-CSRF-Token': session.csrfToken, 'Content-Type': 'application/json' }
   }
   const base = `http://127.0.0.1:${server.address().port}`
-  assert.equal(config.hierarchyReadStorage, 'json')
+  assert.equal(config.hierarchyReadStorage, 'alfresco')
   const director = headers('director', 'direccion'), head = headers('head', 'jefe-unidad')
+  const responseTimesUrl = `${base}/api/settings/response-times`
+  assert.equal((await realFetch(responseTimesUrl)).status, 401, 'response times require an authenticated session')
+  const responseTimesRead = await realFetch(`${responseTimesUrl}?dependency=DTI`, { headers: director })
+  assert.equal(responseTimesRead.status, 200)
+  const responseTimesBody = await responseTimesRead.json()
+  assert.equal(responseTimesBody.dependency, 'dsa', 'dependency comes from the session, not the query string')
+  assert.equal(responseTimesBody.source, 'DEFAULT')
+  assert.deepEqual(responseTimesBody.values, [
+    { priority: 'NORMAL', value: 5, unit: 'DIAS' },
+    { priority: 'ALTA', value: 3, unit: 'DIAS' },
+    { priority: 'URGENTE', value: 1, unit: 'DIAS' },
+  ])
+  assert.equal(responseTimesBody.capabilities.edit, false)
+  assert.equal((await realFetch(responseTimesUrl, { headers: head })).status, 200, 'active read-authorized users may consult settings')
+  const attemptedResponseTimeWrite = (auth) => realFetch(responseTimesUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ operationId: 'response-time-http-01', values: [] }) })
+  assert.equal((await attemptedResponseTimeWrite({ ...director, 'X-CSRF-Token': '' })).status, 403, 'response-time writes require CSRF')
+  assert.equal((await attemptedResponseTimeWrite(head)).status, 403, 'only Direction may edit response times')
+  const disabledResponseTimeWrite = await attemptedResponseTimeWrite(director)
+  assert.equal(disabledResponseTimeWrite.status, 409)
+  assert.equal((await disabledResponseTimeWrite.json()).error, 'RESPONSE_TIMES_WRITES_DISABLED')
   const assignments = [{ laneId: 'jefes', userId: 'head' }, { laneId: 'especialistas', userId: 'staff', unitHeadUserId: 'head' }]
   const put = (auth, values) => realFetch(`${base}/api/hierarchy`, { method: 'PUT', headers: auth, body: JSON.stringify({ assignments: values, dependency: 'DTI' }) })
   assert.equal((await realFetch(`${base}/api/hierarchy`)).status, 401)
@@ -148,18 +174,7 @@ test('institutional hierarchy requires Direction and CSRF but never authorizes h
   assert.equal((await put({ ...director, 'X-CSRF-Token': 'invalid' }, assignments)).status, 403)
   const legacyPath = path.join(temporary, 'organization.json')
   fs.writeFileSync(legacyPath, JSON.stringify({ assignments, audit: [] }))
-  assert.equal((await put(director, assignments)).status, 409)
-  assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: director })).status, 503)
-  const recipients = await realFetch(`${base}/api/directory/dispatch-recipients`, { headers: head })
-  assert.equal(recipients.status, 503)
-  assert.equal((await recipients.json()).error, 'ORGANIZATIONAL_HIERARCHY_PENDING')
-  const dispatch = await realFetch(`${base}/api/documents/dispatch`, { method: 'POST', headers: head, body: JSON.stringify({ documentId: 'pdf', recipientUserIds: ['staff'], instruction: 'test', priority: 'Normal', requestKey: 'fixture', originAssignmentId: 'assignment' }) })
-  assert.equal(dispatch.status, 503)
-  assert.equal((await dispatch.json()).error, 'ORGANIZATIONAL_HIERARCHY_PENDING')
-  assert.ok(calls.length > 0)
-
-  // Alfresco mode is opt-in, read-only, and must not fall back to the JSON saved above.
-  config.hierarchyReadStorage = 'alfresco'
+  // Operational hierarchy reads are always Alfresco and never fall back to the legacy JSON.
   assert.equal((await realFetch(`${base}/api/hierarchy`)).status, 401)
   const alfrescoUnitWritesBeforeEdit = calls.filter((call) => call.method === 'PUT' ||
     (call.method === 'POST' && /\/nodes\/.*\/children$/.test(call.pathname))).length
@@ -170,18 +185,22 @@ test('institutional hierarchy requires Direction and CSRF but never authorizes h
   const jsonBeforeReadOnlyPut = fs.readFileSync(legacyPath, 'utf8')
   const readOnlyPut = await put(director, assignments)
   assert.equal(readOnlyPut.status, 409)
-  assert.equal((await readOnlyPut.json()).error, 'HIERARCHY_ALFRESCO_READ_ONLY')
+  assert.equal((await readOnlyPut.json()).error, 'HIERARCHY_ALFRESCO_OPERATION_ENDPOINT_REQUIRED')
   assert.equal(fs.readFileSync(legacyPath, 'utf8'), jsonBeforeReadOnlyPut)
   assert.equal((await realFetch(`${base}/api/hierarchy`, { headers: head })).status, 403)
   const alfrescoRead = await (await realFetch(`${base}/api/hierarchy`, { headers: director })).json()
   assert.equal(alfrescoRead.dependency, 'dsa')
-  assert.equal(config.hierarchyService.unitWritesEnabled, true, 'a configuration flag cannot bypass the institutional write readiness fence')
-  assert.equal(alfrescoRead.capabilities.createUnits, false)
-  assert.equal(alfrescoRead.capabilities.editUnits, false)
-  assert.equal(alfrescoRead.capabilities.assignHeads, false)
-  assert.equal(alfrescoRead.capabilities.assignSpecialists, false)
-  assert.equal(alfrescoRead.capabilities.changeHeads, false)
-  assert.equal(alfrescoRead.capabilities.reassignSpecialists, false)
+  for (const [flag, capability] of [
+    ['unitWritesEnabled', 'createUnits'],
+    ['unitEditsEnabled', 'editUnits'],
+    ['headWritesEnabled', 'assignHeads'],
+    ['specialistWritesEnabled', 'assignSpecialists'],
+    ['headChangesEnabled', 'changeHeads'],
+    ['specialistReassignmentsEnabled', 'reassignSpecialists'],
+  ]) {
+    assert.equal(config.hierarchyService[flag], true)
+    assert.equal(alfrescoRead.capabilities[capability], false, `${flag} cannot bypass institutional write readiness`)
+  }
   assert.deepEqual(alfrescoRead.units.map((unit) => unit.id), [dsaUnitId])
   assert.deepEqual(alfrescoRead.assignments.map((assignment) => assignment.userId), ['head', 'staff'])
   assert.equal(alfrescoRead.assignments[1].unitHeadUserId, 'head')

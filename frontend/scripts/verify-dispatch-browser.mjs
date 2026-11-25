@@ -16,16 +16,19 @@ assert.ok(fs.existsSync(path.join(dist, 'index.html')), 'Run npm run build first
 fs.mkdirSync(artifacts, { recursive: true })
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-browser-'))
 const id = '11111111-2222-4333-8444-2a29efcb482b'
+const firstUnit = { id: '20000000-0000-4000-8000-000000000001', name: 'Unidad de origen', code: 'DSA-01', dependency: 'dsa' }
+const targetUnit = { id: '20000000-0000-4000-8000-000000000002', name: 'Unidad de destino verificada', code: 'DSA-02', dependency: 'dsa' }
+const hierarchyRevision = 'a'.repeat(64)
 const people = [
-  { id: 'fixture_head_a', displayName: 'fixture_head_a', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
-  { id: 'fixture_head_b', displayName: 'fixture_head_b', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: null },
-  { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: null },
+  { id: 'JEFE_UNIDAD_DSA_1', displayName: 'JEFE_UNIDAD_DSA_1', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: firstUnit },
+  { id: 'JEFE_UNIDAD_DSA_2', displayName: 'JEFE_UNIDAD_DSA_2', functionalRole: 'jefe-unidad', dependency: 'dsa', unit: targetUnit },
+  { id: 'specialist.fixture.1@example.invalid', displayName: 'Especialista DSA', functionalRole: 'especialista', dependency: 'dsa', unit: targetUnit },
 ]
 const node = { id, name: 'oficio-prueba.pdf', isFile: true, nodeType: 'cm:content', parentId: 'dsa-attention',
   content: { mimeType: 'application/pdf', sizeInBytes: 500 }, aspectNames: ['gd:tramite'],
-  createdAt: '2026-11-17T12:00:00Z', createdByUser: { id: 'fixture_director_b', displayName: 'Dirección DTI' },
+  createdAt: '2026-11-17T12:00:00Z', createdByUser: { id: 'DTI_T', displayName: 'Dirección DTI' },
   properties: { 'cm:title': 'Documento de prueba: responsabilidades equivalentes', 'gd:dependenciaOrigen': 'DTI', 'cm:author': 'Home' } }
-const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'fixture_director_a', senderRole: 'direccion', senderDependency: 'dsa',
+const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'DSA_T', senderRole: 'direccion', senderDependency: 'dsa',
   requestKey: key, originAssignmentId: null, instruction: 'Instrucción de prueba local', priority: 'Normal', createdAt: node.createdAt,
   status: 'ASIGNADO', recipients: recipients.map((person) => ({ ...person, id: `${key}:${person.id}`, userId: person.id, documentId: id,
     dispatchId: key, status: 'ASIGNADO', createdAt: node.createdAt })) })
@@ -35,8 +38,8 @@ const counters = { assignments: 0, directory: 0, children: 0, closureInbox: 0, m
 let officialFixture
 let closureEnabled = false, closureClosed = false, closurePosts = 0
 let hierarchyConfigurationMissing = false
-const session = { authenticated: true, dispatchWritesEnabled: true, officialWritesEnabled: true, distributionDependencies: ['DTI'], authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
-  alfresco: { id: 'fixture_director_a', displayName: 'Dirección DSA' }, user: { id: 'fixture_director_a', name: 'Dirección DSA' },
+const session = { authenticated: true, authorizationStatus: 'active', roleId: 'director-dsa', functionalRole: 'direccion', dependency: 'DSA',
+  alfresco: { id: 'DSA_T', displayName: 'Dirección DSA' }, user: { id: 'DSA_T', name: 'Dirección DSA' },
   capabilities: ['documents:read', 'documents:write'], dispatchRecipientRoles: ['jefe-unidad', 'especialista'], csrfToken: 'local-fixture-only',
   canAttendAssignments: true, canIssueInstitutionalResponse: true, canLinkOfficialResponse: true }
 const server = http.createServer(async (request, response) => {
@@ -48,8 +51,15 @@ const server = http.createServer(async (request, response) => {
       if (hierarchyConfigurationMissing) return json({ error: 'HIERARCHY_ALFRESCO_CONFIGURATION_REQUIRED',
         missingConfiguration: ['ALFRESCO_HIERARCHY_STORAGE', 'ALFRESCO_HIERARCHY_SERVICE_USERNAME', 'ALFRESCO_HIERARCHY_CONTAINER_NODE_ID'] }, 503)
       return json({ dependency: 'dsa', director: { id: 'direction-fixture', displayName: 'Dirección de ensayo' },
-        revision: 'a'.repeat(64), capabilities: {}, pendingHeadChanges: [], pendingSpecialistReassignments: [],
-        units: [{ id: 'unit-fixture', name: 'Unidad de ensayo', code: 'TEST', dependency: 'dsa', status: 'ACTIVA' }],
+        revision: 'a'.repeat(64), capabilities: {
+          createUnits: false, editUnits: false, assignHeads: false, changeHeads: false,
+          assignSpecialists: false, reassignSpecialists: false,
+        },
+        pendingHeadChanges: [], pendingSpecialistReassignments: [],
+        units: [
+          { id: 'unit-fixture', name: 'Unidad de ensayo', code: 'TEST', dependency: 'dsa', status: 'ACTIVA' },
+          { id: 'unit-without-head', name: 'Unidad sin jefatura', code: 'TEST2', dependency: 'dsa', status: 'ACTIVA' },
+        ],
         recipients: [{ id: 'head-fixture', displayName: 'Jefatura de ensayo', functionalRole: 'jefe-unidad', dependency: 'dsa' },
           { id: 'staff-fixture', displayName: 'Especialista de ensayo', functionalRole: 'especialista', dependency: 'dsa' }],
         assignments: [{ laneId: 'jefes', userId: 'head-fixture', unitId: 'unit-fixture', dependency: 'dsa' },
@@ -109,13 +119,22 @@ const server = http.createServer(async (request, response) => {
       }
       assert.equal(form.get('requestKey'), officialFixture.requestKey, 'uncertain browser retry preserves original key')
       assert.equal(signature, officialFixture.signature)
-      const entry = { ...node, id: 'official-response', parentId: 'dsa-emitted', createdByUser: { id: 'fixture_director_a' },
+      const entry = { ...node, id: 'official-response', parentId: 'dsa-emitted', createdByUser: { id: 'DSA_T' },
         properties: { 'cm:title': form.get('title'), 'gd:numero': '1', 'gd:codigoDocumental': 'DSA', 'gd:cicloDocumental': 2026 } }
       return json({ officialEmission: true, emittedEntry: entry, receivedEntry: entry }, 201)
     }
     if (url.pathname === '/api/documents/assignments/response' && request.method === 'POST') return json({ persistence: 'alfresco', documentId: id, response: { documentId: 'official-response' } })
     if (url.pathname === '/api/directory/office-inboxes') return json({ folders: { porAtender: 'dsa-attention', porConocimiento: 'dsa-knowledge' } })
-    if (url.pathname === '/api/directory/dispatch-recipients') { counters.directory++; return json({ recipients: people, allowedRecipientRoles: session.dispatchRecipientRoles }) }
+    if (url.pathname === '/api/directory/dispatch-recipients') {
+      counters.directory++
+      const requiresUnit = session.functionalRole === 'direccion' && session.dependency === 'DSA'
+      return json({ recipients: people, allowedRecipientRoles: session.dispatchRecipientRoles,
+        ...(requiresUnit ? { requiresUnit, hierarchyRevision, units: [
+          { ...firstUnit, head: people[0], specialists: [] },
+          { ...targetUnit, head: people[1], specialists: [people[2]] },
+        ] } : {}),
+      })
+    }
     if (url.pathname === '/api/documents/dispatches') {
       counters.assignments++
       return json({ persistence: 'alfresco', dispatches: session.functionalRole === 'direccion' ? records : records.filter((record) => record.recipients.some((assignment) => assignment.userId === session.alfresco.id)),
@@ -149,6 +168,12 @@ const server = http.createServer(async (request, response) => {
       for await (const chunk of request) body += chunk
       const input = JSON.parse(body)
       const created = record(input.requestKey, people.filter((person) => input.recipientUserIds.includes(person.id)))
+      assert.equal(input.documentId, id)
+      assert.equal(input.unitId, targetUnit.id)
+      assert.equal(input.hierarchyRevision, hierarchyRevision)
+      assert.deepEqual(input.recipientUserIds, [people[1].id, people[2].id])
+      created.unitId = input.unitId
+      for (const recipient of created.recipients) recipient.unitId = input.unitId
       records.push(created)
       counters.mockDispatches++
       return json({ persistence: 'alfresco', dispatch: created }, 201)
@@ -194,8 +219,9 @@ async function evaluate(expression) {
   return response.result?.value
 }
 const clickText = (text) => evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===${JSON.stringify(text)}); if(!b)throw Error('button missing');b.click();return true})()`)
-const labels = () => evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');return s?[...s.options].map(o=>({value:o.value,text:o.textContent})):null})()`)
-async function waitAssigned(count) { return until(async () => { const values = await labels(); return values?.filter((option) => option.text.includes('Ya asignado')).length === count }, `${count} assigned options`) }
+async function waitAssigned(count) {
+  return until(async () => (await evaluate("document.querySelectorAll('.document-assignment-markers [data-user-id]').length")) === count, `${count} assigned recipients`)
+}
 async function waitIdle() { return until(() => evaluate("Boolean(document.querySelector('.received-inbox__refresh button')) && !document.querySelector('.received-inbox__refresh button').disabled"), 'inbox refresh settled') }
 try {
   const activePort = path.join(profile, 'DevToolsActivePort')
@@ -223,7 +249,15 @@ try {
   await until(() => evaluate("Boolean(document.querySelector('.office-chart__unit'))"), 'Alfresco hierarchy rendering')
   assert.ok(await evaluate("document.body.textContent.includes('Unidad de ensayo') && document.body.textContent.includes('Especialista de ensayo') && document.body.textContent.includes('solo lectura')"))
   assert.equal(await evaluate("document.querySelector('button[form=\"alfresco-create-unit-form\"]').disabled"), true)
-  assert.equal(await evaluate("[...document.querySelectorAll('.settings-detail button')].some(b => /Guardar unidad|Cambiar jef|Reasignar/.test(b.textContent) && !b.disabled)"), false)
+  const creationFields = await evaluate("[...document.querySelectorAll('#alfresco-create-unit-form input, #alfresco-create-unit-form textarea, #alfresco-create-unit-form button')].map(control => control.disabled)")
+  assert.deepEqual(creationFields, [true, true, true, true], 'the read-only creation form disables all its controls')
+  const unitButtons = await evaluate("[...document.querySelectorAll('.office-chart__unit button')].map(button => ({ label: button.textContent.trim(), disabled: button.disabled }))")
+  for (const label of ['Editar unidad', 'Asignar Jefe', 'Cambio de Jefe', 'Asignación', 'Reasignación']) {
+    assert.ok(unitButtons.some(button => button.label.startsWith(label)), label)
+  }
+  assert.ok(unitButtons.every(button => button.disabled), 'unit editing and assignment controls follow the write capabilities')
+  assert.equal(await evaluate("document.querySelectorAll('.office-chart__unit select:enabled').length"), 0)
+  await until(() => evaluate("document.body.textContent.includes('Historial de movimientos')"), 'hierarchy history is available in read-only mode')
   hierarchyConfigurationMissing = true
   await clickText('Actualizar datos')
   await until(() => evaluate("document.body.textContent.includes('ALFRESCO_HIERARCHY_CONTAINER_NODE_ID')"), 'explicit hierarchy configuration error')
@@ -242,10 +276,15 @@ try {
   await until(() => evaluate("!document.querySelector('.received-inbox__refresh button')?.disabled"), 'refresh complete')
   assert.equal(counters.assignments - before, 1, 'one assignment query per manual refresh')
   const beforeSelection = counters.assignments
-  await evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');s.value='dispatch:fixture_head_b';s.dispatchEvent(new Event('change',{bubbles:true}));})()`)
+  await until(() => evaluate("Boolean(document.querySelector('option[value=\"dispatch-unit\"]'))"), 'verified organizational destinations')
+  await evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');s.value='dispatch-unit';s.dispatchEvent(new Event('change',{bubbles:true}));})()`)
   await until(() => evaluate("Boolean(document.querySelector('.dispatch-panel textarea'))"), 'dispatch confirmation form')
   assert.equal(counters.assignments, beforeSelection, 'opening the PDF does not scan assignments again')
-  await evaluate(`(()=>{[...document.querySelectorAll('.dispatch-panel__recipient')].find(x=>x.textContent.includes('Especialista DSA')).querySelector('input').click(); const t=document.querySelector('.dispatch-panel textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'Prueba de integración local');t.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+  assert.equal(await evaluate("document.querySelectorAll('.dispatch-panel__recipient').length"), 0)
+  await evaluate("(() => { const s = document.querySelector('.dispatch-panel select'); s.selectedIndex = 2; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+  const candidates = await evaluate("[...document.querySelectorAll('.dispatch-panel__recipient strong')].map(x => x.textContent)")
+  assert.deepEqual(candidates, [people[1].displayName, people[2].displayName])
+  await evaluate(`(()=>{for(const label of document.querySelectorAll('.dispatch-panel__recipient')) label.querySelector('input').click(); const t=document.querySelector('.dispatch-panel textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'Prueba de integración local');t.dispatchEvent(new Event('input',{bubbles:true}));})()`)
   await clickText('Confirmar derivación')
   await waitAssigned(3)
   assert.equal(counters.mockDispatches, 1)
@@ -255,6 +294,11 @@ try {
   assert.equal(new Set(visual.segments.map((segment) => segment.color)).size, 3)
   assert.ok(visual.background.includes('gradient'))
   assert.ok(Math.max(...visual.segments.map((segment) => segment.height)) - Math.min(...visual.segments.map((segment) => segment.height)) < 1)
+  await clickText('Seguimiento')
+  await until(() => evaluate("document.body.textContent.includes('Unidad de destino verificada')"), 'persisted unit visible in documentary tracking')
+  assert.ok(await evaluate("document.body.textContent.includes('Unidad no registrada')"))
+  await evaluate("document.querySelector('.document-table .document-link').click()")
+  await until(() => evaluate("document.body.textContent.includes('Encargos activos') && document.body.textContent.includes('Historial de encargos')"), 'tracking detail separates active and historical assignments')
   await clickText('Inicio')
   await clickText('Documentos recibidos')
   await waitAssigned(3)
@@ -304,7 +348,7 @@ try {
   assert.equal(counters.officialCreated, 1)
   assert.equal(counters.mockAttentions, 0, 'formal emission and link never attend assignments automatically')
   for (const [userId, role, roleId, menu, capture] of [
-    ['fixture_head_a', 'jefe-unidad', 'jefe-unidad-dsa', 'Documentos recibidos', 'attention-head'],
+    ['JEFE_UNIDAD_DSA_1', 'jefe-unidad', 'jefe-unidad-dsa', 'Documentos recibidos', 'attention-head'],
     ['specialist.fixture.1@example.invalid', 'especialista', 'especialista-dsa', 'Mis asignaciones', 'attention-staff'],
   ]) {
     Object.assign(session, { functionalRole: role, roleId, alfresco: { id: userId }, user: { id: userId, name: userId }, canIssueInstitutionalResponse: false,
@@ -319,7 +363,7 @@ try {
     await clickText('Responder con documento')
     await until(() => evaluate("Boolean(document.querySelector('select option[value=\"\"]'))"), 'official reuse selector')
     assert.equal(await evaluate("[...document.querySelectorAll('button')].some(x=>x.textContent==='Generar nueva emisión')"), false)
-    assert.ok(await evaluate("document.body.textContent.includes('Emisor documental original: DTI') && document.body.textContent.includes('Despachado por: fixture_director_a')"))
+    assert.ok(await evaluate("document.body.textContent.includes('Emisor documental original: DTI') && document.body.textContent.includes('Despachado por: DSA_T')"))
     await clickText('Marcar como atendido')
     await until(() => evaluate("document.body.textContent.includes('Mi asignación: ATENDIDO')"), 'completed own obligation')
     assert.ok(records.flatMap((record) => record.recipients).some((assignment) => assignment.userId !== userId && assignment.status === 'ASIGNADO'), 'other equivalent responsibilities remain pending')
@@ -331,7 +375,7 @@ try {
     const shot = await command('Page.captureScreenshot', { format: 'png' })
     fs.writeFileSync(path.join(artifacts, `${capture}.png`), Buffer.from(shot.data, 'base64'))
   }
-  Object.assign(session, { functionalRole: 'direccion', roleId: 'director-dti', dependency: 'DTI', alfresco: { id: 'fixture_director_b' }, user: { id: 'fixture_director_b', name: 'Direction DTI' },
+  Object.assign(session, { functionalRole: 'direccion', roleId: 'director-dti', dependency: 'DTI', alfresco: { id: 'DTI_T' }, user: { id: 'DTI_T', name: 'Direction DTI' },
     canIssueInstitutionalResponse: true, dispatchRecipientRoles: ['jefe-unidad', 'especialista'] })
   await evaluate("localStorage.removeItem('gestion-documental-dsa.alfresco-confirmed-documents.v1')")
   await command('Page.reload', { ignoreCache: true })
@@ -347,7 +391,7 @@ try {
   await until(() => evaluate("document.body.textContent.includes('UUID del original al que responder')"), 'reuse existing Emitidos UUID')
   assert.equal(await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Vincular este documento oficial como respuesta').disabled"), true)
   await clickText('Cerrar vista previa')
-  Object.assign(session, { roleId: 'director-dsa', dependency: 'DSA', alfresco: { id: 'fixture_director_a' }, user: { id: 'fixture_director_a', name: 'Direction DSA' } })
+  Object.assign(session, { roleId: 'director-dsa', dependency: 'DSA', alfresco: { id: 'DSA_T' }, user: { id: 'DSA_T', name: 'Direction DSA' } })
   await command('Page.reload', { ignoreCache: true })
   await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'DSA workspace')
   await clickText('Emitidos')

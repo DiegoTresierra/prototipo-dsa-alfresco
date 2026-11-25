@@ -2,8 +2,15 @@ import { useState } from 'react'
 import { eligibleDispatchRecipients } from '../utils/dispatchRecipients'
 
 /* eslint-disable react/prop-types */
-export function DispatchPanel({ document, recipients = [], allowedRecipientRoles = [], initialRecipientIds = [], assignedUserIds = [], loading, error, onDispatch, originAssignmentId = null }) {
-  const eligibleRecipients = eligibleDispatchRecipients(recipients, allowedRecipientRoles)
+export function DispatchPanel({ document, recipients = [], allowedRecipientRoles = [], initialRecipientIds = [], assignedUserIds = [], loading, error, onDispatch, originAssignmentId = null, directory = {} }) {
+  const { requiresUnit = false, units = [], hierarchyRevision } = directory
+  const [selectedUnit, setSelectedUnit] = useState(null)
+  const staleUnit = requiresUnit && selectedUnit && selectedUnit.revision !== hierarchyRevision
+  const unit = requiresUnit && !staleUnit ? units.find((item) => item.id === selectedUnit?.id) : null
+  const eligibleRecipients = eligibleDispatchRecipients(
+    requiresUnit ? recipients.filter((recipient) => unit && recipient.unit?.id === unit.id) : recipients,
+    allowedRecipientRoles,
+  )
   const [selectedIds, setSelectedIds] = useState(() => initialRecipientIds.filter((id) => eligibleRecipients.some((recipient) => recipient.id === id)))
   const [instruction, setInstruction] = useState('')
   const [priority, setPriority] = useState('Normal')
@@ -12,9 +19,14 @@ export function DispatchPanel({ document, recipients = [], allowedRecipientRoles
   const [message, setMessage] = useState('')
   const [requestKey] = useState(() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`)
   const toggleRecipient = (id) => setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])
+  const chooseUnit = (id) => {
+    setSelectedUnit(id ? { id, revision: hierarchyRevision } : null)
+    setSelectedIds([])
+    setMessage('')
+  }
   const submit = async (event) => {
     event.preventDefault()
-    if (confirmed || submitting) return
+    if (confirmed || submitting || loading || error || requiresUnit && !unit) return
     const selectedRecipientIds = selectedIds.filter((id) => eligibleRecipients.some((recipient) => recipient.id === id))
     if (!selectedRecipientIds.length || !instruction.trim()) {
       setMessage('Selecciona al menos un destinatario e indica la instrucción del encargo.')
@@ -23,7 +35,8 @@ export function DispatchPanel({ document, recipients = [], allowedRecipientRoles
     setSubmitting(true)
     setMessage('')
     try {
-      await onDispatch(document.id, selectedRecipientIds, instruction.trim(), priority, requestKey, originAssignmentId)
+      const destination = requiresUnit ? { unitId: unit.id, hierarchyRevision: selectedUnit.revision } : undefined
+      await onDispatch(document.id, selectedRecipientIds, instruction.trim(), priority, requestKey, originAssignmentId, destination)
       setConfirmed(true)
       setMessage('Derivación registrada. Cada destinatario conserva su propio encargo sobre el documento original.')
     } catch (dispatchError) {
@@ -38,7 +51,18 @@ export function DispatchPanel({ document, recipients = [], allowedRecipientRoles
     <p>Documento: <strong>{document.subject || document.attachmentName}</strong></p>
     {loading && <p className="form-message" role="status">Consultando destinatarios autorizados...</p>}
     {error && <p className="form-message form-message--error" role="alert">{error}</p>}
-    {!loading && !error && !eligibleRecipients.length && <p className="form-message" role="status">No hay destinatarios habilitados para tu rol y dependencia.</p>}
+    {requiresUnit && <label className="form-field">
+      <span>Unidad organizacional</span>
+      <select disabled={disabled || loading || Boolean(error) || !units.length} onChange={(event) => chooseUnit(event.target.value)} required value={unit?.id || ''}>
+        <option value="">Selecciona una unidad</option>
+        {units.map((item) => <option key={item.id} value={item.id}>{item.name}{item.code ? ' · ' + item.code : ''}</option>)}
+      </select>
+    </label>}
+    {!loading && !error && staleUnit && <p className="form-message" role="status">La jerarquía cambió. Vuelve a seleccionar la unidad y el destinatario.</p>}
+    {!loading && !error && requiresUnit && !units.length && <p className="form-message" role="status">Tu dependencia aún no tiene unidades activas.</p>}
+    {!loading && !error && (!requiresUnit || unit) && !eligibleRecipients.length && <p className="form-message" role="status">
+      {requiresUnit ? 'Esta unidad no tiene responsables habilitados.' : 'No hay destinatarios habilitados para tu rol y dependencia.'}
+    </p>}
     <fieldset className="dispatch-panel__recipients" disabled={disabled}><legend>Destinatarios equivalentes</legend>{eligibleRecipients.map((recipient) => <label className="dispatch-panel__recipient" key={recipient.id}>
       <input checked={selectedIds.includes(recipient.id)} onChange={() => toggleRecipient(recipient.id)} type="checkbox" />
       <span><strong>{recipient.displayName}</strong><small>{recipient.functionalRole === 'jefe-unidad' ? 'Jefatura' : 'Especialista'} · {recipient.unit?.name || recipient.dependency?.toUpperCase()}{assignedUserIds.includes(recipient.id) ? ' — Ya asignado' : ''}</small></span>

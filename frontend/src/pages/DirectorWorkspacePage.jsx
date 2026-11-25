@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { DocumentList } from '../components/DocumentList'
+import { DispatchTracking } from '../components/DispatchTracking'
 import { PanelPage } from '../components/PanelPage'
 import { DirectorPage } from './DirectorPage'
 import { HierarchyManagementPage } from './HierarchyManagementPage'
@@ -46,7 +46,7 @@ function DirectorHome({ office, sent, received, emittedError }) {
   )
 }
 
-export function DirectorWorkspacePage({ title, description, activePanel, office, localScopeId, allowAlfresco = false, inbox, emittedInbox, csrfToken, canLinkExisting = false }) {
+export function DirectorWorkspacePage({ title, description, activePanel, office, localScopeId, allowAlfresco = false, inbox, emittedInbox, csrfToken, canLinkExisting = false, dispatchRecords = [], dispatchError = '' }) {
   const sent = emittedInbox?.documents || []
   const received = inbox?.documents || []
 
@@ -65,7 +65,9 @@ export function DirectorWorkspacePage({ title, description, activePanel, office,
 
   if (activePanel === 'seguimiento') {
     const related = [...new Map([...sent, ...received].map((document) => [document.id, document])).values()]
-    return <DocumentList description="Documentos disponibles desde Alfresco para esta sesion." documents={related} title={title} />
+    return <DispatchTracking description="Consulta los encargos registrados sobre los documentos de tu dependencia." documents={related}
+      dispatchRecords={dispatchRecords} error={dispatchError || inbox?.error || (!allowAlfresco ? 'La consulta requiere permiso de lectura.' : '')}
+      loading={inbox?.loading} title={title} />
   }
 
   return <PanelPage description={description} title={title}><p className="empty-state">Esta operacion requiere un flujo y estados configurados en Alfresco.</p></PanelPage>
