@@ -277,6 +277,31 @@ try {
   await until(() => counters.assignments > before, 'refresh queries assignments')
   await until(() => evaluate("!document.querySelector('.received-inbox__refresh button')?.disabled"), 'refresh complete')
   assert.equal(counters.assignments - before, 1, 'one assignment query per manual refresh')
+  // Some browser origins expose getRandomValues but do not expose randomUUID.
+  const previewErrors = []
+  await command('Runtime.enable')
+  socket.addEventListener('message', ({ data }) => {
+    const event = JSON.parse(data)
+    if (event.method === 'Runtime.exceptionThrown') previewErrors.push(event.params.exceptionDetails.exception?.description)
+  })
+  await evaluate("Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true })")
+  await evaluate("document.querySelector('.received-inbox__subject').click()")
+  await until(async () => {
+    if (previewErrors.length) throw new Error(previewErrors.join('\n'))
+    return evaluate("Boolean(document.querySelector('.dispatch-panel textarea'))")
+  }, 'document selection must retain the React application')
+  await clickText('Cerrar vista previa')
+  const historical = records.shift()
+  await clickText('Actualizar bandeja')
+  await waitAssigned(0)
+  await evaluate("document.querySelector('.received-inbox__subject').click()")
+  await until(() => evaluate("Boolean(document.querySelector('.dispatch-panel textarea'))"), 'unassigned shared PDF opens')
+  assert.deepEqual(previewErrors, [])
+  await clickText('Cerrar vista previa')
+  records.unshift(historical)
+  await clickText('Actualizar bandeja')
+  await waitAssigned(1)
+  await evaluate("delete crypto.randomUUID")
   const beforeSelection = counters.assignments
   await until(() => evaluate("Boolean(document.querySelector('option[value=\"dispatch-unit\"]'))"), 'verified organizational destinations')
   await evaluate(`(()=>{const s=document.querySelector('select[aria-label^="Asignar responsable"]');s.value='dispatch-unit';s.dispatchEvent(new Event('change',{bubbles:true}));})()`)

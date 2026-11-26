@@ -84,9 +84,12 @@ export async function listDispatchRecipients() {
       messages[response.status] || body.error || 'No se pudieron cargar los destinos autorizados.'))
   }
   const result = await response.json()
-  if (!Array.isArray(result?.recipients)) throw new Error('El directorio de jefaturas no tiene un formato válido.')
+  if (!Array.isArray(result?.recipients) || result.recipients.some(person =>
+    !person || typeof person.id !== 'string' || typeof person.displayName !== 'string' ||
+    typeof person.functionalRole !== 'string' || typeof person.dependency !== 'string' ||
+    (person.unit?.name != null && typeof person.unit.name !== 'string'))) throw new Error('El directorio de jefaturas no tiene un formato válido.')
   const requiresUnit = result.requiresUnit === true
-  if (requiresUnit && (!Array.isArray(result.units) || !/^[0-9a-f]{64}$/.test(result.hierarchyRevision || ''))) {
+  if (requiresUnit && (!Array.isArray(result.units) || result.units.some(unit => !unit || typeof unit.id !== 'string' || typeof unit.name !== 'string' || (unit.code != null && typeof unit.code !== 'string')) || !/^[0-9a-f]{64}$/.test(result.hierarchyRevision || ''))) {
     throw new Error('No se pudo verificar la lista de unidades y su revisión.')
   }
   return {

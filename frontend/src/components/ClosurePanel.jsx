@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { operationKey } from '../utils/operationKey'
+import { useRef, useEffect, useState } from 'react'
 import { getClosureEvaluation, confirmDocumentClosure } from '../api/alfresco'
 import { closureReasonMessage } from '../utils/closureMessages'
 /* eslint-disable react/prop-types */
 export function ClosurePanel({ documentId, csrfToken, onChanged, autoEvaluate = false, readOnly = false }) {
   const [result, setResult] = useState(null)
   const [reason, setReason] = useState('')
-  const [key] = useState(() => globalThis.crypto.randomUUID())
+  const requestKey = useRef(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -24,7 +25,7 @@ export function ClosurePanel({ documentId, csrfToken, onChanged, autoEvaluate = 
   const refresh = async () => setResult(await getClosureEvaluation(documentId))
   const close = async () => {
     const pending = result.pendingOperation
-    await confirmDocumentClosure({ documentId, reason: pending?.reason || reason, requestKey: pending?.requestKey || key,
+    await confirmDocumentClosure({ documentId, reason: pending?.reason || reason, requestKey: pending?.requestKey || (requestKey.current ||= operationKey()),
       expectedEnvelopeRevision: pending?.expectedEnvelopeRevision ?? result.evaluation.envelopeRevision }, csrfToken, Boolean(pending))
     await refresh()
     window.dispatchEvent(new Event('uac:alfresco-document-created'))

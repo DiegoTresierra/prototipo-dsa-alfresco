@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { operationKey } from '../utils/operationKey'
+import { useRef, useState } from 'react'
 import { eligibleDispatchRecipients } from '../utils/dispatchRecipients'
 
 /* eslint-disable react/prop-types */
@@ -17,7 +18,7 @@ export function DispatchPanel({ document, recipients = [], allowedRecipientRoles
   const [submitting, setSubmitting] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
   const [message, setMessage] = useState('')
-  const [requestKey] = useState(() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  const requestKey = useRef(null)
   const toggleRecipient = (id) => setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])
   const chooseUnit = (id) => {
     setSelectedUnit(id ? { id, revision: hierarchyRevision } : null)
@@ -36,7 +37,7 @@ export function DispatchPanel({ document, recipients = [], allowedRecipientRoles
     setMessage('')
     try {
       const destination = requiresUnit ? { unitId: unit.id, hierarchyRevision: selectedUnit.revision } : undefined
-      await onDispatch(document.id, selectedRecipientIds, instruction.trim(), priority, requestKey, originAssignmentId, destination)
+      await onDispatch(document.id, selectedRecipientIds, instruction.trim(), priority, requestKey.current ||= operationKey(), originAssignmentId, destination)
       setConfirmed(true)
       setMessage('Derivación registrada. Cada destinatario conserva su propio encargo sobre el documento original.')
     } catch (dispatchError) {
