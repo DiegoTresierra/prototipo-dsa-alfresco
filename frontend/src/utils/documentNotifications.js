@@ -16,7 +16,7 @@ export function loadDocumentNotificationState(storage, key) {
     if (!parsed || !Array.isArray(parsed.knownDocumentIds) || !Array.isArray(parsed.notifications)) return emptyState()
 
     const notifications = parsed.notifications
-      .filter((notification) => [notificationEventType, 'assignment-created'].includes(notification?.type) && typeof notification.id === 'string' && typeof notification.documentId === 'string')
+      .filter((notification) => [notificationEventType, 'assignment-created', 'deadline-near', 'deadline-overdue', 'assignment-attended'].includes(notification?.type) && typeof notification.id === 'string' && typeof notification.documentId === 'string')
       .map((notification) => ({
         id: notification.id,
         type: notification.type,
@@ -81,7 +81,7 @@ export function persistedDocumentNotifications(documents, dispatches, userId, re
     const document = documents.find(item => item.id === dispatch.documentId)
     for (const assignment of dispatch.recipients || []) {
       if (!assignment.id || assignment.userId !== userId ||
-          !['ASIGNADO', 'DESPACHADO'].includes(assignment.status)) continue
+          !['ASIGNADO', 'DESPACHADO', 'ATENDIDO'].includes(assignment.status)) continue
       const id = JSON.stringify([dispatch.documentId, assignment.id, userId, 'ASSIGNMENT_CREATED'])
       events.set(id, {
         id, type: 'assignment-created', documentId: dispatch.documentId,
@@ -90,8 +90,25 @@ export function persistedDocumentNotifications(documents, dispatches, userId, re
         title: document?.subject || document?.attachmentName || '',
         sender: document?.sender || dispatch.senderUserId || '',
         priority: dispatch.priority || document?.priority || '',
+        deadline: assignment.deadline,
         isRead: readIds.has(id), source: 'alfresco-assignment',
       })
+      const deadline = assignment.deadline
+      const addAssignmentEvent = (type, detectedAt) => {
+        const eventId = JSON.stringify([dispatch.documentId, assignment.id, userId, type])
+        events.set(eventId, {
+          id: eventId, type, documentId: dispatch.documentId, assignmentId: assignment.id,
+          detectedAt, title: document?.subject || document?.attachmentName || '',
+          sender: document?.sender || dispatch.senderUserId || '', priority: dispatch.priority || document?.priority || '',
+          deadline, isRead: readIds.has(eventId), source: 'alfresco-assignment',
+        })
+      }
+      if (assignment.status === 'ATENDIDO') addAssignmentEvent('assignment-attended', assignment.attendedAt || assignment.createdAt || dispatch.createdAt || '')
+      else if (['POR_VENCER', 'VENCIDO'].includes(deadline?.status)) {
+        const nearAt = Date.parse(deadline.dueAt) - deadline.initialDurationMs * 0.2
+        addAssignmentEvent('deadline-near', Number.isFinite(nearAt) ? new Date(nearAt).toISOString() : deadline.dueAt)
+        if (deadline.status === 'VENCIDO') addAssignmentEvent('deadline-overdue', deadline.dueAt || new Date().toISOString())
+      }
     }
   }
   return [...events.values()]

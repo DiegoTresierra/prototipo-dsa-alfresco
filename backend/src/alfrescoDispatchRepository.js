@@ -13,6 +13,8 @@ import { revalidateInstitutionalIdentity } from './institutionalIdentity.js'
 import { validateProposalJournal } from './responseProposalJournal.js'
 import { assertEnvelopeExtensionsPreserved, validateEnvelopeExtensions } from './envelopeExtensions.js'
 import { assertInterventionMutable } from './closedInterventionPolicy.js'
+import { createDeadlineSnapshot, isValidDeadlineSnapshot, withAssignmentDeadlines } from './assignmentDeadline.js'
+import { responseTimesDefaults } from './responseTimesService.js'
 
 export const assignmentProperty = 'gd:asignaciones'
 export const responsibleProperty = 'gd:responsablesActuales'
@@ -68,6 +70,7 @@ export function parseAssignments(raw, documentId) {
           record.unitId && !unitSnapshotMatches(recipient.unit, record.unitId, record.senderDependency)) {
         fail('DISPATCH_INVALID_ASSIGNMENTS')
       }
+      if (recipient.deadlineSnapshot !== undefined && !isValidDeadlineSnapshot(recipient.deadlineSnapshot, record.priority)) fail('DISPATCH_INVALID_ASSIGNMENTS')
       users.add(recipient.userId)
       assignments.set(recipient.id, recipient)
       if (recipient.responses !== undefined && !Array.isArray(recipient.responses)) fail('DISPATCH_INVALID_ASSIGNMENTS')
@@ -136,7 +139,7 @@ export function projections(envelope) {
   }
 }
 
-export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args) => globalThis.fetch(...args)) {
+export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args) => globalThis.fetch(...args), { readResponseTimes = responseTimesDefaults } = {}) {
   const withDocument = createDocumentQueue()
   const pilot = () => settings.dispatchPilot || {}
   const serviceAuthorization = () => {
@@ -229,8 +232,10 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
       return recipients
     }
     const recipients = await getRecipients()
+    const responseTimeSettings = await readResponseTimes(String(input.senderDependency).toLowerCase())
     const id = randomUUID()
     const at = new Date().toISOString()
+    const deadlineSnapshot = createDeadlineSnapshot({ priority: input.priority, startedAt: at, settings: responseTimeSettings })
     const record = {
       id, requestKey: input.requestKey, documentId: input.documentId, senderUserId: input.senderUserId,
       senderDependency: input.senderDependency, senderRole: input.senderRole, originAssignmentId: input.originAssignmentId || null,
@@ -240,6 +245,7 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
         id: randomUUID(), dispatchId: id, documentId: input.documentId, userId: recipient.id,
         displayName: recipient.displayName || recipient.id, functionalRole: recipient.functionalRole, dependency: recipient.dependency,
         unit: recipient.unit || null, status: 'ASIGNADO', createdAt: at, assignedAt: at,
+        deadlineSnapshot: { ...deadlineSnapshot },
         ...(input.unitId ? { unitId: input.unitId } : {}),
         senderUserId: input.senderUserId, senderRole: input.senderRole, senderDependency: input.senderDependency,
         instruction: input.instruction, originAssignmentId: input.originAssignmentId || null,
@@ -620,8 +626,9 @@ export function createAlfrescoDispatchRepository(settings, fetchImpl = (...args)
     loadInbox: async (session) => {
       const snapshot = await readSnapshot(session)
       const userId = session.alfresco?.id || session.user?.id
-      return { institutionalMemberships: snapshot.institutionalMemberships, discoveryErrors: snapshot.discoveryErrors, dispatches: receivedRecords(snapshot.records, userId, session.functionalRole, session.dependency),
-        sentDispatches: sentRecords(snapshot.records, userId, session.dependency), actorNodes: snapshot.actorNodes }
+      return { institutionalMemberships: snapshot.institutionalMemberships, discoveryErrors: snapshot.discoveryErrors,
+        dispatches: receivedRecords(snapshot.records, userId, session.functionalRole, session.dependency).map(record => withAssignmentDeadlines(record)),
+        sentDispatches: sentRecords(snapshot.records, userId, session.dependency).map(record => withAssignmentDeadlines(record)), actorNodes: snapshot.actorNodes }
     },
     findDispatch: async (userId, requestKey, documentId) => (await documentRecords(documentId)).find((record) => record.senderUserId === userId && record.requestKey === requestKey) || null,
     findAttentionAssignment: async (userId, documentId, dependency, assignmentId) => (await documentRecords(documentId))

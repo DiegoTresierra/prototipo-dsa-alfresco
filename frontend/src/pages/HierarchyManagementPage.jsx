@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PanelPage } from '../components/PanelPage'
 import { assignHierarchyHead as postHierarchyHead, assignHierarchySpecialist as postHierarchySpecialist, changeHierarchyHead as postHierarchyHeadChange, createHierarchyUnit as postHierarchyUnit, editHierarchyUnit as patchHierarchyUnit, getHierarchy, getHierarchyAudit, getResponseTimes, reassignHierarchySpecialist as postHierarchySpecialistReassignment, updateResponseTimes } from '../api/alfresco'
-import { createHierarchyManagementModel } from '../utils/hierarchyManagementModel'
+import { createHierarchyManagementModel, listAvailableHierarchyCandidates } from '../utils/hierarchyManagementModel'
 
-const moduleViews = { home: 'home', office: 'office', timings: 'timings' }
+const moduleViews = { home: 'home', office: 'office', members: 'members', timings: 'timings' }
 const lanes = [
   { id: 'direccion', role: 'direccion', title: 'Dirección', description: 'Dirección de la dependencia' },
   { id: 'jefes', role: 'jefe-unidad', title: 'Jefes de unidad', description: 'Responsables de oficina o unidad' },
@@ -29,6 +29,14 @@ function SettingsHome({ officeName, onOpen }) {
         </span>
         <span aria-hidden="true" className="settings-entry-card__arrow">›</span>
       </button>
+      <button className="settings-entry-card" onClick={() => onOpen(moduleViews.members)} type="button">
+        <span className="settings-entry-card__icon"><Icon name="users" size={23} /></span>
+        <span className="settings-entry-card__copy">
+          <strong>Miembros asignados</strong>
+          <span>Consulta las personas vinculadas a los roles de la dependencia.</span>
+        </span>
+        <span aria-hidden="true" className="settings-entry-card__arrow">›</span>
+      </button>
       <button className="settings-entry-card" onClick={() => onOpen(moduleViews.timings)} type="button">
         <span className="settings-entry-card__icon"><Icon name="chart" size={23} /></span>
         <span className="settings-entry-card__copy">
@@ -39,6 +47,26 @@ function SettingsHome({ officeName, onOpen }) {
       </button>
     </div>
   )
+}
+
+function AssignedMembersDirectory({ officeName, members, recipients, loading, loadingError, onRefresh, onBack }) {
+  const groups = [
+    { id: 'direccion', title: 'Dirección', people: members.direccion ? [members.direccion] : [] },
+    { id: 'jefes', title: 'Jefes de unidad', people: members.jefes.map(id => recipients.find(person => person.id === id) || { id, displayName: id }) },
+    { id: 'especialistas', title: 'Especialistas', people: members.especialistas.map(id => recipients.find(person => person.id === id) || { id, displayName: id }) },
+  ]
+  return <div className="settings-detail">
+    <button className="button-secondary settings-back" onClick={onBack} type="button">‹ Volver a Ajustes</button>
+    <div className="settings-detail__toolbar"><div><h2>Miembros asignados</h2><p>Consulta los roles vigentes de {officeName} en la jerarquía institucional.</p></div><div className="settings-detail__actions"><button className="button-secondary" disabled={loading} onClick={onRefresh} type="button">Actualizar datos</button></div></div>
+    <p className="hierarchy-notice">Vista de consulta. Las asignaciones se administran por unidad en «Administrar mi oficina»; esta pantalla no cambia usuarios ni grupos de Alfresco.</p>
+    {loading && <p className="hierarchy-message" role="status">Consultando miembros desde Alfresco…</p>}
+    {loadingError && <p className="form-message form-message--error" role="alert">{loadingError}</p>}
+    <div className="settings-lanes" aria-label={`Miembros asignados de ${officeName}`}>
+      {groups.map(group => <section className="settings-lane" key={group.id}><header className="settings-lane__header"><div><h3>{group.title}</h3></div><span className="settings-lane__count">{group.people.length}</span></header>
+        {group.people.length ? <ul className="settings-lane__members">{group.people.map(person => <li key={person.id}><span aria-hidden="true" className="settings-lane__avatar"><Icon name="user" size={17} /></span><span className="settings-lane__identity"><strong>{person.displayName || person.id}</strong><small>{person.id}</small></span></li>)}</ul> : <p className="hierarchy-empty">No hay personas asignadas en este nivel.</p>}
+      </section>)}
+    </div>
+  </div>
 }
 
 function AuditChangeDetails({ beforeData, afterData }) {
@@ -503,11 +531,7 @@ function OfficeHierarchy({ officeName, dependency, members, specialistUnits, rec
   const unitHeads = members.jefes.map((id) => recipients.find((recipient) => recipient.id === id)).filter(Boolean)
   const unassignedSpecialists = members.especialistas.filter((id) => !specialistUnits[id] || !members.jefes.includes(specialistUnits[id]))
   const availableMembers = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase('es')
-    return recipients.filter((recipient) => recipient.functionalRole === selectedLane.role &&
-      String(recipient.dependency || '').toLowerCase() === String(dependency || '').toLowerCase() &&
-      !assignedIds.has(recipient.id) &&
-      (!query || `${recipient.displayName} ${recipient.id}`.toLocaleLowerCase('es').includes(query)))
+    return listAvailableHierarchyCandidates(recipients, { role: selectedLane.role, dependency, assignedIds, query: search })
   }, [assignedIds, dependency, recipients, search, selectedLane])
 
   const openAdd = () => {
@@ -992,7 +1016,7 @@ export function HierarchyManagementPage({ office, csrfToken }) {
   }
 
   useEffect(() => {
-    if (view !== moduleViews.office) return undefined
+    if (![moduleViews.office, moduleViews.members].includes(view)) return undefined
     let active = true
     const refresh = () => { if (document.visibilityState === 'visible') loadOffice(() => active) }
     loadOffice(() => active)
@@ -1029,6 +1053,12 @@ export function HierarchyManagementPage({ office, csrfToken }) {
         }
         return persistMembers(nextMembers, nextSpecialistUnits)
       }} onAssignSpecialist={alfrescoReadOnly ? assignSpecialist : (specialistId, unitHeadUserId) => persistMembers(members, { ...specialistUnits, [specialistId]: unitHeadUserId })} onBack={() => setView(moduleViews.home)} />
+    </PanelPage>
+  }
+
+  if (view === moduleViews.members) {
+    return <PanelPage description={`Consulta los miembros asignados de ${officeName}.`} title="Ajustes">
+      <AssignedMembersDirectory officeName={officeName} members={members} recipients={recipients} loading={loading} loadingError={loadingError} onRefresh={() => loadOffice()} onBack={() => setView(moduleViews.home)} />
     </PanelPage>
   }
 

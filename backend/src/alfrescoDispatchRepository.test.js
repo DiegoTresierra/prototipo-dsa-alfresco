@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createAlfrescoDispatchRepository, assignmentProperty, responsibleProperty, dependencyProperty, parseAssignments, maxAssignmentBytes } from './alfrescoDispatchRepository.js'
 import { acquirePilotLease, pilotAcknowledgements } from './dispatchPilot.js'
+import { responseTimesDefaults } from './responseTimesService.js'
 
 const documentId = '11111111-2222-4333-8444-2a29efcb482b'
 const director = { alfresco: { id: 'director' }, authorization: 'Basic actor', functionalRole: 'direccion', dependency: 'DSA',
@@ -13,7 +14,7 @@ const input = (key = 'one', recipients = ['head-a']) => ({ documentId, requestKe
   senderDependency: 'dsa', senderRole: 'direccion', originAssignmentId: null, instruction: 'Atender', priority: 'Normal',
   recipients: recipients.map((id) => ({ id, dependency: 'dsa', functionalRole: 'jefe-unidad', unit: null })) })
 
-function fixture() {
+function fixture({ readResponseTimes = responseTimesDefaults } = {}) {
   const settings = { alfrescoTarget: 'https://alfresco.invalid', distributionService: { username: 'fixture_distribution', password: 'test-only' },
     dispatchPilot: { writesEnabled: true, environment: 'dev', environments: {
       dev: { enabled: true, acknowledgement: pilotAcknowledgements.dev, expectedTarget: 'https://alfresco.invalid' },
@@ -52,7 +53,7 @@ function fixture() {
     }
     return Response.json({ entry: structuredClone(state.node) })
   }
-  const repo = createAlfrescoDispatchRepository(settings, fetchImpl)
+  const repo = createAlfrescoDispatchRepository(settings, fetchImpl, { readResponseTimes })
   const create = (value = input(), session = director) => repo.withDocument(value.documentId, () => repo.createDispatch(value, session))
   return { settings, state, repo, create, fetchImpl }
 }
@@ -62,6 +63,10 @@ test('PUT/GET preserves original UUID, other aspects/properties and equivalent m
   const result = await create(input('one', ['head-a', 'head-b']))
   assert.equal(result.documentId, documentId)
   assert.equal(result.recipients.length, 2)
+  assert.equal(result.recipients[0].deadlineSnapshot.value, 5)
+  assert.equal(result.recipients[0].deadlineSnapshot.unit, 'DIAS')
+  assert.equal(result.recipients[0].deadlineSnapshot.configSource, 'DEFAULT')
+  assert.equal(result.recipients[0].deadlineSnapshot.startedAt, result.recipients[0].createdAt)
   assert.equal(new Set(result.recipients.map((r) => r.id)).size, 2)
   assert.ok(result.recipients.every((r) => r.documentId === documentId && r.status === 'ASIGNADO'))
   assert.deepEqual(state.node.properties[responsibleProperty], ['head-a', 'head-b'])
@@ -72,6 +77,25 @@ test('PUT/GET preserves original UUID, other aspects/properties and equivalent m
   const put = state.calls.findIndex((call) => call.method === 'PUT')
   assert.equal(state.calls[put + 1].method, 'GET')
   assert.equal(state.calls.filter((call) => call.method === 'PUT').length, 1)
+})
+
+test('assignment keeps its original deadline snapshot when configuration changes and an idempotent retry arrives', async () => {
+  let value = 3
+  let reads = 0
+  const { create, state } = fixture({ readResponseTimes: async dependency => {
+    reads++
+    assert.equal(dependency, 'dsa')
+    return { dependency, source: 'ALFRESCO', revision: `revision-${value}`, values: [{ priority: 'NORMAL', value, unit: 'DIAS' }] }
+  } })
+  const first = await create()
+  value = 8
+  const retry = await create()
+  assert.equal(first.recipients[0].id, retry.recipients[0].id)
+  assert.equal(retry.recipients[0].deadlineSnapshot.value, 3)
+  assert.equal(retry.recipients[0].deadlineSnapshot.configRevision, 'revision-3')
+  assert.equal(reads, 1)
+  const persisted = parseAssignments(state.node.properties[assignmentProperty], documentId)
+  assert.equal(persisted.dispatches[0].recipients[0].deadlineSnapshot.value, 3)
 })
 
 test('two simultaneous requests serialize entire read/modify/PUT/verification and preserve assignments', async () => {

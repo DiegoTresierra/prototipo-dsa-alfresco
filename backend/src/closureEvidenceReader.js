@@ -14,7 +14,7 @@ export async function readClosureEvidence({ envelope, scope, session, settings, 
     if (!people.has(id)) people.set(id, (async () => {
       const p = (await get(`/api/-default-/public/alfresco/versions/1/people/${encodeURIComponent(id)}`)).entry
       if (p?.id !== id || p.enabled !== true) throw new Error('identity')
-      const groups = await readInstitutionalGroups(settings.alfrescoTarget, id, session.authorization, fetchImpl)
+      const groups = await readInstitutionalGroups(settings.alfrescoTarget, id, session.authorization, fetchImpl, settings.institutionalGroupReader)
       const role = resolveRole(groups, settings.groupMappings, id)
       if (role.authorizationStatus !== 'active' || role.dependency.toLowerCase() !== scope.dependency) throw new Error('identity')
       return { ...role, groups }

@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import { config } from './config.js'
 import { authenticateBasic, authenticateBearer, buildAlfrescoUrl } from './alfrescoClient.js'
 import { createDispatchRepository } from './dispatchRepository.js'
+import { withAssignmentDeadlines } from './assignmentDeadline.js'
 import { acquirePilotLease } from './dispatchPilot.js'
 import { allowedRecipientRoles, canDispatch, dispatchIdentity, dispatchRequestMatches, parseDispatchRequest, requiresDispatchUnit, validateDispatchRequest } from './dispatchPolicy.js'
 import { reserveDocumentNumber } from './numberingStore.js'
@@ -68,6 +69,7 @@ const hierarchyHeadChangesAvailable = institutionalWriteReadiness('changeHeads')
 const hierarchySpecialistReassignmentsAvailable = institutionalWriteReadiness('reassignSpecialists') && config.hierarchyService.specialistReassignmentsEnabled === true
 const hierarchyAnyWritesAvailable = hierarchyUnitWritesAvailable || hierarchyUnitEditsAvailable || hierarchyHeadWritesAvailable || hierarchySpecialistWritesAvailable || hierarchyHeadChangesAvailable || hierarchySpecialistReassignmentsAvailable
 const hierarchyDirectory = createHierarchyDirectory(config)
+config.institutionalGroupReader = hierarchyDirectory.getConfiguredGroupsForPerson
 const hierarchyReadService = createHierarchyReadService({
   repository: createHierarchyRepository(config),
   directory: hierarchyDirectory,
@@ -150,7 +152,9 @@ const responseTimesService = createResponseTimesService({
 })
 const officialEmissionService = createOfficialEmissionService(config)
 process.once('exit', officialEmissionService.release)
-const dispatchRepository = createDispatchRepository(config)
+const dispatchRepository = createDispatchRepository(config, undefined, {
+  readResponseTimes: (dependency) => responseTimesService.read(dependency),
+})
 const releasePilotLease = acquirePilotLease(config)
 process.once('exit', releasePilotLease)
 const { createDispatch, findAttentionAssignment, findDispatch, listDispatchesForUser, listSentDispatches, updateDispatch } = dispatchRepository
@@ -358,7 +362,7 @@ app.get('/api/auth/callback', async (request, response) => {
     })
     const user = await client.userinfo(tokens.access_token)
     const authentication = config.ssoAuthMode === 'bearer'
-      ? await authenticateBearer(config.alfrescoTarget, tokens.access_token)
+      ? await authenticateBearer(config.alfrescoTarget, tokens.access_token, config.institutionalGroupReader)
       : null
     if (!authentication) return response.status(503).send('Alfresco SSO integration is not configured.')
     const session = await createAlfrescoSession('keycloak-oidc', {
@@ -382,7 +386,7 @@ app.post(['/api/auth/basic', '/api/auth/login'], async (request, response) => {
   if (!username || !password) return response.status(400).json({ error: 'CREDENTIALS_REQUIRED' })
   try {
     logAuthDiagnostic('basic-authentication', 'started')
-    const authentication = await authenticateBasic(config.alfrescoTarget, username, password)
+    const authentication = await authenticateBasic(config.alfrescoTarget, username, password, config.institutionalGroupReader)
     logAuthDiagnostic('basic-authentication', 'alfresco-identity-verified')
     const session = await createAlfrescoSession('alfresco-basic', authentication, {
       id: authentication.identity.id,
@@ -961,7 +965,17 @@ function requireDeliveryLock(request, response, next) {
       const dispatches = snapshot?.dispatches || await listDispatchesForUser(userId, request.session.functionalRole, request.session.dependency, request.session)
       const sentDispatches = ['direccion', 'jefe-unidad'].includes(request.session.functionalRole)
         ? snapshot?.sentDispatches || await listSentDispatches(userId, request.session.dependency, request.session) : []
-      if (request.query.include !== 'documents') return response.json({ dispatches, sentDispatches, discoveryErrors: snapshot?.discoveryErrors || [], persistence: dispatchRepository.kind })
+      const evaluatedAt = Date.now()
+      const scopedDispatches = dispatches.map(record => withAssignmentDeadlines(record, evaluatedAt))
+      const scopedSentDispatches = sentDispatches.map(record => withAssignmentDeadlines(record, evaluatedAt))
+      const pendingAssignments = request.session.functionalRole === 'direccion'
+        ? scopedDispatches.flatMap(record => record.recipients
+          .filter(assignment => ['ASIGNADO', 'DESPACHADO'].includes(assignment.status))
+          .map(assignment => ({ ...assignment, dispatchId: record.id, instruction: record.instruction,
+            priority: record.priority, documentIdentity: record.documentIdentity })))
+        : undefined
+      if (request.query.include !== 'documents') return response.json({ dispatches: scopedDispatches, sentDispatches: scopedSentDispatches,
+        ...(pendingAssignments ? { pendingAssignments } : {}), discoveryErrors: snapshot?.discoveryErrors || [], persistence: dispatchRepository.kind })
       if (!['jefe-unidad', 'especialista'].includes(request.session.functionalRole)) return response.status(400).json({ error: 'ASSIGNMENT_INBOX_ROLE_REQUIRED' })
       const ids = [...new Set([...dispatches, ...sentDispatches].map((record) => record.documentId).concat(request.session.functionalRole === 'jefe-unidad' ? [...(snapshot?.actorNodes?.keys() || [])] : []))]
       if (ids.length > 10_000) return response.status(503).json({ error: 'DOCUMENT_QUERY_LIMIT_EXCEEDED' })
@@ -978,7 +992,7 @@ function requireDeliveryLock(request, response, next) {
           documentErrors.push({ documentId, error: 'DOCUMENT_READ_UNAVAILABLE' })
         }
       }
-      return response.json({ dispatches, sentDispatches, documents, documentErrors, persistence: dispatchRepository.kind })
+      return response.json({ dispatches: scopedDispatches, sentDispatches: scopedSentDispatches, documents, documentErrors, persistence: dispatchRepository.kind })
     } catch (error) {
       return response.status(error.status || 503).json({ error: error.message || 'DISPATCH_STORE_UNAVAILABLE' })
     }
@@ -1558,7 +1572,7 @@ app.use('/api/alfresco', requireSession, requireCsrf, async (request, response) 
   }
 })
 
-export const server = app.listen(config.port, () => {
+export const server = app.listen(config.port, '127.0.0.1', () => {
   console.log(`Authentication backend listening on port ${config.port}`)
 })
 server.once('close', releasePilotLease)

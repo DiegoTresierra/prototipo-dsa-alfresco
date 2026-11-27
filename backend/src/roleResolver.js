@@ -13,7 +13,8 @@ function roleIdFor(dependency, functionalRole) {
 }
 
 export function resolveRole(groups = [], groupMappings = {}, userId = null) {
-  const normalizedGroups = new Set(groups.filter((group) => typeof group === 'string'))
+  const normalizedGroups = new Set(groups.filter((group) => typeof group === 'string' &&
+    group.toUpperCase() !== 'GROUP_ALFRESCO_ADMINISTRATORS'))
   const dependencies = matchingKeys(normalizedGroups, groupMappings.dependencies)
   const functions = matchingKeys(normalizedGroups, groupMappings.functions)
   const hasOneDependency = dependencies.length === 1

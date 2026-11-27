@@ -22,6 +22,18 @@ test('classic institutional membership recovers both heads without relying on th
   assert.ok(candidates.every(person => person.groups.includes('GROUP_GD_DSA') && person.groups.includes('GROUP_GD_JEFE_UNIDAD')))
 })
 
+test('configured-group reader returns only exact mapped memberships', async () => {
+  const fake = fakeDirectory({ memberships: {
+    GROUP_GD_DSA: ['DSA_T'], GROUP_GD_DTI: ['DTI_T'], GROUP_GD_DIRECCION: ['DSA_T', 'DTI_T'],
+    GROUP_GD_JEFE_UNIDAD: [], GROUP_GD_ESPECIALISTA: [],
+  } })
+  const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
+  assert.deepEqual(new Set(await directory.getConfiguredGroupsForPerson('DSA_T')),
+    new Set(['GROUP_GD_DSA', 'GROUP_GD_DIRECCION']))
+  assert.deepEqual(await directory.getConfiguredGroupsForPerson('outsider'), [])
+  assert.equal(fake.calls.some(call => call.pathname.includes('ALFRESCO_ADMINISTRATORS')), false)
+})
+
 function response(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
@@ -53,7 +65,7 @@ function fakeDirectory({ groupFailures = {}, people = {}, memberships = {} } = {
   return { fetchImpl, calls }
 }
 
-test('lists only enabled, unambiguous, nontechnical candidates belonging to the requested dependency and function groups', async () => {
+test('lists enabled, unambiguous candidates with exact dependency and function groups, including Alfresco admins', async () => {
   const fake = fakeDirectory({
     memberships: {
       GROUP_GD_DSA: ['dsa-specialist', 'disabled', 'admin', serviceUsername, 'dsa-jefe', 'ambiguous'],
@@ -74,9 +86,11 @@ test('lists only enabled, unambiguous, nontechnical candidates belonging to the 
   })
   const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
   const candidates = await directory.listCandidates({ dependency: 'DSA', role: 'especialista' })
-  assert.deepEqual(candidates.map((person) => person.id), ['dsa-specialist'])
+  assert.deepEqual(candidates.map((person) => person.id), ['admin', 'dsa-specialist'])
   assert.equal(candidates[0].dependency, 'DSA')
   assert.equal(candidates[0].role, 'especialista')
+  assert.ok(candidates.some(person => person.id === 'admin' && person.enabled && person.role === 'especialista'))
+  assert.equal(Object.hasOwn(candidates.find(person => person.id === 'admin'), 'capabilities'), false)
   assert.ok(fake.calls.some((call) => call.pathname.endsWith('/groups/GD_DTI/children')))
 })
 
@@ -101,16 +115,47 @@ test('validates enabled status, dependency, exact function group and rejects amb
   assert.equal((await directory.validateAssignmentCandidate('dsa-specialist', { dependency: 'DSA', role: 'especialista' })).enabled, true)
 })
 
-test('rejects missing membership and excludes administrative and technical accounts', async () => {
+test('rejects missing role membership and excludes service identities, but permits an authorized Alfresco admin', async () => {
   const fake = fakeDirectory({
     memberships: { GROUP_GD_DSA: ['admin', serviceUsername], GROUP_GD_ESPECIALISTA: ['admin', serviceUsername] },
     people: { admin: { capabilities: { isAdmin: true } }, [serviceUsername]: {} },
   })
   const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
   await assert.rejects(directory.validateAssignmentCandidate('outsider', { dependency: 'DSA', role: 'especialista' }), /HIERARCHY_USER_NOT_IN_CONFIGURED_GROUPS/)
-  await assert.rejects(directory.validateAssignmentCandidate('admin', { dependency: 'DSA', role: 'especialista' }), /HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE/)
+  await assert.rejects(directory.validateAssignmentCandidate('admin', { dependency: 'DSA', role: 'jefe-unidad' }), /HIERARCHY_USER_FUNCTION_MISMATCH/)
+  assert.equal((await directory.validateAssignmentCandidate('admin', { dependency: 'DSA', role: 'especialista' })).id, 'admin')
   await assert.rejects(directory.validateAssignmentCandidate(serviceUsername, { dependency: 'DSA', role: 'especialista' }), /HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE/)
   await assert.rejects(directory.listCandidates({ dependency: 'DSA', role: 'director' }), /HIERARCHY_ASSIGNMENT_ROLE_INVALID/)
+})
+
+test('does not list an enabled specialist who belongs only to another dependency', async () => {
+  const fake = fakeDirectory({
+    memberships: { GROUP_GD_DTI: ['dti-specialist'], GROUP_GD_ESPECIALISTA: ['dti-specialist'] },
+    people: { 'dti-specialist': {} },
+  })
+  const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
+  assert.deepEqual(await directory.listCandidates({ dependency: 'DSA', role: 'especialista' }), [])
+  await assert.rejects(directory.validateAssignmentCandidate('dti-specialist', { dependency: 'DSA', role: 'especialista' }), /HIERARCHY_USER_DEPENDENCY_MISMATCH/)
+})
+
+test('Alfresco admin without the mapped specialist group is not eligible', async () => {
+  const fake = fakeDirectory({
+    memberships: { GROUP_GD_DSA: ['admin-without-role'] },
+    people: { 'admin-without-role': { capabilities: { isAdmin: true } } },
+  })
+  const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
+  assert.deepEqual(await directory.listCandidates({ dependency: 'DSA', role: 'especialista' }), [])
+  await assert.rejects(directory.validateAssignmentCandidate('admin-without-role', { dependency: 'DSA', role: 'especialista' }), /HIERARCHY_USER_MEMBERSHIP_INCOMPLETE/)
+})
+
+test('does not list an inactive DSA specialist, even when it is an Alfresco admin', async () => {
+  const fake = fakeDirectory({
+    memberships: { GROUP_GD_DSA: ['inactive-admin'], GROUP_GD_ESPECIALISTA: ['inactive-admin'] },
+    people: { 'inactive-admin': { enabled: false, capabilities: { isAdmin: true } } },
+  })
+  const directory = createHierarchyDirectory(settings, { fetchImpl: fake.fetchImpl })
+  assert.deepEqual(await directory.listCandidates({ dependency: 'DSA', role: 'especialista' }), [])
+  await assert.rejects(directory.validateAssignmentCandidate('inactive-admin', { dependency: 'DSA', role: 'especialista' }), /HIERARCHY_USER_DISABLED/)
 })
 
 test('does not mask Alfresco authentication or group permission failures', async () => {

@@ -8,11 +8,12 @@ const settings = { alfrescoTarget: 'https://identity.invalid', groupMappings: {
 const session = { alfresco: { id: 'actor' }, authorization: 'Basic fixture', authorizationStatus: 'active', dependency: 'DSA', functionalRole: 'direccion' }
 
 function fixture() {
-  const state = { enabled: true, groups: ['GROUP_GD_DSA', 'GROUP_GD_DIRECCION'], calls: [], status: 200, malformed: false }
+  const state = { enabled: true, groups: ['GROUP_GD_DSA', 'GROUP_GD_DIRECCION'], calls: [], status: 200, groupsStatus: 200, malformed: false }
   const fetch = async (url, options) => {
     assert.equal(options.method, 'GET')
     assert.equal(options.headers.Authorization, session.authorization)
     state.calls.push(url)
+    if (url.includes('/people/actor/groups') && state.groupsStatus !== 200) return Response.json({}, { status: state.groupsStatus })
     if (state.status !== 200) return Response.json({}, { status: state.status })
     if (url.endsWith('/people/-me-')) return Response.json({ entry: { id: 'actor', enabled: state.enabled } })
     const skip = Number(new URL(url).searchParams.get('skipCount'))
@@ -61,4 +62,31 @@ test('configured technical accounts cannot act even with an active institutional
     await assert.rejects(revalidateInstitutionalIdentity({ ...settings, ...config }, session, f.fetch), /IDENTITY_REJECTED/)
     assert.equal(f.state.calls.length, 0)
   }
+})
+
+test('uses only the configured-group fallback when the v1 membership request is forbidden', async () => {
+  const f = fixture()
+  f.state.groupsStatus = 403
+  let fallbackCalls = 0
+  const fallback = async (id) => {
+    fallbackCalls += 1
+    assert.equal(id, 'actor')
+    return ['GROUP_GD_DSA', 'GROUP_GD_DIRECCION']
+  }
+  const result = await revalidateInstitutionalIdentity({ ...settings, institutionalGroupReader: fallback }, session, f.fetch)
+  assert.equal(result.functionalRole, 'direccion')
+  assert.equal(fallbackCalls, 1)
+})
+
+test('does not use the fallback for upstream errors or admit unmapped administrative groups', async () => {
+  const f = fixture()
+  f.state.groupsStatus = 503
+  let fallbackCalls = 0
+  const fallback = async () => { fallbackCalls += 1; return ['GROUP_GD_DSA', 'GROUP_ALFRESCO_ADMINISTRATORS'] }
+  await assert.rejects(revalidateInstitutionalIdentity({ ...settings, institutionalGroupReader: fallback }, session, f.fetch), { status: 503 })
+  assert.equal(fallbackCalls, 0)
+
+  f.state.groupsStatus = 403
+  const adminOnly = async () => ['GROUP_ALFRESCO_ADMINISTRATORS']
+  await assert.rejects(revalidateInstitutionalIdentity({ ...settings, institutionalGroupReader: adminOnly }, session, f.fetch), { status: 403 })
 })

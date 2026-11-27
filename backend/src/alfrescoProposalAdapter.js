@@ -272,7 +272,7 @@ export function createAlfrescoProposalAdapter(settings, { fetchImpl = globalThis
         async person(userId) {
           const { entry } = await request(`/people/${e(userId)}`, session)
           if (entry?.id !== userId || entry.enabled !== true) fail('REVIEW_REVIEWER_NOT_VERIFIED', 403)
-          const groups = await readInstitutionalGroups(settings.alfrescoTarget, userId, session.authorization, fetchImpl)
+          const groups = await readInstitutionalGroups(settings.alfrescoTarget, userId, session.authorization, fetchImpl, settings.institutionalGroupReader)
           const resolved = resolveRole(groups, settings.groupMappings, userId)
           if (resolved.authorizationStatus !== 'active') fail('REVIEW_REVIEWER_NOT_VERIFIED', 403)
           return { userId, functionalRole: resolved.functionalRole, dependency: resolved.dependency.toLowerCase(), groups }

@@ -42,6 +42,13 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
     return membership
   }
 
+  // Exact memberships from configured institutional groups only; never infer unitId here.
+  async function getConfiguredGroupsForPerson(userId) {
+    if (typeof userId !== 'string' || !userId.trim()) throw failure('HIERARCHY_USER_REQUIRED', 400)
+    const memberships = await loadMemberships()
+    return [...(memberships.get(userId) || [])]
+  }
+
   async function validateCandidate(userId, { dependency, role, memberships } = {}) {
     assertMapping(dependency, role)
     if (typeof userId !== 'string' || !userId.trim()) throw failure('HIERARCHY_USER_REQUIRED', 400)
@@ -57,7 +64,9 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
     }
     if (person.id !== userId) throw failure('HIERARCHY_PERSON_ID_MISMATCH', 502)
     if (person.enabled !== true) throw failure('HIERARCHY_USER_DISABLED', 403)
-    if (isServiceIdentity(settings, person.id) || person.capabilities?.isAdmin === true) throw failure('HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE', 403)
+    // Alfresco administrator capability is technical; functional eligibility still
+    // requires exact dependency + role groups and an enabled person account.
+    if (isServiceIdentity(settings, person.id)) throw failure('HIERARCHY_TECHNICAL_ACCOUNT_NOT_ASSIGNABLE', 403)
     const resolved = resolveRole([...userGroups], mappings, userId)
     if (resolved.authorizationStatus === 'ambiguous') throw failure('HIERARCHY_USER_MEMBERSHIP_AMBIGUOUS', 409)
     if (resolved.authorizationStatus !== 'active') throw failure('HIERARCHY_USER_MEMBERSHIP_INCOMPLETE', 403)
@@ -103,5 +112,5 @@ export function createHierarchyDirectory(settings, { fetchImpl = globalThis.fetc
     return candidates
   }
 
-  return { listCandidates, validateAssignmentCandidate }
+  return { listCandidates, validateAssignmentCandidate, getConfiguredGroupsForPerson }
 }

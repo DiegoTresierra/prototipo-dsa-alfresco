@@ -23,6 +23,10 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
     ALFRESCO_HIERARCHY_STORAGE: '',
     PORT: '0', SESSION_SECRET: 'dispatch-test-secret', ALFRESCO_TARGET: 'https://alfresco.invalid',
     ALFRESCO_DIAGNOSTICS: 'true',
+    // Keep the mock scenario independent from private response-time settings in backend/.env.local.
+    ALFRESCO_RESPONSE_TIMES_STORAGE: '', ALFRESCO_RESPONSE_TIMES_SERVICE_USERNAME: '',
+    ALFRESCO_RESPONSE_TIMES_SERVICE_PASSWORD: '', ALFRESCO_RESPONSE_TIMES_CONTAINER_NODE_ID: '',
+    ALFRESCO_RESPONSE_TIMES_WRITES_ENABLED: 'false', ALFRESCO_RESPONSE_TIMES_SINGLE_INSTANCE_PILOT_ENABLED: 'false',
     KEYCLOAK_ISSUER: 'https://keycloak.invalid', KEYCLOAK_CLIENT_ID: 'test', KEYCLOAK_REDIRECT_URI: 'http://localhost/callback',
     ALFRESCO_DISTRIBUTION_SERVICE_USERNAME: 'directory-service', ALFRESCO_DISTRIBUTION_SERVICE_PASSWORD: 'fixture-password',
     ALFRESCO_GROUP_MAPPINGS_JSON: JSON.stringify({ dependencies: { DSA: 'GROUP_DSA', DTI: 'GROUP_DTI' }, functions: { direccion: 'GROUP_DIRECTORS', 'jefe-unidad': 'GROUP_HEADS', especialista: 'GROUP_SPECIALISTS' } }),
@@ -160,6 +164,7 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(record.documentId, 'pdf')
   assert.equal(record.recipients.length, 2)
   assert.ok(record.recipients.every((recipient) => recipient.status === 'ASIGNADO'))
+  assert.ok(record.recipients.every((recipient) => recipient.deadlineSnapshot.priority === 'ALTA' && recipient.deadlineSnapshot.value === 3 && recipient.deadlineSnapshot.unit === 'DIAS'))
   assert.equal(new Set(record.recipients.map((recipient) => recipient.id)).size, 2)
   assert.ok(record.recipients.every((recipient) => recipient.documentId === 'pdf' && recipient.senderUserId === 'director' && recipient.instruction === 'Atender' && recipient.unit === null))
   assert.equal(record.completedAt, undefined, 'assignment completion is not global attention completion')
@@ -169,6 +174,8 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal((await read('pdf', '/content')).status, 200)
   const before = (await (await fetch(`${base}/api/documents/dispatches`, { headers: head })).json()).dispatches
   assert.equal(before[0].documentId, 'pdf')
+  assert.equal(before[0].recipients[0].deadline.status, 'EN_PLAZO')
+  assert.ok(before[0].recipients[0].deadline.dueAt)
   for (const folder of ['dsa-attention', 'dsa-knowledge', 'dsa-emitted']) {
     const list = await fetch(`${proxy}/nodes/${folder}/children`, { headers: head })
     assert.equal(list.status, 200)
@@ -235,6 +242,13 @@ test('HTTP hierarchical dispatch preserves one PDF, parent obligations, traceabi
   assert.equal(dtiResponse.status, 201)
   const dtiRoot = (await dtiResponse.json()).dispatch
   assert.equal((await dispatch({ ...input, documentId: 'dti-pdf', recipientUserIds: ['staff-dti'], requestKey: 'dti-chain', originAssignmentId: dtiRoot.recipients.find((recipient) => recipient.userId === 'head-dti').id }, headDti)).status, 201)
+  const dsaDirectorView = await (await fetch(`${base}/api/documents/dispatches`, { headers: director })).json()
+  assert.ok(dsaDirectorView.pendingAssignments.length > 0)
+  assert.ok(dsaDirectorView.pendingAssignments.every(item => item.dependency === 'dsa'))
+  assert.ok(dsaDirectorView.dispatches.every(item => item.senderDependency === 'dsa'))
+  const dtiDirectorView = await (await fetch(`${base}/api/documents/dispatches`, { headers: directorDti })).json()
+  assert.ok(dtiDirectorView.pendingAssignments.every(item => item.dependency === 'dti'))
+  assert.ok(dtiDirectorView.dispatches.every(item => item.senderDependency === 'dti'))
   const inbox = await (await fetch(`${base}/api/documents/dispatches?include=documents`, { headers: specialist })).json()
   assert.equal(inbox.dispatches.length, 2, 'specialist sees both direct and chained assignments')
   assert.deepEqual(inbox.documents.map((document) => document.id), ['pdf'], 'metadata is fetched by unique original UUID without a personal folder')

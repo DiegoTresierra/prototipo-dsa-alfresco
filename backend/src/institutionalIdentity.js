@@ -11,19 +11,28 @@ export function isServiceIdentity(settings, userId) {
 }
 
 // A request-local snapshot, never a cross-request authorization cache.
-export async function readInstitutionalGroups(target, userId, authorization, fetchImpl = (...args) => globalThis.fetch(...args)) {
+export async function readInstitutionalGroups(target, userId, authorization, fetchImpl = (...args) => globalThis.fetch(...args), fallbackReader) {
   const groups = []
   let skip = 0
-  for (;;) {
-    const payload = await get(target, `${core}/people/${encodeURIComponent(userId)}/groups?maxItems=100&skipCount=${skip}`, authorization, fetchImpl)
-    const { entries, pagination } = payload?.list || {}
-    if (!Array.isArray(entries) || entries.length > 100 || pagination?.skipCount !== skip ||
-        typeof pagination.hasMoreItems !== 'boolean' || entries.some((item) => typeof item?.entry?.id !== 'string' || !item.entry.id) ||
-        pagination.hasMoreItems && !entries.length) throw fail('INSTITUTIONAL_IDENTITY_UNAVAILABLE', 503)
-    groups.push(...entries.map(({ entry }) => entry.id))
-    if (!pagination.hasMoreItems) return [...new Set(groups)]
-    skip += entries.length
-    if (skip > 10000) throw fail('INSTITUTIONAL_IDENTITY_UNAVAILABLE', 503)
+  try {
+    for (;;) {
+      const payload = await get(target, `${core}/people/${encodeURIComponent(userId)}/groups?maxItems=100&skipCount=${skip}`, authorization, fetchImpl)
+      const { entries, pagination } = payload?.list || {}
+      if (!Array.isArray(entries) || entries.length > 100 || pagination?.skipCount !== skip ||
+          typeof pagination.hasMoreItems !== 'boolean' || entries.some((item) => typeof item?.entry?.id !== 'string' || !item.entry.id) ||
+          pagination.hasMoreItems && !entries.length) throw fail('INSTITUTIONAL_IDENTITY_UNAVAILABLE', 503)
+      groups.push(...entries.map(({ entry }) => entry.id))
+      if (!pagination.hasMoreItems) return [...new Set(groups)]
+      skip += entries.length
+      if (skip > 10000) throw fail('INSTITUTIONAL_IDENTITY_UNAVAILABLE', 503)
+    }
+  } catch (error) {
+    if (error.status !== 403 || typeof fallbackReader !== 'function') throw error
+    const fallbackGroups = await fallbackReader(userId)
+    if (!Array.isArray(fallbackGroups) || fallbackGroups.some((id) => typeof id !== 'string' || !/^GROUP_[A-Za-z0-9_-]+$/.test(id))) {
+      throw fail('INSTITUTIONAL_IDENTITY_UNAVAILABLE', 503)
+    }
+    return [...new Set(fallbackGroups)]
   }
 }
 
@@ -42,7 +51,7 @@ export async function revalidateInstitutionalIdentity(settings, session, fetchIm
   if (!id || isServiceIdentity(settings, id) || !session.authorization || session.authorizationStatus !== 'active') throw fail('INSTITUTIONAL_IDENTITY_REJECTED', 403)
   const me = (await get(settings.alfrescoTarget, `${core}/people/-me-`, session.authorization, fetchImpl))?.entry
   if (me?.id !== id || me.enabled !== true) throw fail('INSTITUTIONAL_IDENTITY_REJECTED', 403)
-  const groups = await readInstitutionalGroups(settings.alfrescoTarget, id, session.authorization, fetchImpl)
+  const groups = await readInstitutionalGroups(settings.alfrescoTarget, id, session.authorization, fetchImpl, settings.institutionalGroupReader)
   const identity = resolveRole(groups, settings.groupMappings, id)
   if (identity.authorizationStatus !== 'active' || identity.functionalRole !== session.functionalRole ||
       identity.dependency !== String(session.dependency || '').toUpperCase()) throw fail('INSTITUTIONAL_IDENTITY_REJECTED', 403)

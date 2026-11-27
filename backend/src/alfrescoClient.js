@@ -94,8 +94,8 @@ export async function getAlfrescoIdentity(target, authorization) {
   return identity
 }
 
-export async function getAlfrescoGroups(target, personId, authorization) {
-  return readInstitutionalGroups(target, personId, authorization)
+export async function getAlfrescoGroups(target, personId, authorization, fallbackReader) {
+  return readInstitutionalGroups(target, personId, authorization, undefined, fallbackReader)
 }
 
 export async function getAlfrescoGroupMembers(target, groupId, authorization) {
@@ -114,20 +114,20 @@ export async function getAlfrescoGroupMembers(target, groupId, authorization) {
   }
 }
 
-export async function authenticateBasic(target, username, password) {
+export async function authenticateBasic(target, username, password, fallbackReader) {
   const ticketResponse = await createTicket(target, username, password)
   const ticket = ticketResponse?.entry?.id
   if (!ticket) throw new Error('Alfresco did not return a valid ticket.')
   const authorization = ticketHeader(ticket)
   const identity = await getAlfrescoIdentity(target, authorization)
-  const groups = await getAlfrescoGroups(target, identity.id, authorization)
+  const groups = await getAlfrescoGroups(target, identity.id, authorization, fallbackReader)
   return { identity, groups, authorization, ticket }
 }
 
-export async function authenticateBearer(target, accessToken) {
+export async function authenticateBearer(target, accessToken, fallbackReader) {
   const authorization = `Bearer ${accessToken}`
   const identity = await getAlfrescoIdentity(target, authorization)
-  const groups = await getAlfrescoGroups(target, identity.id, authorization)
+  const groups = await getAlfrescoGroups(target, identity.id, authorization, fallbackReader)
   return { identity, groups, authorization }
 }
 

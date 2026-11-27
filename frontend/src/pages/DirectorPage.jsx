@@ -15,6 +15,7 @@ import { DocumentIdentitySummary } from '../components/DocumentIdentitySummary'
 import { RelatedResponses } from '../components/RelatedResponses'
 import { ResponseComposer } from '../components/ResponseComposer'
 import { ClosurePanel } from '../components/ClosurePanel'
+import { DeliveryDeadlineCells } from '../components/DeliveryDeadlineCells'
 
 function normalize(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim()
@@ -35,7 +36,49 @@ function DocumentDate({ value }) {
     <small>{date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}</small>
   </time>
 }
-export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '', canDispatch = false, recipients = [], recipientRoles = [], recipientsLoading = false, recipientsError = '', onDispatch, dispatchRecords = [], dispatchDirectory = {}, openDocumentId = '', onDocumentPreviewClose, userId, csrfToken, canAttend = false, canIssueResponse = false, onAttentionChanged, onEmitResponse, showClosure = true, canLinkExisting = false, canLinkResponse = false }) {
+function assignmentStatusLabel(status) {
+  return ({ EN_PLAZO: 'En plazo', POR_VENCER: 'Por vencer', VENCIDO: 'Vencido', ATENDIDO: 'Atendido', SIN_PLAZO_REGISTRADO: 'Sin plazo registrado' })[status] || 'Sin plazo registrado'
+}
+function remainingTime(value) {
+  if (!Number.isFinite(value)) return 'No disponible'
+  const minutes = Math.ceil(Math.abs(value) / 60_000)
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const remainder = minutes % 60
+  const text = [days ? `${days} d` : '', hours ? `${hours} h` : '', !days && !hours ? `${remainder} min` : ''].filter(Boolean).join(' ')
+  return value < 0 ? `Vencido hace ${text}` : `Restan ${text}`
+}
+function DirectorPendingAssignments({ dispatchRecords, documents, onOpenDocument }) {
+  const [unitFilter, setUnitFilter] = useState('all')
+  const [responsibleFilter, setResponsibleFilter] = useState('all')
+  const pending = dispatchRecords.flatMap(dispatch => (dispatch.recipients || [])
+    .filter(assignment => ['ASIGNADO', 'DESPACHADO'].includes(assignment.status))
+    .map(assignment => ({ ...assignment, dispatch, unitKey: assignment.unit?.id || assignment.unitId || dispatch.unitId || '' })))
+  const units = [...new Map(pending.map(row => [row.unitKey || 'unassigned', { id: row.unitKey || 'unassigned', label: row.unit?.name || row.unitKey || 'Sin unidad registrada' }])).values()]
+  const people = [...new Map(pending.map(row => [row.userId, { id: row.userId, label: row.displayName || row.userId }])).values()]
+  const rows = pending.filter(row => (unitFilter === 'all' || (row.unitKey || 'unassigned') === unitFilter) && (responsibleFilter === 'all' || row.userId === responsibleFilter))
+  return <section className="director-deadlines" aria-labelledby="director-deadlines-title">
+    <header className="director-deadlines__header"><div><h2 id="director-deadlines-title">Pendientes por responsable</h2><p>Asignaciones de la dependencia, con su vencimiento calculado por el servidor.</p></div>
+      <div className="director-deadlines__filters">
+        <label>Unidad<select value={unitFilter} onChange={event => setUnitFilter(event.target.value)}><option value="all">Todas</option>{units.map(unit => <option key={unit.id || 'none'} value={unit.id}>{unit.label}</option>)}</select></label>
+        <label>Responsable<select value={responsibleFilter} onChange={event => setResponsibleFilter(event.target.value)}><option value="all">Todos</option>{people.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}</select></label>
+      </div>
+    </header>
+    <div className="table-scroll"><table className="document-table director-deadlines__table"><thead><tr><th>Documento</th><th>Responsable</th><th>Unidad</th><th>Prioridad</th><th>Fecha límite</th><th>Tiempo restante</th><th>Estado</th></tr></thead>
+      <tbody>{rows.length ? rows.map(row => {
+        const deadline = row.deadline || { status: 'SIN_PLAZO_REGISTRADO' }
+        const document = documents.find(item => item.id === row.documentId)
+        return <tr key={row.id}><td><button className="document-link" type="button" onClick={() => onOpenDocument(row.documentId)}>{document?.subject || document?.attachmentName || row.instruction || row.documentId}</button><small>{row.documentId}</small></td>
+          <td>{row.displayName || row.userId}</td><td>{row.unit?.name || row.unitId || row.dispatch.unitId || 'Sin unidad registrada'}</td>
+          <td>{row.dispatch.priority || 'No registrada'}</td>
+          <td>{deadline.dueAt ? new Date(deadline.dueAt).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }) : 'No registrada'}</td>
+          <td>{deadline.status === 'ATENDIDO' || deadline.remainingMs === null ? '—' : remainingTime(deadline.remainingMs)}</td>
+          <td><span className={`assignment-deadline-state assignment-deadline-state--${String(deadline.status).toLowerCase()}`}>{assignmentStatusLabel(deadline.status)}</span></td></tr>
+      }) : <tr><td colSpan="7" className="received-inbox__empty">No hay encargos pendientes para estos filtros.</td></tr>}</tbody>
+    </table></div>
+  </section>
+}
+export function DirectorPage({ title, description, allowAlfresco = false, inbox, mode = 'received', attentionIds = [], onPersonalAttentionChange, assignmentError = '', canDispatch = false, recipients = [], recipientRoles = [], recipientsLoading = false, recipientsError = '', onDispatch, dispatchRecords = [], dispatchDirectory = {}, openDocumentId = '', onDocumentPreviewClose, userId, csrfToken, canAttend = false, canIssueResponse = false, onAttentionChanged, onEmitResponse, showClosure = true, canLinkExisting = false, canLinkResponse = false, showDirectorDeadlines = false }) {
   const [selectedDocumentId, setSelectedDocumentId] = useState('')
   const [pendingRecipient, setPendingRecipient] = useState(null)
   const [query, setQuery] = useState('')
@@ -106,6 +149,7 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
       {inbox.scopeNotice && <p className="form-message" role="status">{inbox.scopeNotice}</p>}
       {assignmentError && <p className="form-message form-message--error" role="alert">{assignmentError}</p>}
       {canDispatch && recipientsError && <p className="form-message form-message--error" role="alert">{recipientsError}</p>}
+      {showDirectorDeadlines && !isSent && <DirectorPendingAssignments dispatchRecords={dispatchRecords} documents={documents} onOpenDocument={setSelectedDocumentId} />}
       <div className="received-inbox__filters" aria-label="Organizar documentos recibidos">
         <label className="form-field received-inbox__search"><span>Buscar documento</span><input onChange={(event) => setQuery(event.target.value)} placeholder={isSent ? 'Asunto, archivo o destinatario' : 'Asunto, archivo o remitente'} type="search" value={query} /></label>
         <label className="form-field"><span>Prioridad</span><select onChange={(event) => setPriorityFilter(event.target.value)} value={priorityFilter}><option value="all">Todas las prioridades</option><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option><option value="unknown">No registrada</option></select></label>
@@ -114,19 +158,21 @@ export function DirectorPage({ title, description, allowAlfresco = false, inbox,
       <div className="received-inbox__list-heading"><p aria-live="polite">{visibleDocuments.length} {visibleDocuments.length === 1 ? 'documento' : 'documentos'}{search || priorityFilter !== 'all' ? ' de ' + documents.length : ''}</p><div className="received-inbox__legend" aria-label="Colores de prioridad">{['Normal', 'Alta', 'Urgente'].map(documentPriority).map((priority) => <span className={'inbox-priority-key inbox-priority-key--' + priority.className} key={priority.className}>{priority.label}</span>)}</div></div>
       <div className="table-scroll received-inbox__table-scroll" role="region" aria-label={title} tabIndex={0} aria-busy={inbox.loading || inbox.refreshing}>
         <table className={'document-table received-inbox__table' + (isSent ? ' received-inbox__table--sent' : '')}>
-          <thead><tr><th scope="col">Documento</th><th scope="col">{isSent ? 'Destinatario registrado' : 'Emisor documental'}</th><th scope="col">{isSent ? 'Registro en Alfresco' : 'Fecha del documento'}</th>{!isSent && <th scope="col">Recepción</th>}<th scope="col">Prioridad</th>{!isSent && <th scope="col">Asignar responsable</th>}<th scope="col">Acción</th></tr></thead>
-          <tbody>{visibleDocuments.length === 0 ? <tr><td colSpan={isSent ? 5 : 7} className="received-inbox__empty">{emptyMessage}</td></tr> : visibleDocuments.map((document) => {
+          <thead><tr><th scope="col">Documento</th><th scope="col">{isSent ? 'Destinatario registrado' : 'Emisor documental'}</th><th scope="col">{isSent ? 'Registro en Alfresco' : 'Fecha del documento'}</th>{!isSent && <th scope="col">Recepción</th>}<th scope="col">Prioridad</th>{!isSent && <th scope="col">Asignar responsable</th>}{isAttention && <><th scope="col">Fecha de entrega</th><th scope="col">Estado</th></>}<th scope="col">Acción</th></tr></thead>
+          <tbody>{visibleDocuments.length === 0 ? <tr><td colSpan={isSent ? 5 : isAttention ? 9 : 7} className="received-inbox__empty">{emptyMessage}</td></tr> : visibleDocuments.map((document) => {
             const priority = priorityOf(document)
             const subject = document.subject || document.attachmentName || 'Documento sin título'
             const documentDispatch = { recipients: documentResponsibilities(dispatchRecords, document.id, true) }
             const assignedUnits = responsibilityBadges(documentDispatch.recipients)
             const assignedUserIds = new Set(documentDispatch.recipients.map((recipient) => recipient.userId))
+            const ownAssignment = dispatchRecords.filter(record => record.documentId === document.id).flatMap(record => record.recipients || []).find(assignment => assignment.userId === userId && ['ASIGNADO', 'DESPACHADO', 'ATENDIDO'].includes(assignment.status))
             return <tr className={[selectedDocumentId === document.id ? 'document-table__row--selected' : '', assignedUnits.length ? 'document-table__row--assigned' : ''].filter(Boolean).join(' ')} style={assignedUnits.length ? { '--assignment-background': assignmentBackground(assignedUnits.map((unit) => unit.color)) } : undefined} key={document.id}>
               <td><div className="received-inbox__document"><ResponsibilityIndicator badges={assignedUnits} /><span className="received-inbox__file-icon"><Icon name="file" size={21} /></span><div><button className="document-link received-inbox__subject" onClick={() => setSelectedDocumentId(document.id)} type="button">{subject}</button><span className="table-secondary">{document.attachmentName}</span>{isSent && <><span className="table-secondary">Origen: {document.emittedOrigin?.dependency || 'No registrado'}{document.emittedOrigin?.evidence === 'institutional-primary-folder' ? ' (ubicacion primaria verificada)' : ''}</span><span className="table-secondary">Creado por: {document.createdByName || document.createdByUserId || 'No registrado'}</span>{document.emissionDate && <span className="table-secondary">Fecha documental: {document.emissionDate}</span>}{document.contentWarning && <span className="form-message--error">PDF registrado sin contenido</span>}</>}{document.description && <p className="received-inbox__description">{document.description}</p>}</div></div></td>
               <td>{isSent ? <><span className="received-inbox__sender">{document.recipientName || 'No registrado'}</span><span className="table-secondary">{document.recipientUnit || document.recipientDependencyId?.toLocaleUpperCase('es')}</span></> : <><span className="received-inbox__sender">{document.documentIdentity?.originalDependency || dispatchRecords.find((record) => record.documentId === document.id)?.documentIdentity?.originalDependency || 'No registrado'}</span>{document.originatingDependency && <span className="table-secondary">{document.originatingDependency}</span>}</>}</td>
               <td><DocumentDate value={document.createdAt} /></td>{!isSent && <td><DocumentDate value={document.receivedAt} /></td>}
               <td><span className={'inbox-priority inbox-priority--' + priority.className} title={document.prioritySource === 'browser' ? 'Prioridad seleccionada al enviar, guardada en este navegador' : undefined}>{priority.label}</span></td>
               {!isSent && <td><label className="form-field received-inbox__assignee"><select aria-label={'Asignar responsable a ' + subject} value={pendingRecipient?.documentId === document.id ? `dispatch:${pendingRecipient.recipientId}` : attentionIds.includes(document.id) ? 'self' : ''} disabled={!onPersonalAttentionChange && (!canDispatch || recipientsLoading || Boolean(recipientsError) || !(dispatchDirectory.requiresUnit ? dispatchDirectory.units?.length : dispatchRecipients.length))} onChange={(event) => chooseAssignee(document.id, event.target.value)}><option value="">{inbox.loading || inbox.refreshing ? 'Consultando asignaciones...' : assignedUserIds.size ? `${assignedUserIds.size} responsable${assignedUserIds.size === 1 ? ' asignado' : 's asignados'}` : 'Sin seleccionar'}</option><option disabled={!onPersonalAttentionChange} value="self">Para mí</option>{canDispatch && <optgroup disabled={inbox.loading || inbox.refreshing || Boolean(inbox.error) || recipientsLoading || Boolean(recipientsError)} label="Derivar a">{dispatchDirectory.requiresUnit ? <option value="dispatch-unit">Despachar por unidad</option> : dispatchRecipients.map((recipient) => <option key={recipient.id} value={`dispatch:${recipient.id}`} data-already-assigned={assignedUserIds.has(recipient.id) ? 'true' : undefined}>{recipient.displayName} · {recipient.functionalRole === 'jefe-unidad' ? 'Jefatura' : 'Especialista'}{assignedUserIds.has(recipient.id) ? ' \u2014 Ya asignado' : ''}</option>)}</optgroup>}</select><small>{canDispatch ? recipientsLoading ? 'Consultando destinatarios...' : 'Elige un destinatario y confirma en el formulario de derivación.' : onPersonalAttentionChange ? 'Selección personal' : 'No disponible'}</small></label></td>}
+              {isAttention && <DeliveryDeadlineCells assignment={ownAssignment} />}
               <td><button className="button-secondary received-inbox__open" aria-label={'Ver PDF: ' + subject} onClick={() => setSelectedDocumentId(document.id)} type="button">Ver PDF</button></td>
             </tr>
           })}</tbody>

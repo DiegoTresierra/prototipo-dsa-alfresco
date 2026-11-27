@@ -41,6 +41,11 @@ test('ignores unrelated Alfresco groups and does not infer from usernames', () =
   assert.equal(result.roleId, 'especialista-dsa')
 })
 
+test('Alfresco administrators never grant the institutional director role, even if misconfigured', () => {
+  const mappings = { dependencies: { DSA: 'GROUP_GD_DSA' }, functions: { direccion: 'GROUP_ALFRESCO_ADMINISTRATORS' } }
+  assert.equal(resolveRole(['GROUP_GD_DSA', 'GROUP_ALFRESCO_ADMINISTRATORS'], mappings).authorizationStatus, 'incomplete')
+})
+
 test('distinct authority IDs never become equivalent after stripping prefixes, punctuation, case or labels', () => {
   for (const groups of [
     ['GROUP_DSA', 'GROUP_DIRECCION'], ['GROUP_GD_DSA', 'GROUP_FUNCION_DIRECCION'],
