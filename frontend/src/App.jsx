@@ -1,3 +1,4 @@
+import { receiptMatches } from './utils/dispatchAttempts'
 import { sessionDispatchRoles } from './utils/sessionDispatch.js'
 import { emitOfficialDocument, getAuthorizedDocument } from './api/alfresco'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -250,15 +251,15 @@ function ApplicationShell({ session, onLogout }) {
     setIsSidebarOpen(false)
   }
 
-  const handleDispatch = async (documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId = null, destination) => {
+  const handleDispatch = async (payload) => {
     try {
-      const dispatch = await dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, session.csrfToken, originAssignmentId, destination)
+      const dispatch = await dispatchDocument(payload, session.csrfToken)
+      if (!receiptMatches(session.alfresco?.id, payload, dispatch)) throw new Error('Alfresco no confirmó los datos del intento.')
       assignmentRequestVersion.current++ // Do not let an older in-flight GET erase this verified success.
       setDispatchRecords((current) => [dispatch, ...current.filter((record) => record.id !== dispatch.id)])
-      window.dispatchEvent(new Event('uac:alfresco-document-created'))
       return dispatch
     } catch (error) {
-      if (destination && ['DISPATCH_HIERARCHY_REVISION_CONFLICT', 'DISPATCH_UNIT_NOT_ALLOWED', 'DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED'].includes(error.code)) {
+      if (payload.unitId && ['DISPATCH_HIERARCHY_REVISION_CONFLICT', 'DISPATCH_UNIT_NOT_ALLOWED', 'DISPATCH_UNIT_RECIPIENT_NOT_ALLOWED'].includes(error.code)) {
         setDispatchDirectoryRefresh((current) => current + 1)
       }
       throw error

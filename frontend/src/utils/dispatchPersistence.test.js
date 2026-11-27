@@ -14,7 +14,7 @@ test('shows all equivalent responsibilities from successive dispatches, without 
 
 test('missing model produces a visible error, not an empty inbox', async () => {
   await assert.rejects(loadAssignmentInbox(async () => Response.json({ error: 'DISPATCH_ALFRESCO_MODEL_NOT_READY' }, { status: 503 }), (value) => value), /falta desplegar/)
-  assert.match(dispatchPersistenceError('DISPATCH_WRITE_OUTCOME_UNKNOWN'), /misma solicitud/)
+  assert.match(dispatchPersistenceError('DISPATCH_WRITE_OUTCOME_UNKNOWN'), /Verifica el resultado/)
 })
 
 test('official responsibilities require Alfresco provenance from the response, never a provisional record flag', () => {

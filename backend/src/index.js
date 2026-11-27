@@ -962,6 +962,28 @@ function requireDeliveryLock(request, response, next) {
     if (!userId || request.session.authorizationStatus !== 'active') return response.status(403).json({ error: 'ROLE_NOT_CONFIGURED' })
     if (!request.session.capabilities?.includes('documents:read')) return response.status(403).json({ error: 'DOCUMENT_READ_REQUIRED' })
     try {
+      if ('requestKey' in request.query) {
+        const { documentId, requestKey, originAssignmentId } = request.query
+        const actor = request.session
+        if (!canDispatch(actor) || typeof documentId !== 'string' || !/^[a-zA-Z0-9-]+$/.test(documentId) ||
+            typeof requestKey !== 'string' || !requestKey || requestKey.length > 200) return response.sendStatus(400)
+        return await dispatchRepository.withDocument(documentId, async () => {
+          if (!await sourceDocumentBelongsToDependency(actor, documentId)) return response.sendStatus(403)
+          if (actor.functionalRole === 'jefe-unidad' && (typeof originAssignmentId !== 'string' ||
+              !await findAttentionAssignment(userId, documentId, actor.dependency, originAssignmentId))) return response.sendStatus(403)
+          const record = await findDispatch(userId, requestKey, documentId)
+          const unverified = () => response.json({ outcome: 'INDETERMINATE' })
+          if (!record) return unverified()
+          if (record.senderRole !== actor.functionalRole || record.senderDependency !== actor.dependency.toLowerCase() ||
+              record.originAssignmentId !== (originAssignmentId || null)) return response.sendStatus(403)
+          if (actor.functionalRole === 'jefe-unidad') {
+            const { recipients } = await loadDispatchDirectory(config)
+            const managed = await resolveManagedRecipients(actor, recipients, config.organizationalHierarchyProvider)
+            if (!record.recipients.every(person => managed.some(member => member.id === person.userId))) return response.sendStatus(403)
+          }
+          return response.json({ outcome: 'CONFIRMED', persistence: 'alfresco', dispatch: record })
+        })
+      }
       const snapshot = await dispatchRepository.loadInbox(request.session)
       const { dispatches } = snapshot
       const sentDispatches = ['direccion', 'jefe-unidad'].includes(request.session.functionalRole)
@@ -1174,12 +1196,19 @@ function requireDeliveryLock(request, response, next) {
       if (!request.session.capabilities?.includes('documents:read')) return dispatchError(response, 403, 'DOCUMENT_READ_REQUIRED')
       const requireUnit = requiresDispatchUnit(request.session, dispatchRepository.kind, config.hierarchyService.storage)
       let input
-      if (requireUnit) {
-        input = parseDispatchRequest(request.body, request.session, { requireUnit })
-      } else {
-        const directory = await loadDispatchDirectory(config)
-        const recipients = await resolveManagedRecipients(request.session, directory.recipients, config.organizationalHierarchyProvider)
-        input = validateDispatchRequest(request.body, request.session, recipients)
+      try {
+        if (requireUnit) {
+          input = parseDispatchRequest(request.body, request.session, { requireUnit })
+        } else {
+          const directory = await loadDispatchDirectory(config)
+          const recipients = await resolveManagedRecipients(request.session, directory.recipients, config.organizationalHierarchyProvider)
+          input = validateDispatchRequest(request.body, request.session, recipients)
+        }
+      } catch (error) {
+        if (error.status === 400 || error.status === 403) {
+          return response.status(error.status).json({ error: error.message, outcome: 'REJECTED_BEFORE_WRITE', requestKey: request.body?.requestKey })
+        }
+        throw error
       }
       return await dispatchRepository.withDocument(input.documentId, async () => {
         const identity = dispatchIdentity(request.session, input.requestKey)
@@ -1201,11 +1230,21 @@ function requireDeliveryLock(request, response, next) {
           }
         }
         dispatch = await createDispatch({ ...input, senderUserId: userId }, request.session, requireUnit ? {
-          resolveDestination: () => resolveUnitDispatchRecipients(input, request.session, config),
+          resolveDestination: async () => {
+            try { return await resolveUnitDispatchRecipients(input, request.session, config) }
+            catch (error) {
+              // Both hierarchy checks run before the repository's sole PUT.
+              if ([400, 403, 409].includes(error.status)) error.rejectedBeforeDispatchWrite = true
+              throw error
+            }
+          },
         } : undefined)
         return response.status(existing ? 200 : 201).json({ dispatch, persistence: 'alfresco' })
       })
     } catch (error) {
+      if (error.rejectedBeforeDispatchWrite) {
+        return response.status(error.status).json({ error: error.message, outcome: 'REJECTED_BEFORE_WRITE', requestKey: request.body.requestKey })
+      }
       if (error.code === 'DISTRIBUTION_SERVICE_NOT_CONFIGURED' || error.code === 'DISTRIBUTION_SERVICE_AUTH_FAILED') {
         return dispatchError(response, 503, error.code, dispatch)
       }

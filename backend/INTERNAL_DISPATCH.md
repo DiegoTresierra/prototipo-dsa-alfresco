@@ -100,3 +100,13 @@ no duplican relaciones vigentes ni conservan autoridad para su antiguo titular.
 La resolución por grupos y relaciones activas no convierte una unidad temporal de
 ensayo en unidad institucional aprobada. Los códigos y las relaciones destinados a
 emisión o decisiones reales requieren validación institucional independiente.
+
+## Recuperación de un envío desde el navegador
+
+Antes del POST, la aplicación reserva en IndexedDB el payload completo bajo el actor y el UUID original. Dos pestañas del mismo origen y perfil comparten la reserva. La instrucción y los destinatarios permanecen en el perfil del navegador mientras dure la conciliación. Las credenciales y el token CSRF quedan fuera. Alfresco sigue siendo la fuente del despacho confirmado.
+
+Tras un timeout, un 502, una respuesta incompleta o un conflicto ambiguo, «Verificar despacho» realiza un GET a /api/documents/dispatches con documentId, requestKey y, para Jefatura, originAssignmentId. La consulta revalida identidad y ámbito. Jefatura necesita el encargo vigente y competencia sobre sus destinatarios. Un recibo coincidente permite presentar la operación ya registrada. La revisión jerárquica enviada se conserva en el intento local; el registro histórico permite contrastar unidad y destinatarios.
+
+Una búsqueda sin coincidencia devuelve INDETERMINATE. Un error de autorización mantiene el bloqueo. Únicamente un rechazo explícito de la misma solicitud antes de la escritura permite corregirla y generar otra clave. Si el navegador se interrumpe antes de recibir ese rechazo, se requiere conciliación autorizada. No borrar la reserva para forzar un segundo envío.
+
+La recuperación del intento requiere el mismo origen, perfil y datos de sitio conservados. Si esos datos se pierden o se cambia de dispositivo tras un envío ambiguo, detener el ensayo y conciliar el original en Alfresco antes de iniciar otro despacho.

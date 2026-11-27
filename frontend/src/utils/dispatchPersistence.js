@@ -20,7 +20,7 @@ export function dispatchPersistenceError(code, fallback) {
     DISPATCH_ASSIGNMENTS_SIZE_LIMIT: 'El historial alcanzó el límite de tamaño del piloto. Se requiere revisión antes de añadir asignaciones.',
     DISPATCH_EXTERNAL_MODIFICATION: 'El documento cambió durante el despacho. Actualiza la bandeja antes de reintentar.',
     DISPATCH_WRITE_VERIFICATION_FAILED: 'La lectura posterior no coincide con lo escrito. El resultado requiere revisión; no se intentó revertir el documento.',
-    DISPATCH_WRITE_OUTCOME_UNKNOWN: 'No se pudo confirmar el resultado en Alfresco. Actualiza la bandeja y reintenta con la misma solicitud.',
+    DISPATCH_WRITE_OUTCOME_UNKNOWN: 'No se pudo confirmar el resultado en Alfresco. Verifica el resultado antes de iniciar otra operación.',
   }[code] || fallback
 }
 

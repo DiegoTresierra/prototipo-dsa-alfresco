@@ -243,6 +243,14 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   await expectError(director, { ...payload, unitId: otherUnitId }, 409, 'DISPATCH_REQUEST_CONFLICT')
   await expectError(director, { ...payload, recipientUserIds: ['head'] }, 409, 'DISPATCH_REQUEST_CONFLICT')
   assert.equal(puts.length, 1)
+  const lookup = key => fetch(base + '/api/documents/dispatches?' + new URLSearchParams({ documentId, requestKey: key }), { headers: director })
+  const receipt = await (await lookup(payload.requestKey)).json()
+  assert.equal(receipt.outcome, 'CONFIRMED')
+  assert.equal(receipt.dispatch.id, parent.id)
+  assert.equal((await (await lookup('missing-operation')).json()).outcome, 'INDETERMINATE')
+  denied = true
+  assert.equal((await lookup(payload.requestKey)).status, 403)
+  denied = false
   const peerInbox = await fetch(base + '/api/documents/dispatches?include=documents', { headers: peer })
   assert.equal(peerInbox.status, 200)
   const peerAssignments = await peerInbox.json()
@@ -299,6 +307,10 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   const changed = JSON.parse(savedEnvelope)
   changed.dispatches.find(record => record.id === parent.id).recipients.find(person => person.userId === 'head').status = 'ANULADO'
   node.properties['gd:asignaciones'] = JSON.stringify(changed)
+  const headLookup = await fetch(base + '/api/documents/dispatches?' + new URLSearchParams({
+    documentId, requestKey: 'child', originAssignmentId: parent.recipients[0].id,
+  }), { headers: head })
+  assert.equal(headLookup.status, 403, 'readable PDF with a revoked origin cannot reveal the prior child')
   const staleReplay = await post(head, { ...legacyPayload, recipientUserIds: ['staff'], requestKey: 'child', instruction: 'changed', originAssignmentId: parent.recipients[0].id })
   assert.equal(staleReplay.status, 403)
   assert.deepEqual(await staleReplay.json(), { error: 'DISPATCH_ATTENTION_ASSIGNMENT_REQUIRED' })
@@ -327,6 +339,9 @@ test('HTTP Alfresco pilot persists verified DSA unit dispatches and preserves do
   } finally {
     config.responseTimes.username = previousAccount
   }
+  const reconcileQuery = new URLSearchParams({ documentId, requestKey: payload.requestKey })
+  const reconcile = headers => fetch(base + '/api/documents/dispatches?' + reconcileQuery, { headers })
+  assert.equal((await reconcile(director)).status, 403, 'revoked groups cannot read a receipt')
   const revoked = await post(director, { ...payload, requestKey: 'revoked-director' })
   assert.equal(revoked.status, 403)
   assert.equal((await revoked.json()).error, 'INSTITUTIONAL_IDENTITY_REJECTED')

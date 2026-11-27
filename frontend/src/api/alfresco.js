@@ -314,15 +314,23 @@ export async function reserveDocumentNumber(documentType, documentPeriod, csrfTo
   return body.number
 }
 
-export async function dispatchDocument(documentId, recipientUserIds, instruction, priority, requestKey, csrfToken, originAssignmentId = null, destination) {
+export async function reconcileDispatch(payload) {
+  const query = new URLSearchParams({ documentId: payload.documentId, requestKey: payload.requestKey })
+  if (payload.originAssignmentId) query.set('originAssignmentId', payload.originAssignmentId)
+  const response = await apiFetch('/api/documents/dispatches?' + query, { credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(45000) })
+  if (!response.ok) throw new Error('No se pudo verificar el despacho con la sesión vigente.')
+  const body = await response.json()
+  return body.persistence === 'alfresco' && body.outcome === 'CONFIRMED' ? body.dispatch : null
+}
+
+export async function dispatchDocument(payload, csrfToken) {
+  const { documentId } = payload
   const response = await apiFetch('/api/documents/dispatch', {
+    signal: AbortSignal.timeout(60000),
     method: 'POST',
     credentials: 'include',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify({
-      documentId, recipientUserIds, instruction, priority, requestKey, originAssignmentId,
-      ...(destination ? { unitId: destination.unitId, hierarchyRevision: destination.hierarchyRevision } : {}),
-    }),
+    body: JSON.stringify(payload),
   })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
@@ -342,6 +350,7 @@ export async function dispatchDocument(documentId, recipientUserIds, instruction
     const error = new Error(dispatchPersistenceError(body.error, messages[body.error] || 'No se pudo completar el despacho documental.'))
     error.code = body.error
     error.status = response.status
+    error.rejectedBeforeWrite = response.status < 500 && body.outcome === 'REJECTED_BEFORE_WRITE' && body.requestKey === payload.requestKey
     error.dispatchId = body.dispatchId || ''
     error.documentId = body.documentId || documentId
     throw error

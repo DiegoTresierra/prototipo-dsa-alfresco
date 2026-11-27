@@ -35,6 +35,10 @@ const record = (key, recipients) => ({ id: key, documentId: id, senderUserId: 'f
 // Same response shape and active recipient observed by GET in DEV; content is synthetic.
 const records = [record('initial-fixture', [people[0]])]
 const counters = { assignments: 0, directory: 0, children: 0, closureInbox: 0, mockDispatches: 0, mockAttentions: 0, officialRequests: 0, officialCreated: 0, emitted: 0 }
+let reconciliationMode = 403
+const directAck = process.env.DISPATCH_BROWSER_ACK_MODE === 'direct'
+let rejectedKey
+let attemptedPayload
 let officialFixture
 let closureEnabled = false, closureClosed = false, closurePosts = 0
 let hierarchyConfigurationMissing = false
@@ -135,6 +139,13 @@ const server = http.createServer(async (request, response) => {
         ] } : {}),
       })
     }
+    if (url.pathname === '/api/documents/dispatches' && url.searchParams.has('requestKey')) {
+      assert.equal(request.method, 'GET')
+      assert.equal(url.searchParams.get('requestKey'), attemptedPayload.requestKey)
+      if (reconciliationMode === 403) return json({ error: 'DOCUMENT_READ_NOT_ALLOWED' }, 403)
+      if (reconciliationMode === 202) return json({ outcome: 'INDETERMINATE' })
+      return json({ outcome: 'CONFIRMED', dispatch: records.at(-1), persistence: 'alfresco' })
+    }
     if (url.pathname === '/api/documents/dispatches') {
       counters.assignments++
       return json({ persistence: 'alfresco', dispatches: session.functionalRole === 'direccion' ? records : records.filter((record) => record.recipients.some((assignment) => assignment.userId === session.alfresco.id)),
@@ -174,9 +185,18 @@ const server = http.createServer(async (request, response) => {
       assert.deepEqual(input.recipientUserIds, [people[1].id, people[2].id])
       created.unitId = input.unitId
       for (const recipient of created.recipients) recipient.unitId = input.unitId
+      if (!rejectedKey) {
+        rejectedKey = input.requestKey
+        return json({ outcome: 'REJECTED_BEFORE_WRITE', requestKey: rejectedKey, error: 'INVALID_DISPATCH_REQUEST' }, 400)
+      }
+      assert.notEqual(input.requestKey, rejectedKey, 'a corrected payload requires a fresh key')
+      assert.equal(attemptedPayload, undefined, 'an unresolved intent must never post twice')
+      attemptedPayload = input
+      created.instruction = input.instruction
+      created.priority = input.priority
       records.push(created)
       counters.mockDispatches++
-      return json({ persistence: 'alfresco', dispatch: created }, 201)
+      return directAck ? json({ persistence: 'alfresco', dispatch: created }, 201) : json({ error: 'UPSTREAM_TIMEOUT' }, 502)
     }
     return json({ error: 'UNEXPECTED_LOCAL_TEST_ROUTE' }, 404)
   }
@@ -313,6 +333,37 @@ try {
   assert.deepEqual(candidates, [people[1].displayName, people[2].displayName])
   await evaluate(`(()=>{for(const label of document.querySelectorAll('.dispatch-panel__recipient')) label.querySelector('input').click(); const t=document.querySelector('.dispatch-panel textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'Prueba de integración local');t.dispatchEvent(new Event('input',{bubbles:true}));})()`)
   await clickText('Confirmar derivación')
+  await until(() => evaluate("Boolean(document.querySelector('.dispatch-panel [role=status]')) && !document.querySelector('.dispatch-panel [type=submit]').disabled"), 'definite rejection unlocks editing')
+  await evaluate("(()=>{const t=document.querySelector('.dispatch-panel textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,t.value+' (corregida)');t.dispatchEvent(new Event('input',{bubbles:true}))})()")
+  await clickText('Confirmar derivación')
+  if (!directAck) {
+    const pendingPanel = () => until(() => evaluate("document.querySelector('.dispatch-panel')?.textContent.includes('Resultado pendiente')"), 'pending confirmation')
+    const checkLocked = async () => {
+      await pendingPanel()
+      assert.ok(await evaluate("Array.from(document.querySelectorAll('.dispatch-panel textarea,.dispatch-panel select,.dispatch-panel input,.dispatch-panel [type=submit]')).every(el=>el.matches(':disabled'))"))
+      await evaluate("document.querySelector('.dispatch-panel').requestSubmit()")
+      assert.equal(counters.mockDispatches, 1)
+    }
+    await checkLocked()
+    await clickText('Cerrar vista previa')
+    await evaluate("document.querySelector('.received-inbox__subject').click()")
+    await checkLocked()
+    await command('Page.reload', { ignoreCache: true })
+    await until(() => evaluate("Boolean(document.querySelector('.sidebar__nav'))"), 'restore session')
+    await clickText('Documentos recibidos')
+    await waitAssigned(3)
+    await evaluate("document.querySelector('.received-inbox__subject').click()")
+    await checkLocked()
+    for (const mode of [403, 202]) {
+      reconciliationMode = mode
+      await clickText('Verificar despacho')
+      await until(() => evaluate("document.querySelector('.dispatch-panel')?.textContent.includes('No se pudo acreditar') && !document.querySelector('.dispatch-panel button[type=button]').disabled"), 'inconclusive GET')
+      await checkLocked()
+    }
+    reconciliationMode = 200
+    await clickText('Verificar despacho')
+    await until(() => evaluate("document.querySelector('.dispatch-panel')?.textContent.includes('Derivación registrada:')"), 'confirmed independent GET')
+  }
   await waitAssigned(3)
   assert.equal(counters.mockDispatches, 1)
   await clickText('Cerrar vista previa')
